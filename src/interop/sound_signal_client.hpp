@@ -18,8 +18,7 @@ inline Kind kind(obs_source_t* s){
     if(!id)return Kind::Unknown;
     if(!strcmp(id,"sound_stt_filter"))return Kind::Transcript;
     if(!strcmp(id,"yamnet_classifier_source"))return Kind::Classification;
-    for(auto name:{"sound_tts_source","sound_kokoro_tts_source","sound_piper_tts_source","sound_chatterbox_tts_source","sound_tiktok_tts_source"})
-        if(!strcmp(id,name))return Kind::Speech;
+    if(!strcmp(id,"sound_tts_source"))return Kind::Speech;
     return Kind::Unknown;
 }
 inline bool relay_parent(obs_source_t* source){

@@ -23,7 +23,7 @@
 
 namespace {
 using namespace std::chrono_literals;
-enum class Engine { Kokoro, Piper, Chatterbox, TikTok, Edge, Unified, Invalid };
+enum class Engine { Kokoro, Piper, Chatterbox, TikTok, Edge, Invalid };
 constexpr Engine backends[]={Engine::Kokoro,Engine::Piper,Engine::Chatterbox,Engine::TikTok,Engine::Edge};
 const char* model(Engine e){
     switch(e){case Engine::Kokoro:return "kokoro";case Engine::Piper:return "piper";
@@ -89,9 +89,8 @@ constexpr Option options[]={
     {Engine::Edge,"edge_volume","volume","Synthesis volume (%)",OptionKind::Int,0,-90,100,1},
     {Engine::TikTok,"tiktok_controls_note",nullptr,"TikTok supports voice selection only; use OBS audio filters for post-processing.",OptionKind::Note},
 };
-void option_defaults(obs_data_t* d,Engine engine){
+void option_defaults(obs_data_t* d){
     for(const auto& o:options){
-        if(o.engine!=engine&&engine!=Engine::Unified)continue;
         switch(o.kind){
         case OptionKind::Float:obs_data_set_default_double(d,o.key,o.initial);break;
         case OptionKind::Int:obs_data_set_default_int(d,o.key,int64_t(o.initial));break;
@@ -132,16 +131,10 @@ void option_visibility(obs_properties_t* p,Engine engine,obs_data_t* d=nullptr){
     }
 }
 bool option_changed(obs_properties_t* p,obs_property_t*,obs_data_t* d){
-    // Legacy source property sets contain only their own options.
-    auto e=parse_engine(obs_data_get_string(d,"backend"));
-    if(e==Engine::Invalid&&!obs_properties_get(p,"backend")){
-        for(const auto& o:options)if(obs_properties_get(p,o.key)){e=o.engine;break;}
-    }
-    option_visibility(p,e,d);return true;
+    option_visibility(p,parse_engine(obs_data_get_string(d,"backend")),d);return true;
 }
-void add_options(obs_properties_t* p,Engine engine){
+void add_options(obs_properties_t* p){
     for(const auto& o:options){
-        if(o.engine!=engine&&engine!=Engine::Unified)continue;
         obs_property_t* field=nullptr;
         switch(o.kind){
         case OptionKind::Float:field=obs_properties_add_float_slider(p,o.key,o.label,o.low,o.high,o.step);break;
@@ -171,7 +164,6 @@ struct Config {
 };
 struct State {
     obs_source_t* context;
-    const Engine engine;
     std::mutex mutex;
     std::condition_variable cv;
     Config config;
@@ -184,7 +176,7 @@ struct State {
     std::atomic<uint64_t> generation{0},completed{0},failed{0};
     std::thread worker,lease_worker;
     const std::string lease_id;
-    State(obs_source_t* c,Engine e):context(c),engine(e),
+    State(obs_source_t* c):context(c),
         lease_id(std::to_string(getpid())+"-"+std::to_string(os_gettime_ns())+"-"+std::to_string(reinterpret_cast<uintptr_t>(this))){}
     bool current(uint64_t g) const {
         return !stopping.load()&&active.load()&&enabled.load()&&generation.load()==g;
@@ -477,15 +469,15 @@ void monitor(void* ptr,float){
 }
 void update(void* ptr,obs_data_t* settings){
     auto& s=*static_cast<State*>(ptr);
-    Config next{obs_data_get_string(settings,"voice"),obs_data_get_string(settings,"text_source"),
+    Config next{"",obs_data_get_string(settings,"text_source"),
         obs_data_get_string(settings,"text"),obs_data_get_bool(settings,"monitor_text")};
     next.stt=!strcmp(obs_data_get_string(settings,"speech_input"),"stt");
     next.plugin_input=!strcmp(obs_data_get_string(settings,"speech_input"),"plugin");
     next.stt_source=obs_data_get_string(settings,"stt_source");
     next.stt_allow_cloud=obs_data_get_bool(settings,"stt_allow_cloud");
     next.ttl=retention_ttl(settings);
-    next.selected=s.engine==Engine::Unified?parse_engine(obs_data_get_string(settings,"backend")):s.engine;
-    if(s.engine==Engine::Unified)next.voice=obs_data_get_string(settings,voice_key(next.selected));
+    next.selected=parse_engine(obs_data_get_string(settings,"backend"));
+    next.voice=obs_data_get_string(settings,voice_key(next.selected));
     next.synthesis_options=selected_options(settings,next.selected);
     std::lock_guard lock(s.mutex);
     if(next.synthesis_options!=s.config.synthesis_options||next.selected!=s.config.selected||next.voice!=s.config.voice||next.uuid!=s.config.uuid||next.monitor!=s.config.monitor||
@@ -586,9 +578,9 @@ bool backend_changed(obs_properties_t* p,obs_property_t*,obs_data_t* settings){
     retention_visibility(p,e,int(obs_data_get_int(settings,"retention_mode")));
     return true;
 }
-template<Engine E>obs_properties_t* props(void* ptr){
+obs_properties_t* props(void* ptr){
     auto* p=obs_properties_create();
-    if constexpr(E==Engine::Unified){
+    {
         auto* selector=obs_properties_add_list(p,"backend","Speech backend",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
         for(auto e:backends){
             obs_property_list_add_string(selector,engine_label(e),model(e));
@@ -611,15 +603,15 @@ template<Engine E>obs_properties_t* props(void* ptr){
         }
         show_backend(p,selected);
         obs_property_set_modified_callback(selector,backend_changed);
-    }else add_voices(p,E,"voice");
-    add_options(p,E);
+    }
+    add_options(p);
     {
         auto* settings=ptr?obs_source_get_settings(static_cast<State*>(ptr)->context):obs_data_create();
-        if(!ptr)option_defaults(settings,E);
-        const auto selected=E==Engine::Unified?(ptr?parse_engine(obs_data_get_string(settings,"backend")):Engine::Kokoro):E;
+        if(!ptr)option_defaults(settings);
+        const auto selected=ptr?parse_engine(obs_data_get_string(settings,"backend")):Engine::Kokoro;
         option_visibility(p,selected,settings);obs_data_release(settings);
     }
-    if constexpr(E!=Engine::TikTok){
+    {
         auto* policy=obs_properties_add_list(p,"retention_mode","Local model retention",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
         obs_property_list_add_int(policy,"Unload when unused",0);
         obs_property_list_add_int(policy,"Idle timeout (TTL)",1);
@@ -628,11 +620,11 @@ template<Engine E>obs_properties_t* props(void* ptr){
         obs_property_int_set_suffix(ttl," s");
         obs_property_set_long_description(policy,"Models load on first speech. Active enabled sources share a model; eviction begins after the last source releases it. Keep warm lasts until worker restart or this source releases with a different policy.");
         obs_property_set_modified_callback(policy,[](obs_properties_t* p,obs_property_t*,obs_data_t* d){
-            const auto e=E==Engine::Unified?parse_engine(obs_data_get_string(d,"backend")):E;
+            const auto e=parse_engine(obs_data_get_string(d,"backend"));
             retention_visibility(p,e,int(obs_data_get_int(d,"retention_mode")));return true;
         });
         auto* settings=ptr?obs_source_get_settings(static_cast<State*>(ptr)->context):nullptr;
-        const auto e=E==Engine::Unified?(settings?parse_engine(obs_data_get_string(settings,"backend")):Engine::Kokoro):E;
+        const auto e=settings?parse_engine(obs_data_get_string(settings,"backend")):Engine::Kokoro;
         retention_visibility(p,e,settings?int(obs_data_get_int(settings,"retention_mode")):0);
         if(settings)obs_data_release(settings);
     }
@@ -676,20 +668,15 @@ template<Engine E>obs_properties_t* props(void* ptr){
     }
     speech_input_visibility(p,relay,plugin);
 
-    obs_properties_add_text(p,"note",E==Engine::Unified?
-        "Switch backends without recreating this source. Each backend remembers its voice. No automatic fallback.":
-        E==Engine::TikTok?
-        "Cloud: text is sent directly to Ottsy (ottsy.weilbyte.dev), a third-party community proxy. No local service or fallback.":
-        "Local worker only. No cloud fallback. Change monitoring speaks the latest stable text; file mode is not supported.",
+    obs_properties_add_text(p,"note",
+        "Switch backends without recreating this source. Each backend remembers its voice. No automatic fallback.",
         OBS_TEXT_INFO);
     return p;
 }
-template<Engine E>void defaults(obs_data_t* settings){
-    if constexpr(E==Engine::Unified){
-        obs_data_set_default_string(settings,"backend","kokoro");
-        for(auto e:backends)obs_data_set_default_string(settings,voice_key(e),default_voice(e));
-    }else obs_data_set_default_string(settings,"voice",default_voice(E));
-    option_defaults(settings,E);
+void defaults(obs_data_t* settings){
+    obs_data_set_default_string(settings,"backend","kokoro");
+    for(auto e:backends)obs_data_set_default_string(settings,voice_key(e),default_voice(e));
+    option_defaults(settings);
     obs_data_set_default_string(settings,"text","");
     obs_data_set_default_string(settings,"text_source","");
     obs_data_set_default_bool(settings,"monitor_text",false);
@@ -720,12 +707,12 @@ void enqueue_signal(void* ptr,calldata_t* call){
     s.relay_queue.push_back(std::move(text));s.cv.notify_all();
     calldata_set_bool(call,"accepted",true);
 }
-template<Engine E>void* create(obs_data_t* settings,obs_source_t* context){
-    auto* s=new State(context,E);
+void* create(obs_data_t* settings,obs_source_t* context){
+    auto* s=new State(context);
     try {
         update(s,settings);
         s->worker=std::thread(run,s);
-        if constexpr(E!=Engine::TikTok)s->lease_worker=std::thread(maintain_leases,s);
+        s->lease_worker=std::thread(maintain_leases,s);
     }catch(...){
         {std::lock_guard lock(s->mutex);s->stopping=true;s->cv.notify_all();}
         if(s->worker.joinable())s->worker.join();
@@ -741,30 +728,19 @@ template<Engine E>void* create(obs_data_t* settings,obs_source_t* context){
     sound_signals::register_broker(context);
     return s;
 }
-template<Engine E>const char* name(void*){
-    if constexpr(E==Engine::Unified)return "LLL.sound TTS";
-    if constexpr(E==Engine::Kokoro)return "LLL.sound Kokoro TTS (local)";
-    if constexpr(E==Engine::Piper)return "LLL.sound Piper TTS (local)";
-    if constexpr(E==Engine::Chatterbox)return "LLL.sound Chatterbox Nano TTS (local GPU)";
-    return "LLL.sound TikTok TTS (cloud)";
-}
-template<Engine E>obs_source_info info(const char* id){
+const char* name(void*){return "LLL.sound TTS";}
+obs_source_info info(){
     obs_source_info x{};
-    x.id=id;x.type=OBS_SOURCE_TYPE_INPUT;x.output_flags=OBS_SOURCE_AUDIO;
-    x.get_name=name<E>;x.create=create<E>;x.destroy=destroy;x.get_defaults=defaults<E>;
-    x.get_properties=props<E>;x.update=update;x.activate=activate;x.deactivate=deactivate;
+    x.id="sound_tts_source";x.type=OBS_SOURCE_TYPE_INPUT;x.output_flags=OBS_SOURCE_AUDIO;
+    x.get_name=name;x.create=create;x.destroy=destroy;x.get_defaults=defaults;
+    x.get_properties=props;x.update=update;x.activate=activate;x.deactivate=deactivate;
     x.video_tick=monitor; // text event monitoring only, never audio output
     return x;
 }
 }
 void register_sound_tts(){
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    static auto k=info<Engine::Kokoro>("sound_kokoro_tts_source");
-    static auto p=info<Engine::Piper>("sound_piper_tts_source");
-    static auto c=info<Engine::Chatterbox>("sound_chatterbox_tts_source");
-    static auto t=info<Engine::TikTok>("sound_tiktok_tts_source");
-    static auto unified=info<Engine::Unified>("sound_tts_source");
-    obs_register_source(&k);obs_register_source(&p);obs_register_source(&c);obs_register_source(&t);
+    static auto unified=info();
     obs_register_source(&unified);
     blog(LOG_INFO,"[Sound/TTS] SOUND_TTS_UNIFIED_20261118_U481");
     blog(LOG_INFO,"[Sound/TTS] SOUND_TTS_EDGE_20261118_E521");

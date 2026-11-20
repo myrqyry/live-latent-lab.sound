@@ -65,7 +65,6 @@ int main(int argc,char** argv){
         if(!text)return 8;
     }
     auto* cfg=obs_data_create();
-    obs_data_set_string(cfg,"voice",argv[4]);
     obs_data_set_string(cfg,"text","Hello from Live Latent Lab.");
     if(text){obs_data_set_string(cfg,"text_source",obs_source_get_uuid(text));obs_data_set_bool(cfg,"monitor_text",true);}
     if(unified){
@@ -73,8 +72,11 @@ int main(int argc,char** argv){
         obs_data_set_string(cfg,"voice_kokoro","am_michael");
         obs_data_set_string(cfg,"voice_tiktok","en_us_stitch");
     }
-    auto id=unified?"sound_tts_source":"sound_"+backend+"_tts_source";
-    auto* source=obs_source_create(id.c_str(),"Speech generator",cfg,nullptr);
+    if(!unified){
+        obs_data_set_string(cfg,"backend",backend.c_str());
+        obs_data_set_string(cfg,("voice_"+backend).c_str(),argv[4]);
+    }
+    auto* source=obs_source_create("sound_tts_source","Speech generator",cfg,nullptr);
     obs_data_release(cfg);
     if(!source)return 9;
     if(options_test){
@@ -270,7 +272,7 @@ int main(int argc,char** argv){
         return ok?0:1;
     }
     auto* props=obs_source_properties(source);
-    auto* voices=obs_properties_get(props,"voice");
+    auto* voices=obs_properties_get(props,("voice_"+backend).c_str());
     auto* texts=obs_properties_get(props,"text_source");
     bool picker=false;
     for(size_t i=0;voices&&i<obs_property_list_item_count(voices);++i)

@@ -69,3 +69,23 @@ MP3/JSON validation, UTF-8 chunk boundaries, existing WAV/text regressions,
 and empty quarantine passed. The complete unrelated STT/stem acceptance
 suite was not rerun for this change; its previous intermittent Parakeet
 failure remains open. No live installation or public publication.
+
+## Single TTS source for public release
+
+Supersedes the earlier nine-registration profile. The expanded candidate now
+registers exactly five sources/filters. The four development-only TTS source
+IDs are no longer registered, and their specialized callbacks and signal
+discovery aliases are removed. All five engines live inside LLL.sound TTS.
+No migration or hidden legacy registration is provided for the experimental
+standalone IDs. The private development repository remains the historical
+reference.
+
+The registration regression failed against the old nine-entry binary and
+passed against the new five-entry binary. Individual real OBS playback
+checks passed through the single source for Piper (including monitored text,
+deduplication and cancellation), Kokoro, Chatterbox and native TikTok.
+After removal of the last obsolete property fallback, the final expanded
+binary passed the seven-switch five-backend real playback sequence,
+cancellation/recovery and independent signal-client end-to-end test
+(including native Nemotron, YAMNet, Piper and cloud consent). The empty
+quarantine also passed. The entire STT/stem qualification was not rerun.

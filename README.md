@@ -55,4 +55,4 @@ are separate terms. No weights are included. The candidate is not yet
 approved for external publication; dependency provenance, fresh-machine
 testing and packaging remain open.
 
-In OBS, sources and filters use the `LLL.sound` display-name prefix. Existing internal OBS source IDs are unchanged.
+In OBS, sources and filters use the `LLL.sound` display-name prefix. Add `LLL.sound TTS` once and select Kokoro, Piper, Chatterbox, TikTok or Edge in its properties. The expanded release candidate has five registered effects; redundant development-only TTS source types are not registered.

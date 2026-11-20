@@ -1,8 +1,8 @@
 # Expanded Linux candidate
 
-The expanded profile uses the original native implementation. It selects
+The expanded profile selects
 mic;stem_live;yamnet;tts;stt. The smaller public-linux preset has no speech
-runtime or GPU dependency and remains available.
+runtime or GPU dependency and remains available. The expanded profile exposes one TTS source, with all five speech backends selectable inside it; there are no separate per-backend registrations.
 
 Build prerequisites: C++17, CMake 3.28+, Ninja, libobs and frontend headers,
 pkg-config, libcurl, FFmpeg development libraries (libavformat, libavcodec, libavutil, libswresample), and separately acquired matched native speech runtimes.

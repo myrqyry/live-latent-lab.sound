@@ -25,10 +25,10 @@ static const Effect effects[] = {
     {"sound_stt_filter", "stt"},
     {"mediapipe_filter", "mediapipe"},
     {"yamnet_classifier_source", "yamnet"},
-    {"sound_kokoro_tts_source", "tts"},
-    {"sound_piper_tts_source", "tts"},
-    {"sound_chatterbox_tts_source", "tts"},
-    {"sound_tiktok_tts_source", "tts"},
+    {"sound_kokoro_tts_source", nullptr},
+    {"sound_piper_tts_source", nullptr},
+    {"sound_chatterbox_tts_source", nullptr},
+    {"sound_tiktok_tts_source", nullptr},
     {"sound_tts_source", "tts"},
 };
 
@@ -67,7 +67,7 @@ int main(int argc, char **argv)
     for (const auto &item : effects) {
         obs_properties_t *props = initialized ? obs_get_source_properties(item.id) : nullptr;
         const bool found = props != nullptr;
-        const bool wanted = contains(expected, item.gate);
+        const bool wanted = item.gate && contains(expected, item.gate);
         if (found) {
             ++registered;
             const auto* label=obs_source_get_display_name(item.id);
