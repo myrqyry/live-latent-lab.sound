@@ -1,0 +1,1274 @@
+[
+  {
+    "id": "af-ZA-AdriNeural",
+    "label": "Afrikaans (South Africa) / af-ZA-AdriNeural (Female)"
+  },
+  {
+    "id": "af-ZA-WillemNeural",
+    "label": "Afrikaans (South Africa) / af-ZA-WillemNeural (Male)"
+  },
+  {
+    "id": "am-ET-AmehaNeural",
+    "label": "Amharic (Ethiopia) / am-ET-AmehaNeural (Male)"
+  },
+  {
+    "id": "am-ET-MekdesNeural",
+    "label": "Amharic (Ethiopia) / am-ET-MekdesNeural (Female)"
+  },
+  {
+    "id": "ar-AE-FatimaNeural",
+    "label": "Arabic (United Arab Emirates) / ar-AE-FatimaNeural (Female)"
+  },
+  {
+    "id": "ar-AE-HamdanNeural",
+    "label": "Arabic (United Arab Emirates) / ar-AE-HamdanNeural (Male)"
+  },
+  {
+    "id": "ar-BH-AliNeural",
+    "label": "Arabic (Bahrain) / ar-BH-AliNeural (Male)"
+  },
+  {
+    "id": "ar-BH-LailaNeural",
+    "label": "Arabic (Bahrain) / ar-BH-LailaNeural (Female)"
+  },
+  {
+    "id": "ar-DZ-AminaNeural",
+    "label": "Arabic (Algeria) / ar-DZ-AminaNeural (Female)"
+  },
+  {
+    "id": "ar-DZ-IsmaelNeural",
+    "label": "Arabic (Algeria) / ar-DZ-IsmaelNeural (Male)"
+  },
+  {
+    "id": "ar-EG-SalmaNeural",
+    "label": "Arabic (Egypt) / ar-EG-SalmaNeural (Female)"
+  },
+  {
+    "id": "ar-EG-ShakirNeural",
+    "label": "Arabic (Egypt) / ar-EG-ShakirNeural (Male)"
+  },
+  {
+    "id": "ar-IQ-BasselNeural",
+    "label": "Arabic (Iraq) / ar-IQ-BasselNeural (Male)"
+  },
+  {
+    "id": "ar-IQ-RanaNeural",
+    "label": "Arabic (Iraq) / ar-IQ-RanaNeural (Female)"
+  },
+  {
+    "id": "ar-JO-SanaNeural",
+    "label": "Arabic (Jordan) / ar-JO-SanaNeural (Female)"
+  },
+  {
+    "id": "ar-JO-TaimNeural",
+    "label": "Arabic (Jordan) / ar-JO-TaimNeural (Male)"
+  },
+  {
+    "id": "ar-KW-FahedNeural",
+    "label": "Arabic (Kuwait) / ar-KW-FahedNeural (Male)"
+  },
+  {
+    "id": "ar-KW-NouraNeural",
+    "label": "Arabic (Kuwait) / ar-KW-NouraNeural (Female)"
+  },
+  {
+    "id": "ar-LB-LaylaNeural",
+    "label": "Arabic (Lebanon) / ar-LB-LaylaNeural (Female)"
+  },
+  {
+    "id": "ar-LB-RamiNeural",
+    "label": "Arabic (Lebanon) / ar-LB-RamiNeural (Male)"
+  },
+  {
+    "id": "ar-LY-ImanNeural",
+    "label": "Arabic (Libya) / ar-LY-ImanNeural (Female)"
+  },
+  {
+    "id": "ar-LY-OmarNeural",
+    "label": "Arabic (Libya) / ar-LY-OmarNeural (Male)"
+  },
+  {
+    "id": "ar-MA-JamalNeural",
+    "label": "Arabic (Morocco) / ar-MA-JamalNeural (Male)"
+  },
+  {
+    "id": "ar-MA-MounaNeural",
+    "label": "Arabic (Morocco) / ar-MA-MounaNeural (Female)"
+  },
+  {
+    "id": "ar-OM-AbdullahNeural",
+    "label": "Arabic (Oman) / ar-OM-AbdullahNeural (Male)"
+  },
+  {
+    "id": "ar-OM-AyshaNeural",
+    "label": "Arabic (Oman) / ar-OM-AyshaNeural (Female)"
+  },
+  {
+    "id": "ar-QA-AmalNeural",
+    "label": "Arabic (Qatar) / ar-QA-AmalNeural (Female)"
+  },
+  {
+    "id": "ar-QA-MoazNeural",
+    "label": "Arabic (Qatar) / ar-QA-MoazNeural (Male)"
+  },
+  {
+    "id": "ar-SA-HamedNeural",
+    "label": "Arabic (Saudi Arabia) / ar-SA-HamedNeural (Male)"
+  },
+  {
+    "id": "ar-SA-ZariyahNeural",
+    "label": "Arabic (Saudi Arabia) / ar-SA-ZariyahNeural (Female)"
+  },
+  {
+    "id": "ar-SY-AmanyNeural",
+    "label": "Arabic (Syria) / ar-SY-AmanyNeural (Female)"
+  },
+  {
+    "id": "ar-SY-LaithNeural",
+    "label": "Arabic (Syria) / ar-SY-LaithNeural (Male)"
+  },
+  {
+    "id": "ar-TN-HediNeural",
+    "label": "Arabic (Tunisia) / ar-TN-HediNeural (Male)"
+  },
+  {
+    "id": "ar-TN-ReemNeural",
+    "label": "Arabic (Tunisia) / ar-TN-ReemNeural (Female)"
+  },
+  {
+    "id": "ar-YE-MaryamNeural",
+    "label": "Arabic (Yemen) / ar-YE-MaryamNeural (Female)"
+  },
+  {
+    "id": "ar-YE-SalehNeural",
+    "label": "Arabic (Yemen) / ar-YE-SalehNeural (Male)"
+  },
+  {
+    "id": "az-AZ-BabekNeural",
+    "label": "Azerbaijani (Latin, Azerbaijan) / az-AZ-BabekNeural (Male)"
+  },
+  {
+    "id": "az-AZ-BanuNeural",
+    "label": "Azerbaijani (Latin, Azerbaijan) / az-AZ-BanuNeural (Female)"
+  },
+  {
+    "id": "bg-BG-BorislavNeural",
+    "label": "Bulgarian (Bulgaria) / bg-BG-BorislavNeural (Male)"
+  },
+  {
+    "id": "bg-BG-KalinaNeural",
+    "label": "Bulgarian (Bulgaria) / bg-BG-KalinaNeural (Female)"
+  },
+  {
+    "id": "bn-BD-NabanitaNeural",
+    "label": "Bangla (Bangladesh) / bn-BD-NabanitaNeural (Female)"
+  },
+  {
+    "id": "bn-BD-PradeepNeural",
+    "label": "Bangla (Bangladesh) / bn-BD-PradeepNeural (Male)"
+  },
+  {
+    "id": "bn-IN-BashkarNeural",
+    "label": "Bengali (India) / bn-IN-BashkarNeural (Male)"
+  },
+  {
+    "id": "bn-IN-TanishaaNeural",
+    "label": "Bengali (India) / bn-IN-TanishaaNeural (Female)"
+  },
+  {
+    "id": "bs-BA-GoranNeural",
+    "label": "Bosnian (Bosnia and Herzegovina) / bs-BA-GoranNeural (Male)"
+  },
+  {
+    "id": "bs-BA-VesnaNeural",
+    "label": "Bosnian (Bosnia and Herzegovina) / bs-BA-VesnaNeural (Female)"
+  },
+  {
+    "id": "ca-ES-EnricNeural",
+    "label": "Catalan / ca-ES-EnricNeural (Male)"
+  },
+  {
+    "id": "ca-ES-JoanaNeural",
+    "label": "Catalan / ca-ES-JoanaNeural (Female)"
+  },
+  {
+    "id": "cs-CZ-AntoninNeural",
+    "label": "Czech (Czechia) / cs-CZ-AntoninNeural (Male)"
+  },
+  {
+    "id": "cs-CZ-VlastaNeural",
+    "label": "Czech (Czechia) / cs-CZ-VlastaNeural (Female)"
+  },
+  {
+    "id": "cy-GB-AledNeural",
+    "label": "Welsh (United Kingdom) / cy-GB-AledNeural (Male)"
+  },
+  {
+    "id": "cy-GB-NiaNeural",
+    "label": "Welsh (United Kingdom) / cy-GB-NiaNeural (Female)"
+  },
+  {
+    "id": "da-DK-ChristelNeural",
+    "label": "Danish (Denmark) / da-DK-ChristelNeural (Female)"
+  },
+  {
+    "id": "da-DK-JeppeNeural",
+    "label": "Danish (Denmark) / da-DK-JeppeNeural (Male)"
+  },
+  {
+    "id": "de-AT-IngridNeural",
+    "label": "German (Austria) / de-AT-IngridNeural (Female)"
+  },
+  {
+    "id": "de-AT-JonasNeural",
+    "label": "German (Austria) / de-AT-JonasNeural (Male)"
+  },
+  {
+    "id": "de-CH-JanNeural",
+    "label": "German (Switzerland) / de-CH-JanNeural (Male)"
+  },
+  {
+    "id": "de-CH-LeniNeural",
+    "label": "German (Switzerland) / de-CH-LeniNeural (Female)"
+  },
+  {
+    "id": "de-DE-ChristophNeural",
+    "label": "German (Germany) / de-DE-ChristophNeural (Male)"
+  },
+  {
+    "id": "de-DE-TanjaNeural",
+    "label": "German (Germany) / de-DE-TanjaNeural (Female)"
+  },
+  {
+    "id": "el-GR-AthinaNeural",
+    "label": "Greek (Greece) / el-GR-AthinaNeural (Female)"
+  },
+  {
+    "id": "el-GR-NestorasNeural",
+    "label": "Greek (Greece) / el-GR-NestorasNeural (Male)"
+  },
+  {
+    "id": "en-AU-NatashaNeural",
+    "label": "English (Australia) / en-AU-NatashaNeural (Female)"
+  },
+  {
+    "id": "en-AU-WilliamMultilingualNeural",
+    "label": "English (Australia) / en-AU-WilliamMultilingualNeural (Male)"
+  },
+  {
+    "id": "en-CA-ClaraNeural",
+    "label": "English (Canada) / en-CA-ClaraNeural (Female)"
+  },
+  {
+    "id": "en-CA-LiamNeural",
+    "label": "English (Canada) / en-CA-LiamNeural (Male)"
+  },
+  {
+    "id": "en-GB-LibbyNeural",
+    "label": "English (United Kingdom) / en-GB-LibbyNeural (Female)"
+  },
+  {
+    "id": "en-GB-MaisieNeural",
+    "label": "English (United Kingdom) / en-GB-MaisieNeural (Female)"
+  },
+  {
+    "id": "en-GB-RyanNeural",
+    "label": "English (United Kingdom) / en-GB-RyanNeural (Male)"
+  },
+  {
+    "id": "en-GB-SoniaNeural",
+    "label": "English (United Kingdom) / en-GB-SoniaNeural (Female)"
+  },
+  {
+    "id": "en-GB-ThomasNeural",
+    "label": "English (United Kingdom) / en-GB-ThomasNeural (Male)"
+  },
+  {
+    "id": "en-HK-SamNeural",
+    "label": "English (Hong Kong SAR) / en-HK-SamNeural (Male)"
+  },
+  {
+    "id": "en-HK-YanNeural",
+    "label": "English (Hong Kong SAR) / en-HK-YanNeural (Female)"
+  },
+  {
+    "id": "en-IE-ConnorNeural",
+    "label": "English (Ireland) / en-IE-ConnorNeural (Male)"
+  },
+  {
+    "id": "en-IE-EmilyNeural",
+    "label": "English (Ireland) / en-IE-EmilyNeural (Female)"
+  },
+  {
+    "id": "en-IN-NeerjaExpressiveNeural",
+    "label": "English (India) / en-IN-NeerjaExpressiveNeural (Female)"
+  },
+  {
+    "id": "en-IN-NeerjaNeural",
+    "label": "English (India) / en-IN-NeerjaNeural (Female)"
+  },
+  {
+    "id": "en-IN-PrabhatNeural",
+    "label": "English (India) / en-IN-PrabhatNeural (Male)"
+  },
+  {
+    "id": "en-KE-AsiliaNeural",
+    "label": "English (Kenya) / en-KE-AsiliaNeural (Female)"
+  },
+  {
+    "id": "en-KE-ChilembaNeural",
+    "label": "English (Kenya) / en-KE-ChilembaNeural (Male)"
+  },
+  {
+    "id": "en-NG-AbeoNeural",
+    "label": "English (Nigeria) / en-NG-AbeoNeural (Male)"
+  },
+  {
+    "id": "en-NG-EzinneNeural",
+    "label": "English (Nigeria) / en-NG-EzinneNeural (Female)"
+  },
+  {
+    "id": "en-NZ-MitchellNeural",
+    "label": "English (New Zealand) / en-NZ-MitchellNeural (Male)"
+  },
+  {
+    "id": "en-NZ-MollyNeural",
+    "label": "English (New Zealand) / en-NZ-MollyNeural (Female)"
+  },
+  {
+    "id": "en-PH-JamesNeural",
+    "label": "English (Philippines) / en-PH-JamesNeural (Male)"
+  },
+  {
+    "id": "en-PH-RosaNeural",
+    "label": "English (Philippines) / en-PH-RosaNeural (Female)"
+  },
+  {
+    "id": "en-SG-LunaNeural",
+    "label": "English (Singapore) / en-SG-LunaNeural (Female)"
+  },
+  {
+    "id": "en-SG-WayneNeural",
+    "label": "English (Singapore) / en-SG-WayneNeural (Male)"
+  },
+  {
+    "id": "en-TZ-ElimuNeural",
+    "label": "English (Tanzania) / en-TZ-ElimuNeural (Male)"
+  },
+  {
+    "id": "en-TZ-ImaniNeural",
+    "label": "English (Tanzania) / en-TZ-ImaniNeural (Female)"
+  },
+  {
+    "id": "en-US-AnaNeural",
+    "label": "English (United States) / en-US-AnaNeural (Female)"
+  },
+  {
+    "id": "en-US-AndrewMultilingualNeural",
+    "label": "English (United States) / en-US-AndrewMultilingualNeural (Male)"
+  },
+  {
+    "id": "en-US-AndrewNeural",
+    "label": "English (United States) / en-US-AndrewNeural (Male)"
+  },
+  {
+    "id": "en-US-AriaNeural",
+    "label": "English (United States) / en-US-AriaNeural (Female)"
+  },
+  {
+    "id": "en-US-AvaMultilingualNeural",
+    "label": "English (United States) / en-US-AvaMultilingualNeural (Female)"
+  },
+  {
+    "id": "en-US-AvaNeural",
+    "label": "English (United States) / en-US-AvaNeural (Female)"
+  },
+  {
+    "id": "en-US-BrianMultilingualNeural",
+    "label": "English (United States) / en-US-BrianMultilingualNeural (Male)"
+  },
+  {
+    "id": "en-US-BrianNeural",
+    "label": "English (United States) / en-US-BrianNeural (Male)"
+  },
+  {
+    "id": "en-US-ChristopherNeural",
+    "label": "English (United States) / en-US-ChristopherNeural (Male)"
+  },
+  {
+    "id": "en-US-EmmaMultilingualNeural",
+    "label": "English (United States) / en-US-EmmaMultilingualNeural (Female)"
+  },
+  {
+    "id": "en-US-EmmaNeural",
+    "label": "English (United States) / en-US-EmmaNeural (Female)"
+  },
+  {
+    "id": "en-US-EricNeural",
+    "label": "English (United States) / en-US-EricNeural (Male)"
+  },
+  {
+    "id": "en-US-GuyNeural",
+    "label": "English (United States) / en-US-GuyNeural (Male)"
+  },
+  {
+    "id": "en-US-JennyNeural",
+    "label": "English (United States) / en-US-JennyNeural (Female)"
+  },
+  {
+    "id": "en-US-MichelleNeural",
+    "label": "English (United States) / en-US-MichelleNeural (Female)"
+  },
+  {
+    "id": "en-US-RogerNeural",
+    "label": "English (United States) / en-US-RogerNeural (Male)"
+  },
+  {
+    "id": "en-US-SteffanNeural",
+    "label": "English (United States) / en-US-SteffanNeural (Male)"
+  },
+  {
+    "id": "en-ZA-LeahNeural",
+    "label": "English (South Africa) / en-ZA-LeahNeural (Female)"
+  },
+  {
+    "id": "en-ZA-LukeNeural",
+    "label": "English (South Africa) / en-ZA-LukeNeural (Male)"
+  },
+  {
+    "id": "es-AR-ElenaNeural",
+    "label": "Spanish (Argentina) / es-AR-ElenaNeural (Female)"
+  },
+  {
+    "id": "es-AR-TomasNeural",
+    "label": "Spanish (Argentina) / es-AR-TomasNeural (Male)"
+  },
+  {
+    "id": "es-BO-MarceloNeural",
+    "label": "Spanish (Bolivia) / es-BO-MarceloNeural (Male)"
+  },
+  {
+    "id": "es-BO-SofiaNeural",
+    "label": "Spanish (Bolivia) / es-BO-SofiaNeural (Female)"
+  },
+  {
+    "id": "es-CL-CatalinaNeural",
+    "label": "Spanish (Chile) / es-CL-CatalinaNeural (Female)"
+  },
+  {
+    "id": "es-CL-LorenzoNeural",
+    "label": "Spanish (Chile) / es-CL-LorenzoNeural (Male)"
+  },
+  {
+    "id": "es-CO-GonzaloNeural",
+    "label": "Spanish (Colombia) / es-CO-GonzaloNeural (Male)"
+  },
+  {
+    "id": "es-CO-SalomeNeural",
+    "label": "Spanish (Colombia) / es-CO-SalomeNeural (Female)"
+  },
+  {
+    "id": "es-CR-JuanNeural",
+    "label": "Spanish (Costa Rica) / es-CR-JuanNeural (Male)"
+  },
+  {
+    "id": "es-CR-MariaNeural",
+    "label": "Spanish (Costa Rica) / es-CR-MariaNeural (Female)"
+  },
+  {
+    "id": "es-CU-BelkysNeural",
+    "label": "Spanish (Cuba) / es-CU-BelkysNeural (Female)"
+  },
+  {
+    "id": "es-CU-ManuelNeural",
+    "label": "Spanish (Cuba) / es-CU-ManuelNeural (Male)"
+  },
+  {
+    "id": "es-DO-EmilioNeural",
+    "label": "Spanish (Dominican Republic) / es-DO-EmilioNeural (Male)"
+  },
+  {
+    "id": "es-DO-RamonaNeural",
+    "label": "Spanish (Dominican Republic) / es-DO-RamonaNeural (Female)"
+  },
+  {
+    "id": "es-EC-AndreaNeural",
+    "label": "Spanish (Ecuador) / es-EC-AndreaNeural (Female)"
+  },
+  {
+    "id": "es-EC-LuisNeural",
+    "label": "Spanish (Ecuador) / es-EC-LuisNeural (Male)"
+  },
+  {
+    "id": "es-ES-AlvaroNeural",
+    "label": "Spanish (Spain) / es-ES-AlvaroNeural (Male)"
+  },
+  {
+    "id": "es-ES-ElviraNeural",
+    "label": "Spanish (Spain) / es-ES-ElviraNeural (Female)"
+  },
+  {
+    "id": "es-ES-XimenaNeural",
+    "label": "Spanish (Spain) / es-ES-XimenaNeural (Female)"
+  },
+  {
+    "id": "es-GQ-JavierNeural",
+    "label": "Spanish (Equatorial Guinea) / es-GQ-JavierNeural (Male)"
+  },
+  {
+    "id": "es-GQ-TeresaNeural",
+    "label": "Spanish (Equatorial Guinea) / es-GQ-TeresaNeural (Female)"
+  },
+  {
+    "id": "es-GT-AndresNeural",
+    "label": "Spanish (Guatemala) / es-GT-AndresNeural (Male)"
+  },
+  {
+    "id": "es-GT-MartaNeural",
+    "label": "Spanish (Guatemala) / es-GT-MartaNeural (Female)"
+  },
+  {
+    "id": "es-HN-CarlosNeural",
+    "label": "Spanish (Honduras) / es-HN-CarlosNeural (Male)"
+  },
+  {
+    "id": "es-HN-KarlaNeural",
+    "label": "Spanish (Honduras) / es-HN-KarlaNeural (Female)"
+  },
+  {
+    "id": "es-MX-DaliaNeural",
+    "label": "Spanish (Mexico) / es-MX-DaliaNeural (Female)"
+  },
+  {
+    "id": "es-MX-JorgeNeural",
+    "label": "Spanish (Mexico) / es-MX-JorgeNeural (Male)"
+  },
+  {
+    "id": "es-NI-FedericoNeural",
+    "label": "Spanish (Nicaragua) / es-NI-FedericoNeural (Male)"
+  },
+  {
+    "id": "es-NI-YolandaNeural",
+    "label": "Spanish (Nicaragua) / es-NI-YolandaNeural (Female)"
+  },
+  {
+    "id": "es-PA-MargaritaNeural",
+    "label": "Spanish (Panama) / es-PA-MargaritaNeural (Female)"
+  },
+  {
+    "id": "es-PA-RobertoNeural",
+    "label": "Spanish (Panama) / es-PA-RobertoNeural (Male)"
+  },
+  {
+    "id": "es-PE-AlexNeural",
+    "label": "Spanish (Peru) / es-PE-AlexNeural (Male)"
+  },
+  {
+    "id": "es-PE-CamilaNeural",
+    "label": "Spanish (Peru) / es-PE-CamilaNeural (Female)"
+  },
+  {
+    "id": "es-PR-KarinaNeural",
+    "label": "Spanish (Puerto Rico) / es-PR-KarinaNeural (Female)"
+  },
+  {
+    "id": "es-PR-VictorNeural",
+    "label": "Spanish (Puerto Rico) / es-PR-VictorNeural (Male)"
+  },
+  {
+    "id": "es-PY-MarioNeural",
+    "label": "Spanish (Paraguay) / es-PY-MarioNeural (Male)"
+  },
+  {
+    "id": "es-PY-TaniaNeural",
+    "label": "Spanish (Paraguay) / es-PY-TaniaNeural (Female)"
+  },
+  {
+    "id": "es-SV-LorenaNeural",
+    "label": "Spanish (El Salvador) / es-SV-LorenaNeural (Female)"
+  },
+  {
+    "id": "es-SV-RodrigoNeural",
+    "label": "Spanish (El Salvador) / es-SV-RodrigoNeural (Male)"
+  },
+  {
+    "id": "es-US-AlonsoNeural",
+    "label": "Spanish (United States) / es-US-AlonsoNeural (Male)"
+  },
+  {
+    "id": "es-US-PalomaNeural",
+    "label": "Spanish (United States) / es-US-PalomaNeural (Female)"
+  },
+  {
+    "id": "es-UY-MateoNeural",
+    "label": "Spanish (Uruguay) / es-UY-MateoNeural (Male)"
+  },
+  {
+    "id": "es-UY-ValentinaNeural",
+    "label": "Spanish (Uruguay) / es-UY-ValentinaNeural (Female)"
+  },
+  {
+    "id": "es-VE-PaolaNeural",
+    "label": "Spanish (Venezuela) / es-VE-PaolaNeural (Female)"
+  },
+  {
+    "id": "es-VE-SebastianNeural",
+    "label": "Spanish (Venezuela) / es-VE-SebastianNeural (Male)"
+  },
+  {
+    "id": "et-EE-AnuNeural",
+    "label": "Estonian (Estonia) / et-EE-AnuNeural (Female)"
+  },
+  {
+    "id": "et-EE-KertNeural",
+    "label": "Estonian (Estonia) / et-EE-KertNeural (Male)"
+  },
+  {
+    "id": "fa-IR-DilaraNeural",
+    "label": "Persian (Iran) / fa-IR-DilaraNeural (Female)"
+  },
+  {
+    "id": "fa-IR-FaridNeural",
+    "label": "Persian (Iran) / fa-IR-FaridNeural (Male)"
+  },
+  {
+    "id": "fi-FI-HarriNeural",
+    "label": "Finnish (Finland) / fi-FI-HarriNeural (Male)"
+  },
+  {
+    "id": "fi-FI-NooraNeural",
+    "label": "Finnish (Finland) / fi-FI-NooraNeural (Female)"
+  },
+  {
+    "id": "fil-PH-AngeloNeural",
+    "label": "Filipino (Philippines) / fil-PH-AngeloNeural (Male)"
+  },
+  {
+    "id": "fil-PH-BlessicaNeural",
+    "label": "Filipino (Philippines) / fil-PH-BlessicaNeural (Female)"
+  },
+  {
+    "id": "fr-BE-CharlineNeural",
+    "label": "French (Belgium) / fr-BE-CharlineNeural (Female)"
+  },
+  {
+    "id": "fr-BE-GerardNeural",
+    "label": "French (Belgium) / fr-BE-GerardNeural (Male)"
+  },
+  {
+    "id": "fr-CA-AntoineNeural",
+    "label": "French (Canada) / fr-CA-AntoineNeural (Male)"
+  },
+  {
+    "id": "fr-CA-JeanNeural",
+    "label": "French (Canada) / fr-CA-JeanNeural (Male)"
+  },
+  {
+    "id": "fr-CA-SylvieNeural",
+    "label": "French (Canada) / fr-CA-SylvieNeural (Female)"
+  },
+  {
+    "id": "fr-CA-ThierryNeural",
+    "label": "French (Canada) / fr-CA-ThierryNeural (Male)"
+  },
+  {
+    "id": "fr-CH-ArianeNeural",
+    "label": "French (Switzerland) / fr-CH-ArianeNeural (Female)"
+  },
+  {
+    "id": "fr-CH-FabriceNeural",
+    "label": "French (Switzerland) / fr-CH-FabriceNeural (Male)"
+  },
+  {
+    "id": "fr-FR-DeniseNeural",
+    "label": "French (France) / fr-FR-DeniseNeural (Female)"
+  },
+  {
+    "id": "fr-FR-EloiseNeural",
+    "label": "French (France) / fr-FR-EloiseNeural (Female)"
+  },
+  {
+    "id": "fr-FR-HenriNeural",
+    "label": "French (France) / fr-FR-HenriNeural (Male)"
+  },
+  {
+    "id": "fr-FR-RemyMultilingualNeural",
+    "label": "French (France) / fr-FR-RemyMultilingualNeural (Male)"
+  },
+  {
+    "id": "fr-FR-VivienneMultilingualNeural",
+    "label": "French (France) / fr-FR-VivienneMultilingualNeural (Female)"
+  },
+  {
+    "id": "ga-IE-ColmNeural",
+    "label": "Irish (Ireland) / ga-IE-ColmNeural (Male)"
+  },
+  {
+    "id": "ga-IE-OrlaNeural",
+    "label": "Irish (Ireland) / ga-IE-OrlaNeural (Female)"
+  },
+  {
+    "id": "gl-ES-RoiNeural",
+    "label": "Galician / gl-ES-RoiNeural (Male)"
+  },
+  {
+    "id": "gl-ES-SabelaNeural",
+    "label": "Galician / gl-ES-SabelaNeural (Female)"
+  },
+  {
+    "id": "gu-IN-DhwaniNeural",
+    "label": "Gujarati (India) / gu-IN-DhwaniNeural (Female)"
+  },
+  {
+    "id": "gu-IN-NiranjanNeural",
+    "label": "Gujarati (India) / gu-IN-NiranjanNeural (Male)"
+  },
+  {
+    "id": "he-IL-AvriNeural",
+    "label": "Hebrew (Israel) / he-IL-AvriNeural (Male)"
+  },
+  {
+    "id": "he-IL-HilaNeural",
+    "label": "Hebrew (Israel) / he-IL-HilaNeural (Female)"
+  },
+  {
+    "id": "hi-IN-MadhurNeural",
+    "label": "Hindi (India) / hi-IN-MadhurNeural (Male)"
+  },
+  {
+    "id": "hi-IN-SwaraNeural",
+    "label": "Hindi (India) / hi-IN-SwaraNeural (Female)"
+  },
+  {
+    "id": "hr-HR-GabrijelaNeural",
+    "label": "Croatian (Croatia) / hr-HR-GabrijelaNeural (Female)"
+  },
+  {
+    "id": "hr-HR-SreckoNeural",
+    "label": "Croatian (Croatia) / hr-HR-SreckoNeural (Male)"
+  },
+  {
+    "id": "hu-HU-NoemiNeural",
+    "label": "Hungarian (Hungary) / hu-HU-NoemiNeural (Female)"
+  },
+  {
+    "id": "hu-HU-TamasNeural",
+    "label": "Hungarian (Hungary) / hu-HU-TamasNeural (Male)"
+  },
+  {
+    "id": "id-ID-ArdiNeural",
+    "label": "Indonesian (Indonesia) / id-ID-ArdiNeural (Male)"
+  },
+  {
+    "id": "id-ID-GadisNeural",
+    "label": "Indonesian (Indonesia) / id-ID-GadisNeural (Female)"
+  },
+  {
+    "id": "is-IS-GudrunNeural",
+    "label": "Icelandic (Iceland) / is-IS-GudrunNeural (Female)"
+  },
+  {
+    "id": "is-IS-GunnarNeural",
+    "label": "Icelandic (Iceland) / is-IS-GunnarNeural (Male)"
+  },
+  {
+    "id": "it-IT-DiegoNeural",
+    "label": "Italian (Italy) / it-IT-DiegoNeural (Male)"
+  },
+  {
+    "id": "it-IT-ElsaNeural",
+    "label": "Italian (Italy) / it-IT-ElsaNeural (Female)"
+  },
+  {
+    "id": "it-IT-GiuseppeMultilingualNeural",
+    "label": "Italian (Italy) / it-IT-GiuseppeMultilingualNeural (Male)"
+  },
+  {
+    "id": "it-IT-IsabellaNeural",
+    "label": "Italian (Italy) / it-IT-IsabellaNeural (Female)"
+  },
+  {
+    "id": "iu-Cans-CA-SiqiniqNeural",
+    "label": "Inuktitut (Syllabics, Canada) / iu-Cans-CA-SiqiniqNeural (Female)"
+  },
+  {
+    "id": "iu-Cans-CA-TaqqiqNeural",
+    "label": "Inuktitut (Syllabics, Canada) / iu-Cans-CA-TaqqiqNeural (Male)"
+  },
+  {
+    "id": "iu-Latn-CA-SiqiniqNeural",
+    "label": "Inuktitut (Latin, Canada) / iu-Latn-CA-SiqiniqNeural (Female)"
+  },
+  {
+    "id": "iu-Latn-CA-TaqqiqNeural",
+    "label": "Inuktitut (Latin, Canada) / iu-Latn-CA-TaqqiqNeural (Male)"
+  },
+  {
+    "id": "ja-JP-KeitaNeural",
+    "label": "Japanese (Japan) / ja-JP-KeitaNeural (Male)"
+  },
+  {
+    "id": "ja-JP-NanamiNeural",
+    "label": "Japanese (Japan) / ja-JP-NanamiNeural (Female)"
+  },
+  {
+    "id": "jv-ID-DimasNeural",
+    "label": "Javanese (Latin, Indonesia) / jv-ID-DimasNeural (Male)"
+  },
+  {
+    "id": "jv-ID-SitiNeural",
+    "label": "Javanese (Latin, Indonesia) / jv-ID-SitiNeural (Female)"
+  },
+  {
+    "id": "ka-GE-EkaNeural",
+    "label": "Georgian (Georgia) / ka-GE-EkaNeural (Female)"
+  },
+  {
+    "id": "ka-GE-GiorgiNeural",
+    "label": "Georgian (Georgia) / ka-GE-GiorgiNeural (Male)"
+  },
+  {
+    "id": "kk-KZ-AigulNeural",
+    "label": "Kazakh (Kazakhstan) / kk-KZ-AigulNeural (Female)"
+  },
+  {
+    "id": "kk-KZ-DauletNeural",
+    "label": "Kazakh (Kazakhstan) / kk-KZ-DauletNeural (Male)"
+  },
+  {
+    "id": "km-KH-PisethNeural",
+    "label": "Khmer (Cambodia) / km-KH-PisethNeural (Male)"
+  },
+  {
+    "id": "km-KH-SreymomNeural",
+    "label": "Khmer (Cambodia) / km-KH-SreymomNeural (Female)"
+  },
+  {
+    "id": "kn-IN-GaganNeural",
+    "label": "Kannada (India) / kn-IN-GaganNeural (Male)"
+  },
+  {
+    "id": "kn-IN-SapnaNeural",
+    "label": "Kannada (India) / kn-IN-SapnaNeural (Female)"
+  },
+  {
+    "id": "ko-KR-HyunsuMultilingualNeural",
+    "label": "Korean (Korea) / ko-KR-HyunsuMultilingualNeural (Male)"
+  },
+  {
+    "id": "ko-KR-InJoonNeural",
+    "label": "Korean (Korea) / ko-KR-InJoonNeural (Male)"
+  },
+  {
+    "id": "ko-KR-SunHiNeural",
+    "label": "Korean (Korea) / ko-KR-SunHiNeural (Female)"
+  },
+  {
+    "id": "lo-LA-ChanthavongNeural",
+    "label": "Lao (Laos) / lo-LA-ChanthavongNeural (Male)"
+  },
+  {
+    "id": "lo-LA-KeomanyNeural",
+    "label": "Lao (Laos) / lo-LA-KeomanyNeural (Female)"
+  },
+  {
+    "id": "lt-LT-LeonasNeural",
+    "label": "Lithuanian (Lithuania) / lt-LT-LeonasNeural (Male)"
+  },
+  {
+    "id": "lt-LT-OnaNeural",
+    "label": "Lithuanian (Lithuania) / lt-LT-OnaNeural (Female)"
+  },
+  {
+    "id": "lv-LV-EveritaNeural",
+    "label": "Latvian (Latvia) / lv-LV-EveritaNeural (Female)"
+  },
+  {
+    "id": "lv-LV-NilsNeural",
+    "label": "Latvian (Latvia) / lv-LV-NilsNeural (Male)"
+  },
+  {
+    "id": "mk-MK-AleksandarNeural",
+    "label": "Macedonian (North Macedonia) / mk-MK-AleksandarNeural (Male)"
+  },
+  {
+    "id": "mk-MK-MarijaNeural",
+    "label": "Macedonian (North Macedonia) / mk-MK-MarijaNeural (Female)"
+  },
+  {
+    "id": "ml-IN-MidhunNeural",
+    "label": "Malayalam (India) / ml-IN-MidhunNeural (Male)"
+  },
+  {
+    "id": "ml-IN-SobhanaNeural",
+    "label": "Malayalam (India) / ml-IN-SobhanaNeural (Female)"
+  },
+  {
+    "id": "mn-MN-BataaNeural",
+    "label": "Mongolian (Mongolia) / mn-MN-BataaNeural (Male)"
+  },
+  {
+    "id": "mn-MN-YesuiNeural",
+    "label": "Mongolian (Mongolia) / mn-MN-YesuiNeural (Female)"
+  },
+  {
+    "id": "mr-IN-AarohiNeural",
+    "label": "Marathi (India) / mr-IN-AarohiNeural (Female)"
+  },
+  {
+    "id": "mr-IN-ManoharNeural",
+    "label": "Marathi (India) / mr-IN-ManoharNeural (Male)"
+  },
+  {
+    "id": "ms-MY-OsmanNeural",
+    "label": "Malay (Malaysia) / ms-MY-OsmanNeural (Male)"
+  },
+  {
+    "id": "ms-MY-YasminNeural",
+    "label": "Malay (Malaysia) / ms-MY-YasminNeural (Female)"
+  },
+  {
+    "id": "mt-MT-GraceNeural",
+    "label": "Maltese (Malta) / mt-MT-GraceNeural (Female)"
+  },
+  {
+    "id": "mt-MT-JosephNeural",
+    "label": "Maltese (Malta) / mt-MT-JosephNeural (Male)"
+  },
+  {
+    "id": "my-MM-NilarNeural",
+    "label": "Burmese (Myanmar) / my-MM-NilarNeural (Female)"
+  },
+  {
+    "id": "my-MM-ThihaNeural",
+    "label": "Burmese (Myanmar) / my-MM-ThihaNeural (Male)"
+  },
+  {
+    "id": "nb-NO-FinnNeural",
+    "label": "Norwegian Bokmål (Norway) / nb-NO-FinnNeural (Male)"
+  },
+  {
+    "id": "nb-NO-PernilleNeural",
+    "label": "Norwegian Bokmål (Norway) / nb-NO-PernilleNeural (Female)"
+  },
+  {
+    "id": "ne-NP-HemkalaNeural",
+    "label": "Nepali (Nepal) / ne-NP-HemkalaNeural (Female)"
+  },
+  {
+    "id": "ne-NP-SagarNeural",
+    "label": "Nepali (Nepal) / ne-NP-SagarNeural (Male)"
+  },
+  {
+    "id": "nl-BE-ArnaudNeural",
+    "label": "Dutch (Belgium) / nl-BE-ArnaudNeural (Male)"
+  },
+  {
+    "id": "nl-BE-DenaNeural",
+    "label": "Dutch (Belgium) / nl-BE-DenaNeural (Female)"
+  },
+  {
+    "id": "nl-NL-ColetteNeural",
+    "label": "Dutch (Netherlands) / nl-NL-ColetteNeural (Female)"
+  },
+  {
+    "id": "nl-NL-FennaNeural",
+    "label": "Dutch (Netherlands) / nl-NL-FennaNeural (Female)"
+  },
+  {
+    "id": "nl-NL-MaartenNeural",
+    "label": "Dutch (Netherlands) / nl-NL-MaartenNeural (Male)"
+  },
+  {
+    "id": "pl-PL-MarekNeural",
+    "label": "Polish (Poland) / pl-PL-MarekNeural (Male)"
+  },
+  {
+    "id": "pl-PL-ZofiaNeural",
+    "label": "Polish (Poland) / pl-PL-ZofiaNeural (Female)"
+  },
+  {
+    "id": "ps-AF-GulNawazNeural",
+    "label": "Pashto (Afghanistan) / ps-AF-GulNawazNeural (Male)"
+  },
+  {
+    "id": "ps-AF-LatifaNeural",
+    "label": "Pashto (Afghanistan) / ps-AF-LatifaNeural (Female)"
+  },
+  {
+    "id": "pt-BR-AntonioNeural",
+    "label": "Portuguese (Brazil) / pt-BR-AntonioNeural (Male)"
+  },
+  {
+    "id": "pt-BR-FranciscaNeural",
+    "label": "Portuguese (Brazil) / pt-BR-FranciscaNeural (Female)"
+  },
+  {
+    "id": "pt-BR-ThalitaMultilingualNeural",
+    "label": "Portuguese (Brazil) / pt-BR-ThalitaMultilingualNeural (Female)"
+  },
+  {
+    "id": "pt-PT-DuarteNeural",
+    "label": "Portuguese (Portugal) / pt-PT-DuarteNeural (Male)"
+  },
+  {
+    "id": "pt-PT-RaquelNeural",
+    "label": "Portuguese (Portugal) / pt-PT-RaquelNeural (Female)"
+  },
+  {
+    "id": "ro-RO-AlinaNeural",
+    "label": "Romanian (Romania) / ro-RO-AlinaNeural (Female)"
+  },
+  {
+    "id": "ro-RO-EmilNeural",
+    "label": "Romanian (Romania) / ro-RO-EmilNeural (Male)"
+  },
+  {
+    "id": "ru-RU-DmitryNeural",
+    "label": "Russian (Russia) / ru-RU-DmitryNeural (Male)"
+  },
+  {
+    "id": "ru-RU-SvetlanaNeural",
+    "label": "Russian (Russia) / ru-RU-SvetlanaNeural (Female)"
+  },
+  {
+    "id": "si-LK-SameeraNeural",
+    "label": "Sinhala (Sri Lanka) / si-LK-SameeraNeural (Male)"
+  },
+  {
+    "id": "si-LK-ThiliniNeural",
+    "label": "Sinhala (Sri Lanka) / si-LK-ThiliniNeural (Female)"
+  },
+  {
+    "id": "sk-SK-LukasNeural",
+    "label": "Slovak (Slovakia) / sk-SK-LukasNeural (Male)"
+  },
+  {
+    "id": "sk-SK-ViktoriaNeural",
+    "label": "Slovak (Slovakia) / sk-SK-ViktoriaNeural (Female)"
+  },
+  {
+    "id": "sl-SI-PetraNeural",
+    "label": "Slovenian (Slovenia) / sl-SI-PetraNeural (Female)"
+  },
+  {
+    "id": "sl-SI-RokNeural",
+    "label": "Slovenian (Slovenia) / sl-SI-RokNeural (Male)"
+  },
+  {
+    "id": "so-SO-MuuseNeural",
+    "label": "Somali (Somalia) / so-SO-MuuseNeural (Male)"
+  },
+  {
+    "id": "so-SO-UbaxNeural",
+    "label": "Somali (Somalia) / so-SO-UbaxNeural (Female)"
+  },
+  {
+    "id": "sq-AL-AnilaNeural",
+    "label": "Albanian (Albania) / sq-AL-AnilaNeural (Female)"
+  },
+  {
+    "id": "sq-AL-IlirNeural",
+    "label": "Albanian (Albania) / sq-AL-IlirNeural (Male)"
+  },
+  {
+    "id": "sr-RS-NicholasNeural",
+    "label": "Serbian (Cyrillic, Serbia) / sr-RS-NicholasNeural (Male)"
+  },
+  {
+    "id": "sr-RS-SophieNeural",
+    "label": "Serbian (Cyrillic, Serbia) / sr-RS-SophieNeural (Female)"
+  },
+  {
+    "id": "su-ID-JajangNeural",
+    "label": "Sundanese (Indonesia) / su-ID-JajangNeural (Male)"
+  },
+  {
+    "id": "su-ID-TutiNeural",
+    "label": "Sundanese (Indonesia) / su-ID-TutiNeural (Female)"
+  },
+  {
+    "id": "sv-SE-MattiasNeural",
+    "label": "Swedish (Sweden) / sv-SE-MattiasNeural (Male)"
+  },
+  {
+    "id": "sv-SE-SofieNeural",
+    "label": "Swedish (Sweden) / sv-SE-SofieNeural (Female)"
+  },
+  {
+    "id": "sw-KE-RafikiNeural",
+    "label": "Swahili (Kenya) / sw-KE-RafikiNeural (Male)"
+  },
+  {
+    "id": "sw-KE-ZuriNeural",
+    "label": "Swahili (Kenya) / sw-KE-ZuriNeural (Female)"
+  },
+  {
+    "id": "sw-TZ-DaudiNeural",
+    "label": "Swahili (Tanzania) / sw-TZ-DaudiNeural (Male)"
+  },
+  {
+    "id": "sw-TZ-RehemaNeural",
+    "label": "Swahili (Tanzania) / sw-TZ-RehemaNeural (Female)"
+  },
+  {
+    "id": "ta-IN-PallaviNeural",
+    "label": "Tamil (India) / ta-IN-PallaviNeural (Female)"
+  },
+  {
+    "id": "ta-IN-ValluvarNeural",
+    "label": "Tamil (India) / ta-IN-ValluvarNeural (Male)"
+  },
+  {
+    "id": "ta-LK-KumarNeural",
+    "label": "Tamil (Sri Lanka) / ta-LK-KumarNeural (Male)"
+  },
+  {
+    "id": "ta-LK-SaranyaNeural",
+    "label": "Tamil (Sri Lanka) / ta-LK-SaranyaNeural (Female)"
+  },
+  {
+    "id": "ta-MY-KaniNeural",
+    "label": "Tamil (Malaysia) / ta-MY-KaniNeural (Female)"
+  },
+  {
+    "id": "ta-MY-SuryaNeural",
+    "label": "Tamil (Malaysia) / ta-MY-SuryaNeural (Male)"
+  },
+  {
+    "id": "ta-SG-AnbuNeural",
+    "label": "Tamil (Singapore) / ta-SG-AnbuNeural (Male)"
+  },
+  {
+    "id": "ta-SG-VenbaNeural",
+    "label": "Tamil (Singapore) / ta-SG-VenbaNeural (Female)"
+  },
+  {
+    "id": "te-IN-MohanNeural",
+    "label": "Telugu (India) / te-IN-MohanNeural (Male)"
+  },
+  {
+    "id": "te-IN-ShrutiNeural",
+    "label": "Telugu (India) / te-IN-ShrutiNeural (Female)"
+  },
+  {
+    "id": "th-TH-NiwatNeural",
+    "label": "Thai (Thailand) / th-TH-NiwatNeural (Male)"
+  },
+  {
+    "id": "th-TH-PremwadeeNeural",
+    "label": "Thai (Thailand) / th-TH-PremwadeeNeural (Female)"
+  },
+  {
+    "id": "tr-TR-AhmetNeural",
+    "label": "Turkish (Türkiye) / tr-TR-AhmetNeural (Male)"
+  },
+  {
+    "id": "tr-TR-EmelNeural",
+    "label": "Turkish (Türkiye) / tr-TR-EmelNeural (Female)"
+  },
+  {
+    "id": "uk-UA-OstapNeural",
+    "label": "Ukrainian (Ukraine) / uk-UA-OstapNeural (Male)"
+  },
+  {
+    "id": "uk-UA-PolinaNeural",
+    "label": "Ukrainian (Ukraine) / uk-UA-PolinaNeural (Female)"
+  },
+  {
+    "id": "ur-IN-GulNeural",
+    "label": "Urdu (India) / ur-IN-GulNeural (Female)"
+  },
+  {
+    "id": "ur-IN-SalmanNeural",
+    "label": "Urdu (India) / ur-IN-SalmanNeural (Male)"
+  },
+  {
+    "id": "ur-PK-AsadNeural",
+    "label": "Urdu (Pakistan) / ur-PK-AsadNeural (Male)"
+  },
+  {
+    "id": "ur-PK-UzmaNeural",
+    "label": "Urdu (Pakistan) / ur-PK-UzmaNeural (Female)"
+  },
+  {
+    "id": "uz-UZ-MadinaNeural",
+    "label": "Uzbek (Latin, Uzbekistan) / uz-UZ-MadinaNeural (Female)"
+  },
+  {
+    "id": "uz-UZ-SardorNeural",
+    "label": "Uzbek (Latin, Uzbekistan) / uz-UZ-SardorNeural (Male)"
+  },
+  {
+    "id": "vi-VN-HoaiMyNeural",
+    "label": "Vietnamese (Vietnam) / vi-VN-HoaiMyNeural (Female)"
+  },
+  {
+    "id": "vi-VN-NamMinhNeural",
+    "label": "Vietnamese (Vietnam) / vi-VN-NamMinhNeural (Male)"
+  },
+  {
+    "id": "zh-CN-XiaoxiaoNeural",
+    "label": "Chinese (Mandarin, Simplified) / zh-CN-XiaoxiaoNeural (Female)"
+  },
+  {
+    "id": "zh-CN-XiaoyiNeural",
+    "label": "Chinese (Mandarin, Simplified) / zh-CN-XiaoyiNeural (Female)"
+  },
+  {
+    "id": "zh-CN-YunjianNeural",
+    "label": "Chinese (Mandarin, Simplified) / zh-CN-YunjianNeural (Male)"
+  },
+  {
+    "id": "zh-CN-YunxiNeural",
+    "label": "Chinese (Mandarin, Simplified) / zh-CN-YunxiNeural (Male)"
+  },
+  {
+    "id": "zh-CN-YunxiaNeural",
+    "label": "Chinese (Mandarin, Simplified) / zh-CN-YunxiaNeural (Male)"
+  },
+  {
+    "id": "zh-CN-YunyangNeural",
+    "label": "Chinese (Mandarin, Simplified) / zh-CN-YunyangNeural (Male)"
+  },
+  {
+    "id": "zh-CN-liaoning-XiaobeiNeural",
+    "label": "Chinese (Northeastern Mandarin, Simplified) / zh-CN-liaoning-XiaobeiNeural (Female)"
+  },
+  {
+    "id": "zh-CN-shaanxi-XiaoniNeural",
+    "label": "Chinese (Zhongyuan Mandarin Shaanxi, Simplified) / zh-CN-shaanxi-XiaoniNeural (Female)"
+  },
+  {
+    "id": "zh-HK-HiuGaaiNeural",
+    "label": "Chinese (Cantonese, Traditional) / zh-HK-HiuGaaiNeural (Female)"
+  },
+  {
+    "id": "zh-HK-HiuMaanNeural",
+    "label": "Chinese (Cantonese, Traditional) / zh-HK-HiuMaanNeural (Female)"
+  },
+  {
+    "id": "zh-HK-WanLungNeural",
+    "label": "Chinese (Cantonese, Traditional) / zh-HK-WanLungNeural (Male)"
+  },
+  {
+    "id": "zh-TW-HsiaoChenNeural",
+    "label": "Chinese (Taiwanese Mandarin, Traditional) / zh-TW-HsiaoChenNeural (Female)"
+  },
+  {
+    "id": "zh-TW-HsiaoYuNeural",
+    "label": "Chinese (Taiwanese Mandarin, Traditional) / zh-TW-HsiaoYuNeural (Female)"
+  },
+  {
+    "id": "zh-TW-YunJheNeural",
+    "label": "Chinese (Taiwanese Mandarin, Traditional) / zh-TW-YunJheNeural (Male)"
+  },
+  {
+    "id": "zu-ZA-ThandoNeural",
+    "label": "Zulu (South Africa) / zu-ZA-ThandoNeural (Female)"
+  },
+  {
+    "id": "zu-ZA-ThembaNeural",
+    "label": "Zulu (South Africa) / zu-ZA-ThembaNeural (Male)"
+  }
+]
