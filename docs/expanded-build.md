@@ -5,7 +5,7 @@ mic;stem_live;yamnet;tts;stt. The smaller public-linux preset has no speech
 runtime or GPU dependency and remains available.
 
 Build prerequisites: C++17, CMake 3.28+, Ninja, libobs and frontend headers,
-pkg-config, libcurl, and separately acquired matched native speech runtimes.
+pkg-config, libcurl, FFmpeg development libraries (libavformat, libavcodec, libavutil, libswresample), and separately acquired matched native speech runtimes.
 Set the three CMake inputs as environment variables:
 
 ```sh
@@ -40,8 +40,7 @@ three variables above, plus:
 | STEM_VERIFY_SOURCE_WAV | Licensed 44.1 kHz stereo fixture, at least 16 seconds |
 
 Use the existing TTS workers in a separate XDG_RUNTIME_DIR for the
-integration tests. The TikTok test uses the configured localhost proxy on
-port 8790. The Edge and TikTok checks send generated test text to their
+integration tests. TikTok uses native HTTPS and in-process MP3 decoding; no localhost proxy or FFmpeg executable is required at runtime. The Edge and TikTok checks send generated test text to their
 online speech services, not live microphone input. Local-only users can
 omit the full online qualification until those services are configured.
 

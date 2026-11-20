@@ -16,6 +16,7 @@
 #include <deque>
 #include <unistd.h>
 #include "framework/tts_wav.hpp"
+#include "framework/tiktok_native.hpp"
 #include "framework/tts_voice_catalog.hpp"
 #include "framework/tts_text.hpp"
 #include "interop/sound_signal_client.hpp"
@@ -200,10 +201,11 @@ struct Transfer {
     uint64_t generation;
     std::vector<uint8_t> bytes;
     bool native_options=false;
+    size_t max_bytes=9*1024*1024;
 };
 size_t receive(char* p,size_t size,size_t nmemb,void* opaque){
     auto& t=*static_cast<Transfer*>(opaque);
-    constexpr size_t max=9*1024*1024;
+    const size_t max=t.max_bytes;
     if(size&&nmemb>max/size)return 0;
     size_t n=size*nmemb;
     if(n>max-t.bytes.size()||!t.state->current(t.generation))return 0;
@@ -234,14 +236,16 @@ bool synth(State& s,Engine engine,const std::string& voice,const std::string& te
     if(!tiktok){
         socket=local_socket(engine);
         if(socket.empty())return false;
-    }
+    }else if(text.size()>stts::TikTokChunkBytes)return false;
     auto* args=obs_data_create();
-    obs_data_set_string(args,"model",model(engine));
     obs_data_set_string(args,"voice",voice.c_str());
-    obs_data_set_string(args,"input",text.c_str());
-    obs_data_set_string(args,"response_format","wav");
-    if(local_model(engine))obs_data_set_int(args,"retention_ttl",ttl);
-    if(!tiktok){
+    if(tiktok){
+        obs_data_set_string(args,"text",text.c_str());
+    }else{
+        obs_data_set_string(args,"model",model(engine));
+        obs_data_set_string(args,"input",text.c_str());
+        obs_data_set_string(args,"response_format","wav");
+        if(local_model(engine))obs_data_set_int(args,"retention_ttl",ttl);
         auto* opts=obs_data_create_from_json(options_json.c_str());
         if(!opts){obs_data_release(args);return false;}
         obs_data_set_obj(args,"options",opts);obs_data_release(opts);
@@ -252,13 +256,19 @@ bool synth(State& s,Engine engine,const std::string& voice,const std::string& te
     if(!curl)return false;
     auto* headers=curl_slist_append(nullptr,"Content-Type: application/json");
     Transfer transfer{&s,g,{}};
-    curl_easy_setopt(curl,CURLOPT_URL,tiktok?"http://127.0.0.1:8790/v1/audio/speech":"http://localhost/v1/audio/speech");
+    curl_easy_setopt(curl,CURLOPT_URL,tiktok?stts::TikTokEndpoint:"http://localhost/v1/audio/speech");
+    if(tiktok){
+        transfer.max_bytes=stts::TikTokMaxResponse;
+        curl_easy_setopt(curl,CURLOPT_USERAGENT,"LiveLatentLab-Sound/1.0");
+        curl_easy_setopt(curl,CURLOPT_SSL_VERIFYPEER,1L);
+        curl_easy_setopt(curl,CURLOPT_SSL_VERIFYHOST,2L);
+    }
     if(!tiktok)curl_easy_setopt(curl,CURLOPT_UNIX_SOCKET_PATH,socket.c_str());
     curl_easy_setopt(curl,CURLOPT_PROXY,"");
     curl_easy_setopt(curl,CURLOPT_FOLLOWLOCATION,0L);
     curl_easy_setopt(curl,CURLOPT_NOSIGNAL,1L);
-    curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT_MS,1500L);
-    curl_easy_setopt(curl,CURLOPT_TIMEOUT_MS,45000L);
+    curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT_MS,tiktok?5000L:1500L);
+    curl_easy_setopt(curl,CURLOPT_TIMEOUT_MS,tiktok?15000L:45000L);
     curl_easy_setopt(curl,CURLOPT_HTTPHEADER,headers);
     curl_easy_setopt(curl,CURLOPT_POSTFIELDS,json.c_str());
     curl_easy_setopt(curl,CURLOPT_POSTFIELDSIZE,long(json.size()));
@@ -276,7 +286,13 @@ bool synth(State& s,Engine engine,const std::string& voice,const std::string& te
         blog(LOG_WARNING,"[Sound/TTS] %s worker is older than the native options protocol; restart the service",model(engine));
         return false;
     }
-    return result==CURLE_OK&&status==200&&s.current(g)&&stts::decode_tts_wav(transfer.bytes,pcm);
+    if(result!=CURLE_OK||status!=200||!s.current(g))return false;
+    if(tiktok){
+        if(!stts::decode_tiktok_response(std::string(transfer.bytes.begin(),transfer.bytes.end()),pcm)||!s.current(g))return false;
+        blog(LOG_INFO,"[Sound/TTS] SOUND_TIKTOK_NATIVE_HTTP_PASS rate=%u frames=%zu",pcm.rate,pcm.samples.size());
+        return true;
+    }
+    return stts::decode_tts_wav(transfer.bytes,pcm);
 }
 bool play(State& s,const stts::TtsPcm& pcm,uint64_t g){
     // Timestamp every packet from one sample clock; no render/video timing.
@@ -317,7 +333,7 @@ void run(State* s){
             voice=s->config.voice;engine=s->config.selected;ttl=s->config.ttl;options_json=s->config.synthesis_options;g=s->generation.load();
         }
         try {
-            auto chunks=stts::split_speech(text);
+            auto chunks=stts::split_speech(text,engine==Engine::TikTok?stts::TikTokChunkBytes:stts::MaxChunkBytes);
             bool ok=!chunks.empty();
             size_t played=0,total_frames=0;
             for(const auto& chunk:chunks){
@@ -578,7 +594,7 @@ template<Engine E>obs_properties_t* props(void* ptr){
             obs_property_list_add_string(selector,engine_label(e),model(e));
             add_voices(p,e,voice_key(e));
         }
-        auto* cloud=obs_properties_add_text(p,"cloud_note","Cloud: TikTok sends selected text to its community proxy; Edge sends selected text to Microsoft online speech. No automatic fallback.",OBS_TEXT_INFO);
+        auto* cloud=obs_properties_add_text(p,"cloud_note","Cloud: TikTok sends selected text directly to Ottsy (ottsy.weilbyte.dev), a third-party community proxy; Edge sends selected text to Microsoft online speech. No automatic fallback.",OBS_TEXT_INFO);
         (void)cloud;
         Engine selected=Engine::Kokoro;
         if(ptr){
@@ -663,7 +679,7 @@ template<Engine E>obs_properties_t* props(void* ptr){
     obs_properties_add_text(p,"note",E==Engine::Unified?
         "Switch backends without recreating this source. Each backend remembers its voice. No automatic fallback.":
         E==Engine::TikTok?
-        "Cloud: text is sent through the local TikTok community-proxy service. No local fallback.":
+        "Cloud: text is sent directly to Ottsy (ottsy.weilbyte.dev), a third-party community proxy. No local service or fallback.":
         "Local worker only. No cloud fallback. Change monitoring speaks the latest stable text; file mode is not supported.",
         OBS_TEXT_INFO);
     return p;

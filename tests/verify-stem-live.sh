@@ -167,6 +167,7 @@ grep -F 'STEM_WINDOW seq=0' "$work/model.log"
 grep -F 'STEM_WINDOW seq=1' "$work/model.log"
 echo "SOUND_STEM_LIVE_REAL_GPU_OBS_PASS=1"
 if [[ "$tts" == true ]]; then
+    "$root/tests/verify-tiktok-native.sh"
     # Release this test's GPU stem worker before speech acceptance. The
     # module is unchanged; this is not a concurrent inference stress test.
     kill "$worker_pid"; wait "$worker_pid" || true; worker_pid=""
@@ -180,6 +181,7 @@ if [[ "$tts" == true ]]; then
         grep -F "SOUND_TTS_REAL_OBS backend=$engine " "$work/tts-$engine.log" | grep -F 'pass=1'
         grep -F "SOUND_TTS_CLOCKED_20261118_T721 backend=$engine " "$work/tts-$engine.log"
     done
+    grep -F "SOUND_TIKTOK_NATIVE_HTTP_PASS" "$work/tts-tiktok.log"
     QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
         timeout 120 "$work/tts-audio" "$module" "$work/stage/data" unified unused \
         >"$work/tts-unified.log" 2>&1

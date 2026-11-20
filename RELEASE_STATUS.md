@@ -48,3 +48,24 @@ The exact staged binary and raw diagnostic logs are retained locally
 under the ignored build-public-combined directory, not in Git. No
 public release, worker provisioning, clean-machine verification or
 redistribution approval is implied.
+
+## Native TikTok client
+
+Supersedes the earlier localhost-proxy TikTok transport. Both dedicated and
+unified sources use native libcurl HTTPS to the existing third-party Ottsy
+endpoint; base64 MPEG decoding, mono float PCM conversion and clocked OBS
+playout happen in the plugin. No Python server, localhost port 8790,
+FFmpeg executable or temporary audio files are needed for this backend.
+FFmpeg shared development/runtime libraries are required for TTS builds.
+Cloud transcript consent, cancellation, voice selection and fail-closed
+behavior are retained. Cloud availability is not guaranteed.
+
+Verified on Linux with actual remote synthesis: dedicated source produced
+96,738 nonzero OBS samples, 2.5 seconds of playback, no bad samples. A
+connect/execve trace confirmed HTTPS port 443 and no port 8790 connection
+or FFmpeg/Python child. Expanded module registered all nine sources and
+passed the real unified five-backend switching/cancellation test. Offline
+MP3/JSON validation, UTF-8 chunk boundaries, existing WAV/text regressions,
+and empty quarantine passed. The complete unrelated STT/stem acceptance
+suite was not rerun for this change; its previous intermittent Parakeet
+failure remains open. No live installation or public publication.

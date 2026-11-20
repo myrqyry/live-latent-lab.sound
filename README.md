@@ -16,7 +16,7 @@ STT, speech relay and cross-plugin signals. Each group has passing real
 OBS tests on one exact module; an intermittent Parakeet 44.1 kHz lifecycle
 test prevents a clean combined qualification claim. See
 [release status](RELEASE_STATUS.md). Keep this profile opt-in.
-Other historical effects stay quarantined.
+Other historical effects stay quarantined. TikTok TTS now contacts the third-party Ottsy cloud endpoint directly from the native plugin and decodes audio in-process; it does not need the previous localhost Python service. Other speech engines retain their existing worker requirements.
 
 ## Build and stage
 

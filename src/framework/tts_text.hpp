@@ -36,11 +36,11 @@ inline bool valid_speech_text(const std::string& text){
 }
 // Preserve the complete UTF-8 byte sequence. Prefer a sentence boundary
 // in the second half, then a whitespace boundary, then a codepoint.
-inline std::vector<std::string> split_speech(const std::string& text){
+inline std::vector<std::string> split_speech(const std::string& text,size_t max_chunk=MaxChunkBytes){
     std::vector<std::string> chunks;
-    if(!valid_speech_text(text))return chunks;
+    if(!valid_speech_text(text)||max_chunk<4||max_chunk>MaxChunkBytes)return chunks;
     for(size_t start=0;start<text.size();){
-        auto end=std::min(start+MaxChunkBytes,text.size());
+        auto end=std::min(start+max_chunk,text.size());
         if(end<text.size()){
             while(end>start&&continuation(static_cast<unsigned char>(text[end])))--end;
             size_t sentence=0,word=0;
@@ -49,8 +49,8 @@ inline std::vector<std::string> split_speech(const std::string& text){
                 if(whitespace(last))word=i;
                 if((last=='.'||last=='!'||last=='?'||last=='\n')&&(i==text.size()||whitespace(text[i])))sentence=i;
             }
-            if(sentence>=start+MaxChunkBytes/2)end=sentence;
-            else if(word>=start+MaxChunkBytes/2)end=word;
+            if(sentence>=start+max_chunk/2)end=sentence;
+            else if(word>=start+max_chunk/2)end=word;
         }
         chunks.emplace_back(text.substr(start,end-start));start=end;
     }
