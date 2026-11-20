@@ -30,7 +30,7 @@ struct StemFilter {
 };
 
 const char* get_name(void*) {
-    return "Live Latent: Buffered stem (experimental)";
+    return "LLL.sound Buffered stem (experimental)";
 }
 void defaults(obs_data_t* settings) {
     obs_data_set_default_int(settings,"stem",3);

@@ -302,7 +302,7 @@ static void chatterbox_update(void *data_ptr, obs_data_t *settings) {
 }
 
 static const char *chatterbox_get_name(void *) {
-    return "Live Latent Sound: Voice Clone (Chatterbox)";
+    return "LLL.sound Voice Clone (Chatterbox)";
 }
 
 static void *chatterbox_create(obs_data_t *settings, obs_source_t *context) {

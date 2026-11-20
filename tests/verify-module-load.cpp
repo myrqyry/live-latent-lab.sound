@@ -68,7 +68,14 @@ int main(int argc, char **argv)
         obs_properties_t *props = initialized ? obs_get_source_properties(item.id) : nullptr;
         const bool found = props != nullptr;
         const bool wanted = contains(expected, item.gate);
-        if (found) ++registered;
+        if (found) {
+            ++registered;
+            const auto* label=obs_source_get_display_name(item.id);
+            if (!label || std::strncmp(label,"LLL.sound ",10)!=0) {
+                std::fprintf(stderr,"DISPLAY_NAMESPACE_MISMATCH id=%s\n",item.id);
+                matched=false;
+            }
+        }
         if (found != wanted) {
             std::fprintf(stderr, "REGISTRY_MISMATCH id=%s expected=%d actual=%d\n",
                          item.id, wanted, found);

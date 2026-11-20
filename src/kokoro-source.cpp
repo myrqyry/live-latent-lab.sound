@@ -121,7 +121,7 @@ static void kokoro_process_thread(kokoro_source_data *data) {
 /* ------------------------------------------------------------------------- */
 
 static const char *kokoro_get_name(void *) {
-    return "Live Latent Sound: Kokoro TTS";
+    return "LLL.sound Kokoro TTS";
 }
 
 static void kokoro_update(void *data_ptr, obs_data_t *settings) {

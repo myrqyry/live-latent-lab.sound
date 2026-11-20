@@ -18,7 +18,7 @@ struct matchering_data {
 static const char *matchering_get_name(void *unused)
 {
     UNUSED_PARAMETER(unused);
-    return "Matchering (Audio Match)";
+    return "LLL.sound Matchering (Audio Match)";
 }
 
 static void matchering_destroy(void *data)

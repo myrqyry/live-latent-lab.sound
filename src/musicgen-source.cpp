@@ -78,7 +78,7 @@ static void musicgen_process_thread(musicgen_source_data *data) {
 /* ------------------------------------------------------------------------- */
 
 static const char *musicgen_get_name(void *) {
-    return "Live Latent: AI Music Generator";
+    return "LLL.sound AI Music Generator";
 }
 
 static void musicgen_update(void *data_ptr, obs_data_t *settings) {

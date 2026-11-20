@@ -54,3 +54,5 @@ See LICENSE (GPL-2.0). Model weights and third-party runtime distribution
 are separate terms. No weights are included. The candidate is not yet
 approved for external publication; dependency provenance, fresh-machine
 testing and packaging remain open.
+
+In OBS, sources and filters use the `LLL.sound` display-name prefix. Existing internal OBS source IDs are unchanged.

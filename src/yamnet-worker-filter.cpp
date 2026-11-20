@@ -205,7 +205,7 @@ obs_properties_t* properties(void*){
        "No caption overlay yet.",OBS_TEXT_INFO);
     return props;
 }
-const char* get_name(void*){return "Live Latent: Native YAMNet (experimental)";}
+const char* get_name(void*){return "LLL.sound Native YAMNet (experimental)";}
 void* create(obs_data_t* settings,obs_source_t* source){
     auto* audio=obs_get_audio();
     const uint32_t rate=audio?audio_output_get_sample_rate(audio):0;

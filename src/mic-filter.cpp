@@ -21,7 +21,7 @@ struct MicFilter {
     uint32_t sample_rate{48000};
 };
 
-const char* get_name(void*) { return "Live Latent: Microphone DSP"; }
+const char* get_name(void*) { return "LLL.sound Microphone DSP"; }
 
 void defaults(obs_data_t* settings) {
     obs_data_set_default_int(settings, "mic_type", 0);

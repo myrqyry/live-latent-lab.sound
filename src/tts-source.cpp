@@ -742,11 +742,11 @@ template<Engine E>void* create(obs_data_t* settings,obs_source_t* context){
     return s;
 }
 template<Engine E>const char* name(void*){
-    if constexpr(E==Engine::Unified)return "Live Latent: TTS";
-    if constexpr(E==Engine::Kokoro)return "Live Latent: Kokoro TTS (local)";
-    if constexpr(E==Engine::Piper)return "Live Latent: Piper TTS (local)";
-    if constexpr(E==Engine::Chatterbox)return "Live Latent: Chatterbox Nano TTS (local GPU)";
-    return "Live Latent: TikTok TTS (cloud)";
+    if constexpr(E==Engine::Unified)return "LLL.sound TTS";
+    if constexpr(E==Engine::Kokoro)return "LLL.sound Kokoro TTS (local)";
+    if constexpr(E==Engine::Piper)return "LLL.sound Piper TTS (local)";
+    if constexpr(E==Engine::Chatterbox)return "LLL.sound Chatterbox Nano TTS (local GPU)";
+    return "LLL.sound TikTok TTS (cloud)";
 }
 template<Engine E>obs_source_info info(const char* id){
     obs_source_info x{};

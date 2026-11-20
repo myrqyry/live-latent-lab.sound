@@ -38,7 +38,7 @@ struct mediapipe_filter_data {
 static const char *mediapipe_get_name(void *type_data)
 {
     UNUSED_PARAMETER(type_data);
-    return "Mediapipe Face Mesh (ONNX)";
+    return "LLL.sound Mediapipe Face Mesh (ONNX)";
 }
 
 static void *mediapipe_create(obs_data_t *settings, obs_source_t *context)
