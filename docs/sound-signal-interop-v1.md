@@ -89,4 +89,4 @@ No arbitrary external network access. Intended for trusted in-process
 plugins, not isolation against hostile native code.
 
 
-This API is opt-in development code and is not enabled by the initial public-linux profile.
+This API is available in the opt-in public-linux-expanded profile. The independent native OBS client test passed; see RELEASE_STATUS.md for the combined qualification boundary.

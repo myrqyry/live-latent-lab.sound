@@ -18,3 +18,5 @@ __pycache__/
 *.gguf
 *.task
 .meristem/local/
+
+/stage-expanded/

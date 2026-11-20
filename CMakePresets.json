@@ -138,6 +138,21 @@
         "OBS_PLUGIN_DESTINATION": "bin/64bit",
         "OBS_DATA_DESTINATION": "data"
       }
+    },
+    {
+      "name": "public-linux-expanded",
+      "displayName": "Public Linux expanded candidate (explicit runtimes required)",
+      "inherits": [
+        "public-linux"
+      ],
+      "binaryDir": "${sourceDir}/build-public-expanded",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SOUND_EFFECTS": "mic;stem_live;yamnet;tts;stt",
+        "SOUND_STT_WHISPER_INCLUDE": "$env{SOUND_STT_WHISPER_INCLUDE}",
+        "SOUND_STT_RUNTIME_DIR": "$env{SOUND_STT_RUNTIME_DIR}",
+        "SOUND_STT_NEMOTRON_RUNTIME_DIR": "$env{SOUND_STT_NEMOTRON_RUNTIME_DIR}"
+      }
     }
   ],
   "buildPresets": [
@@ -186,6 +201,10 @@
     {
       "name": "public-linux",
       "configurePreset": "public-linux"
+    },
+    {
+      "name": "public-linux-expanded",
+      "configurePreset": "public-linux-expanded"
     }
   ]
 }

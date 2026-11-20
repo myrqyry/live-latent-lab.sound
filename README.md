@@ -10,9 +10,13 @@ public-release candidate, not yet a published or redistribution-cleared release.
   through unchanged. Requires a compatible MediaPipe 1.2.3 runtime and
   YAMNet model supplied by the user.
 
-Speech recognition, speech synthesis, cross-plugin routing and buffered
-stem separation are carried over as opt-in development code, not enabled
-in this candidate. Other historical effects stay quarantined.
+The separate [expanded Linux profile](docs/expanded-build.md) includes
+buffered HTDemucs stems, unified five-backend TTS, Whisper/Parakeet/Nemotron
+STT, speech relay and cross-plugin signals. Each group has passing real
+OBS tests on one exact module; an intermittent Parakeet 44.1 kHz lifecycle
+test prevents a clean combined qualification claim. See
+[release status](RELEASE_STATUS.md). Keep this profile opt-in.
+Other historical effects stay quarantined.
 
 ## Build and stage
 
