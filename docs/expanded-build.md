@@ -24,9 +24,10 @@ workers on a clean machine is still unqualified.
 
 ## Reproduce the full native acceptance check
 
-The existing private development test was adapted to require explicit
-paths instead of relying on the developer workstation. Configure the
-three variables above, plus:
+The native acceptance runner requires explicit external asset paths
+rather than machine-specific model defaults. A matching libobs and OBS
+text-source test environment is still needed. Configure the three
+variables above, plus:
 
 | Variable | Input |
 | --- | --- |

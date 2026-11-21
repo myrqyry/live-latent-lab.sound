@@ -1,7 +1,17 @@
 # Live Latent Lab: Sound
 
-Native audio processing and inference tools for OBS Studio. This is a local
-public-release candidate, not yet a published or redistribution-cleared release.
+Native audio processing and inference tools for OBS Studio.
+
+**Source:** [live-latent-lab.sound](https://github.com/myrqyry/live-latent-lab.sound)
+(currently private). This is a curated, separately rooted release-candidate
+repository, not the historical development repository. There are currently
+**no GitHub releases or redistribution-cleared installers**; building locally
+does not grant permission to redistribute third-party runtimes or models.
+
+**Start here:** The `public-linux` preset below builds the smaller Mic DSP +
+YAMNet candidate. For STT, TTS and buffered stems, follow the
+[expanded Linux instructions](docs/expanded-build.md). See the
+[release status](RELEASE_STATUS.md) for observed tests and unresolved issues.
 
 ## Linux x86_64 candidate
 
