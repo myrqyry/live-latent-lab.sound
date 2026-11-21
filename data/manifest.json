@@ -3,7 +3,7 @@
   "id": "live-latent-lab-sound",
   "version": "0.3.0",
   "author": "myrqyry",
-  "website": "https://github.com/myrqyry/live-latent-lab-sound-public",
+  "website": "https://github.com/myrqyry/live-latent-lab.sound",
   "description": "Audio processing and local inference for OBS Studio",
   "modules": {
     "bin/64bit": "live-latent-lab-sound.so"

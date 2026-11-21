@@ -108,13 +108,13 @@ extern "C" void open_docs_cb(void *private_data)
     QString localReadme = QCoreApplication::applicationDirPath() + "/../README.md";
     QUrl fileUrl = QUrl::fromLocalFile(localReadme);
     if (!QDesktopServices::openUrl(fileUrl))
-        QDesktopServices::openUrl(QUrl("https://github.com/myrqyry/live-latent-lab-sound"));
+        QDesktopServices::openUrl(QUrl("https://github.com/myrqyry/live-latent-lab.sound"));
 }
 
 extern "C" void check_updates_cb(void *private_data)
 {
     // Open the project's releases or documentation page where updates are posted
-    QDesktopServices::openUrl(QUrl("https://github.com/myrqyry/live-latent-lab-sound/releases"));
+    QDesktopServices::openUrl(QUrl("https://github.com/myrqyry/live-latent-lab.sound/releases"));
 }
 
 void init_optimizer_tools_menu()
