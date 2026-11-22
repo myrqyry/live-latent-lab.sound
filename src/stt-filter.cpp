@@ -20,17 +20,12 @@
 #include "engines/stt_parakeet.hpp"
 #include "engines/stt_nemotron.hpp"
 #include "framework/stt_capture.hpp"
+#include "framework/stt_config.hpp"
 #include "interop/sound_signal_client.hpp"
 namespace {
 using namespace std::chrono_literals;
+using Config = stts::SttConfig;
 constexpr int hz=16000,frame_size=320;
-struct Config {
-    std::string backend="whisper",model,parakeet_model,parakeet_library,target,language="en",prompt;
-    std::string nemotron_model,nemotron_library,nemotron_language="en-US";
-    int nemotron_threads=4,nemotron_right=3;
-    int threads=4,threshold=-45,silence=600,max_phrase=8000,hold=5000;
-    bool translate=false,while_muted=false;
-};
 struct CaptionBridge {
     std::mutex mutex;
     std::string desired_target,desired_text,owned_target,owned_text;
@@ -41,7 +36,7 @@ struct State {
     const unsigned rate,channels;
     stts::SttCapture capture;
     std::atomic<bool> stopping{false},accept{false},gap{false},while_muted{false},enabled{false},attached{false};
-    std::atomic<uint64_t> epoch{1},revision{1},dropped{0};
+    std::atomic<uint64_t> epoch{1},revision{1},hot_revision{1},dropped{0};
     std::mutex control;
     Config cfg;
     std::mutex result;
@@ -81,11 +76,21 @@ void caption(State&,const std::string&,const std::string&,uint64_t,bool);
 void update(void* ptr,obs_data_t* d){
     auto* s=static_cast<State*>(ptr);
     auto c=config(d);
-    s->accept=false;
-    {std::lock_guard lock(s->control);
-    s->cfg=std::move(c);s->while_muted=s->cfg.while_muted;
-    ++s->epoch;++s->revision;}
-    caption(*s,"","",0,false);
+    bool reload=false,target_changed=false;
+    {
+        std::lock_guard lock(s->control);
+        reload=stts::requires_model_reload(s->cfg,c);
+        target_changed=s->cfg.target!=c.target;
+        s->cfg=std::move(c);
+        s->while_muted=s->cfg.while_muted;
+        if(reload){
+            s->accept=false;
+            ++s->epoch;++s->revision;
+        }else{
+            ++s->hot_revision;
+        }
+    }
+    if(reload||target_changed)caption(*s,"","",0,false);
 }
 void set_status(State& s,const char* status){
     std::lock_guard lock(s.result);
@@ -172,7 +177,7 @@ void run(State& s){
     size_t fed=0;
     std::unique_ptr<audio_resampler_t,decltype(&audio_resampler_destroy)> resampler(nullptr,audio_resampler_destroy);
     Config c;
-    uint64_t rev=0,stream_epoch=0,expected_ts=0;
+    uint64_t rev=0,hot_rev=0,stream_epoch=0,expected_ts=0;
     bool ready=false,enabled=false;
     bool written=false;
     std::vector<float> phrase;
@@ -262,7 +267,7 @@ void run(State& s){
             s.accept=false;clear_caption();engine.close();parakeet.close();nemotron.close();ready=false;reset();
             {
                 std::lock_guard lock(s.control);
-                c=s.cfg;rev=s.revision.load();
+                c=s.cfg;rev=s.revision.load();hot_rev=s.hot_revision.load();
             }
             enabled=on;++s.epoch;stream_epoch=s.epoch.load();
             set_status(s,on?"loading":"off");
@@ -278,6 +283,20 @@ void run(State& s){
                 else blog(LOG_WARNING,"[Sound/STT] Could not load local model/runtime or language unsupported");
             }
             s.accept=ready&&!s.stopping&&s.revision==rev&&s.enabled&&s.attached;
+        }
+        // Apply capture/caption/utterance tuning without closing the model,
+        // resetting the resampler, or invalidating in-flight audio blocks.
+        if(s.hot_revision.load()!=hot_rev&&s.revision.load()==rev){
+            bool target_changed=false;
+            {
+                std::lock_guard lock(s.control);
+                if(s.revision.load()==rev){
+                    target_changed=c.target!=s.cfg.target;
+                    c=s.cfg;
+                    hot_rev=s.hot_revision.load();
+                }
+            }
+            if(target_changed)clear_caption();
         }
         auto e=s.epoch.load();
         if(stream_epoch!=e){
@@ -471,7 +490,7 @@ obs_properties_t* properties(void* ptr){
     obs_properties_add_int(p,"max_phrase_ms","Maximum phrase (ms)",1500,15000,100);
     obs_properties_add_int(p,"caption_hold_ms","Caption hold (ms)",1000,30000,100);
     obs_properties_add_bool(p,"process_muted","Transcribe muted audio");
-    obs_properties_add_text(p,"note","Local CPU inference. Nemotron supports partial captions; other engines publish completed phrases. Audio is unchanged. Choose a dedicated OBS text source (not file-backed). Change settings to reload; disable filter to unload.",OBS_TEXT_INFO);
+    obs_properties_add_text(p,"note","Local CPU inference. Nemotron supports partial captions; other engines publish completed phrases. Audio is unchanged. Choose a dedicated OBS text source (not file-backed). Gate, timing, prompt and caption target update live; model/runtime settings reload; disable filter to unload.",OBS_TEXT_INFO);
     backend_visibility(p,selected);
     return p;
 }

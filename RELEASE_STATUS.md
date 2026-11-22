@@ -89,3 +89,30 @@ binary passed the seven-switch five-backend real playback sequence,
 cancellation/recovery and independent signal-client end-to-end test
 (including native Nemotron, YAMNet, Piper and cloud consent). The empty
 quarantine also passed. The entire STT/stem qualification was not rerun.
+
+## STT live-tuning lifecycle candidate (2026-11-22)
+
+The expanded candidate now separates model/runtime setting changes from live
+capture and caption tuning. Energy threshold, silence/maximum phrase timing,
+caption hold and target, initial Whisper prompt, and muted-audio policy update
+the worker's settings without tearing down the loaded STT model. Backend,
+model/runtime paths, language and other session parameters still take the
+existing fail-closed reload path. A dedicated zero-model C++ policy regression
+test runs within the STT aggregate verification script.
+
+Evidence on the unchanged historical staged module: the newly added real-OBS
+hot-update assertion failed at 48 kHz (SOUND_STT_HOT_UPDATE_STABLE=0) while
+recognition, caption routing and baseline lifecycle checks passed. The freshly
+built expanded module passed the same actual Whisper/JFK fixture and OBS
+lifecycle harness at both 48 kHz and 44.1 kHz, each with
+SOUND_STT_HOT_UPDATE_STABLE=1, SOUND_STT_REAL pass=1, and missing-model
+recovery. The standalone config-policy test and existing STT capture test
+passed; expanded module built; zero-effect quarantine/registration check
+passed. These tests used temporary/ignored staging, without replacing the
+installed OBS plugin or changing the old qualified stage.
+
+This is narrowly verified Whisper hot-tuning behavior, **not** the complete
+expanded-profile acceptance suite. Parakeet's intermittent 44.1 kHz issue,
+Nemotron model-backed hot tuning, sustained live OBS use, and clean-machine
+qualification were not revalidated by this pass. Keep expanded features
+opt-in and maintain all existing release/distribution gates.

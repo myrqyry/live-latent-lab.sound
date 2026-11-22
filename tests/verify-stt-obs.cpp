@@ -129,6 +129,17 @@ int main(int argc,char** argv){
     bool words=lower.find("country")!=std::string::npos&&lower.find("ask")!=std::string::npos;
     cfg=obs_source_get_settings(target);std::string caption=obs_data_get_string(cfg,"text");obs_data_release(cfg);
     bool routed=!caption.empty()&&caption==result.text;
+    // Live tuning must not invalidate the recognizer or its final transcript.
+    cfg=obs_data_create();
+    obs_data_set_int(cfg,"voice_threshold_db",-43);
+    obs_data_set_int(cfg,"silence_ms",700);
+    obs_data_set_int(cfg,"caption_hold_ms",14000);
+    obs_data_set_string(cfg,"initial_prompt","country");
+    obs_source_update(f,cfg);obs_data_release(cfg);
+    const auto after_hot=read(f);
+    const bool hot_stable=result.available&&after_hot.available&&after_hot.status=="ready"&&
+        after_hot.sequence==result.sequence&&after_hot.text==result.text;
+    printf("SOUND_STT_HOT_UPDATE_STABLE=%d\n",hot_stable);
     bool clean=!dry.mismatch&&dry.frames>audio.size()&&dry.power>1&&result.dropped==0;
     obs_source_set_muted(s,true);
     const auto before=seq;feed(s,audio,rate,f,transcript,seq);
@@ -146,7 +157,7 @@ int main(int argc,char** argv){
     for(int i=0;i<500&&read(f).status!="ready";++i){drain_ui();std::this_thread::sleep_for(20ms);}
     bool recovered=read(f).status=="ready";
     printf("SOUND_STT_LIFECYCLE off=%d missing=%d recovered=%d\n",off,missing,recovered);
-    bool ok=ui&&ready&&silence&&words&&routed&&clean&&muted&&off&&missing&&recovered;
+    bool ok=ui&&ready&&silence&&words&&routed&&hot_stable&&clean&&muted&&off&&missing&&recovered;
     if(parakeet){
         // Same audio source and filter; preserve the independently saved
         // model paths across both switches and actually run Whisper again.
