@@ -141,6 +141,21 @@ int main(int argc,char** argv){
         after_hot.sequence==result.sequence&&after_hot.text==result.text;
     printf("SOUND_STT_HOT_UPDATE_STABLE=%d\n",hot_stable);
     bool clean=!dry.mismatch&&dry.frames>audio.size()&&dry.power>1&&result.dropped==0;
+    // Feed a speech-only fragment and then stop sending frames entirely.
+    // The worker must wake on its silence deadline to finalize it.
+    const auto flush_before=seq;
+    const auto fragment_size=std::min(audio.size(),size_t(rate)*2);
+    auto fragment=std::vector<float>(audio.begin(),audio.begin()+fragment_size);
+    std::string idle_text;
+    feed(s,fragment,rate,f,idle_text,seq);
+    for(int i=0;i<120&&seq==flush_before;++i){
+        drain_ui();
+        auto r=read(f);
+        if(r.sequence>seq){idle_text=r.text;seq=r.sequence;}
+        std::this_thread::sleep_for(40ms);
+    }
+    const bool stopped_source_flush=seq>flush_before&&!idle_text.empty();
+    printf("SOUND_STT_STOPPED_SOURCE_FLUSH=%d\n",stopped_source_flush);
     obs_source_set_muted(s,true);
     const auto before=seq;feed(s,audio,rate,f,transcript,seq);
     bool muted=seq==before;
@@ -157,7 +172,7 @@ int main(int argc,char** argv){
     for(int i=0;i<500&&read(f).status!="ready";++i){drain_ui();std::this_thread::sleep_for(20ms);}
     bool recovered=read(f).status=="ready";
     printf("SOUND_STT_LIFECYCLE off=%d missing=%d recovered=%d\n",off,missing,recovered);
-    bool ok=ui&&ready&&silence&&words&&routed&&hot_stable&&clean&&muted&&off&&missing&&recovered;
+    bool ok=ui&&ready&&silence&&words&&routed&&hot_stable&&stopped_source_flush&&clean&&muted&&off&&missing&&recovered;
     if(parakeet){
         // Same audio source and filter; preserve the independently saved
         // model paths across both switches and actually run Whisper again.

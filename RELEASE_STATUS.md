@@ -116,3 +116,40 @@ expanded-profile acceptance suite. Parakeet's intermittent 44.1 kHz issue,
 Nemotron model-backed hot tuning, sustained live OBS use, and clean-machine
 qualification were not revalidated by this pass. Keep expanded features
 opt-in and maintain all existing release/distribution gates.
+
+## STT event-driven worker wakeups (2026-11-22)
+
+Replaced the STT worker's 4 ms empty-queue polling with a Linux nonblocking
+eventfd wakeup. The real-time audio callback only increments a lock-free
+sequence and writes an eventfd notification if the worker is parked (no
+mutex or allocation). Control changes, filter attach/detach, mute epochs,
+capture overflow, and shutdown also wake the worker. The consumer snapshots
+the sequence before checking the queue and rechecks it before parking so
+a notification cannot be lost between the empty check and the wait.
+Timed wakes are retained for finalizing an utterance after a stopped audio
+source and for clearing caption-hold expirations.
+
+A new standalone test exercises no-data timed waits, notification-before-
+wait races, sleeping worker wakeup, burst coalescing, indefinite shutdown
+wake, and 5,000 SPSC queue handoffs. It passes and is wired into
+the combined STT verification script. Existing STT config-policy and
+capture tests pass, and the expanded module builds successfully.
+
+Real isolated libobs/Whisper integration against the *restaged final build*
+passed at both 48 kHz and 44.1 kHz: hot updates preserved captions,
+speech-only fragments finalized after the source stopped emitting audio,
+muting and disabling still blocked transcription, invalid models failed
+closed, and model recovery succeeded. The zero-effect quarantine build
+and module-registration test also passed. No user OBS installation changed.
+
+The heavy-model tests are **not clean qualifications**. Parakeet at 44.1 kHz
+and Nemotron at 48 kHz each missed the harness's initial ten-second
+ready-status window (ready=0, overall test exit=1). Both later successfully
+recognized speech; Parakeet passed the new stopped-source/hot-update
+checks and its return switch from Whisper, while Nemotron passed streaming
+partial updates and its Whisper switch. This is consistent with a slow or
+intermittent initial readiness path, but the cause has not been isolated;
+do not label either test green or the pre-existing Parakeet lifecycle
+issue resolved. Full expanded qualification, measured worst-case callback
+latency/idle-CPU improvement, installed OBS behavior, and clean-machine
+acceptance remain unverified. Expanded features stay opt-in.

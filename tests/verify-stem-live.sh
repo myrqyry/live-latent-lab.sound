@@ -226,6 +226,8 @@ fi
 if [[ "$stt" == true ]]; then
     "$cxx" -std=c++17 -O2 -I"$root/src" "$root/tests/verify-stt-config.cpp" -o "$work/stt-config"
     "$work/stt-config"
+    "$cxx" -std=c++17 -O2 -pthread -I"$root/src" "$root/tests/verify-stt-wake.cpp" -o "$work/stt-wake"
+    "$work/stt-wake"
     "$cxx" -std=c++17 -O2 -pthread -I"$inc" "$root/tests/verify-stt-obs.cpp" "${libs[@]}" -o "$work/stt-test"
     for rate in 48000 44100; do
         ffmpeg -nostdin -v error -y -i "$SOUND_STT_FIXTURE" -ar "$rate" -ac 1 -f f32le "$work/stt-$rate.raw"

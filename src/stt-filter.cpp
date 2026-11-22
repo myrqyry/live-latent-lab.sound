@@ -21,6 +21,7 @@
 #include "engines/stt_nemotron.hpp"
 #include "framework/stt_capture.hpp"
 #include "framework/stt_config.hpp"
+#include "framework/stt_wake.hpp"
 #include "interop/sound_signal_client.hpp"
 namespace {
 using namespace std::chrono_literals;
@@ -35,6 +36,7 @@ struct State {
     obs_source_t* context;
     const unsigned rate,channels;
     stts::SttCapture capture;
+    stts::SttWake wake;
     std::atomic<bool> stopping{false},accept{false},gap{false},while_muted{false},enabled{false},attached{false};
     std::atomic<uint64_t> epoch{1},revision{1},hot_revision{1},dropped{0};
     std::mutex control;
@@ -91,6 +93,7 @@ void update(void* ptr,obs_data_t* d){
         }
     }
     if(reload||target_changed)caption(*s,"","",0,false);
+    s->wake.notify();
 }
 void set_status(State& s,const char* status){
     std::lock_guard lock(s.result);
@@ -151,15 +154,18 @@ void caption(State& s,const std::string& target,const std::string& text,uint64_t
 void attached(void* ptr,obs_source_t*){
     auto& s=*static_cast<State*>(ptr);
     s.accept=false;s.enabled=obs_source_enabled(s.context);s.attached=true;++s.epoch;
+    s.wake.notify();
 }
 void detached(void* ptr,obs_source_t*){
     auto& s=*static_cast<State*>(ptr);
     s.accept=false;s.attached=false;++s.epoch;caption(s,"","");
+    s.wake.notify();
 }
 void enabled_changed(void* ptr,calldata_t* d){
     auto& s=*static_cast<State*>(ptr);
     s.accept=false;s.enabled=calldata_bool(d,"enabled");++s.epoch;
     if(!s.enabled)caption(s,"","");
+    s.wake.notify();
 }
 struct Abort {State* s;uint64_t epoch;};
 bool aborted(void* p){
@@ -261,6 +267,9 @@ void run(State& s){
         s.inference_ms=std::chrono::duration_cast<std::chrono::milliseconds>(s.observed-begin).count();
     };
     while(!s.stopping){
+        // Snapshot before checking state/queue, so a producer notification
+        // between either check and parking cannot be missed.
+        const auto wake_token=s.wake.sequence();
         bool on=s.enabled.load()&&s.attached.load();
         auto requested=s.revision.load();
         if(requested!=rev||on!=enabled){
@@ -309,10 +318,32 @@ void run(State& s){
         }
         stts::SttBlock b;
         if(!s.capture.pop(b)){
-            // Flush an ended media source even if it stops emitting frames.
-            if(ready&&!phrase.empty()&&std::chrono::steady_clock::now()-last_packet>std::chrono::milliseconds(c.silence))
-                publish(stream_epoch);
-            std::this_thread::sleep_for(4ms);continue;
+            // The producer and control handlers wake this worker on change.
+            // Timed waits are only needed to flush a stopped source or
+            // expire a caption; no periodic polling while completely idle.
+            int timeout_ms=-1;
+            auto schedule=[&](std::chrono::steady_clock::time_point deadline){
+                const auto remaining=deadline-std::chrono::steady_clock::now();
+                const int delay=remaining<=std::chrono::steady_clock::duration::zero()?0:
+                    int(std::chrono::ceil<std::chrono::milliseconds>(remaining).count());
+                if(timeout_ms<0||delay<timeout_ms)timeout_ms=delay;
+            };
+            if(ready&&!phrase.empty()){
+                const auto end=last_packet+std::chrono::milliseconds(c.silence);
+                if(std::chrono::steady_clock::now()>=end){
+                    publish(stream_epoch);
+                    continue;
+                }
+                schedule(end);
+            }
+            if(written){
+                std::chrono::steady_clock::time_point seen;
+                {std::lock_guard lock(s.result);
+                    seen=s.partial_text.empty()?s.observed:s.partial_observed;}
+                schedule(seen+std::chrono::milliseconds(c.hold));
+            }
+            s.wake.wait(wake_token,timeout_ms);
+            continue;
         }
         if(!ready||b.epoch!=stream_epoch||s.epoch!=stream_epoch||s.revision!=rev)continue;
         if(expected_ts&&(b.timestamp>expected_ts+100000000ULL||b.timestamp+100000000ULL<expected_ts)){
@@ -384,14 +415,14 @@ obs_audio_data* audio(void* ptr,obs_audio_data* packet){
     if(!packet||!packet->frames||!s->accept)return packet;
     auto* parent=obs_filter_get_parent(s->context);
     if(!s->while_muted&&parent&&obs_source_muted(parent)){
-        if(!s->gap.exchange(true))++s->epoch;
+        if(!s->gap.exchange(true)){++s->epoch;s->wake.notify();}
         return packet;
     }
     s->gap=false;
     auto e=s->epoch.load();
     std::array<const float*,MAX_AUDIO_CHANNELS> planes{};
     for(size_t ch=0;ch<s->channels;++ch){
-        if(!packet->data[ch]){++s->epoch;return packet;}
+        if(!packet->data[ch]){++s->epoch;s->wake.notify();return packet;}
         planes[ch]=reinterpret_cast<float*>(packet->data[ch]);
     }
     stts::SttBlock b;b.epoch=e;
@@ -403,7 +434,10 @@ obs_audio_data* audio(void* ptr,obs_audio_data* packet){
             float sum=0;for(size_t ch=0;ch<s->channels;++ch)sum+=planes[ch][offset+i];
             b.samples[i]=std::isfinite(sum)?std::clamp(sum/float(s->channels),-1.f,1.f):0.f;
         }
-        if(!s->capture.push(b)){s->dropped+=packet->frames-offset;++s->epoch;break;}
+        if(!s->capture.push(b)){
+            s->dropped+=packet->frames-offset;++s->epoch;s->wake.notify();break;
+        }
+        s->wake.notify();
         offset+=b.count;
     }
     return packet;
@@ -510,7 +544,7 @@ void* create(obs_data_t* d,obs_source_t* source){
         return s.release();
     }catch(...){return nullptr;}
 }
-void destroy(void* ptr){auto* s=static_cast<State*>(ptr);signal_handler_disconnect(obs_source_get_signal_handler(s->context),"enable",enabled_changed,s);s->stopping=true;s->accept=false;++s->epoch;if(s->worker.joinable())s->worker.join();delete s;}
+void destroy(void* ptr){auto* s=static_cast<State*>(ptr);signal_handler_disconnect(obs_source_get_signal_handler(s->context),"enable",enabled_changed,s);s->stopping=true;s->accept=false;++s->epoch;s->wake.notify();if(s->worker.joinable())s->worker.join();delete s;}
 }
 extern "C" {
 struct obs_source_info sound_stt_filter={
