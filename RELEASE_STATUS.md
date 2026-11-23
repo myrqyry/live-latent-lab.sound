@@ -153,3 +153,42 @@ do not label either test green or the pre-existing Parakeet lifecycle
 issue resolved. Full expanded qualification, measured worst-case callback
 latency/idle-CPU improvement, installed OBS behavior, and clean-machine
 acceptance remain unverified. Expanded features stay opt-in.
+
+## STT cold-start readiness investigation (2026-11-22)
+
+Investigated the expanded STT harness's false initial-readiness verdict
+with exact model/runtime evidence. Hugging Face identifies
+`litert-community/parakeet-tdt-0.6b-v3` as a LiteRT-LM/MediaPipe
+`.litertlm` ASR asset; Nemotron's `nvidia/nemotron-3.5-asr-streaming-0.6b`
+is a distinct native GGUF-backed streaming ASR path in this project.
+The upstream LiteRT-LM documentation explicitly notes multi-second
+synchronous model initialization; this is not evidence that Sound's own
+startup necessarily meets a particular latency budget.
+
+Added actual per-model wall-clock initialization telemetry to the worker,
+plus a startup status/latency record in the libobs harnesses. The baseline
+Parakeet 44.1 kHz run read `status=loading` at 10,030 ms (ready=0),
+then recorded a **successful 12,625 ms model load**; the rest of the
+actual recognition, hot-update, stopped-source finalization, invalid
+model/recovery, and Whisper/Parakeet switching all succeeded. Subsequent
+model reloads in that process measured 516 and 355 ms. The old harness
+reported overall pass=0 solely because the initial 10-second wait elapsed
+before the first successful load.
+
+Functional Parakeet readiness now has an explicit measured 20-second
+ceiling in the real-OBS harness, while its **original 10-second startup
+performance target remains separately reported** as `within_10s`.
+The subsequent Parakeet run reached ready after 561 ms and passed the
+full 44.1 kHz real OBS test (including the newly-added stopped-source
+check and both backend switches). The warm run must NOT be treated as
+proof that cold-start latency improved or that the intermittent Parakeet
+44.1 kHz lifecycle problem is eliminated.
+
+Nemotron at 48 kHz was not reproducibly slow: a separately instrumented
+run loaded in 5,990 ms, reached ready in 5,998 ms under the **unchanged**
+10-second timeout, and passed the real OBS streaming/partial captions,
+invalid-model recovery, and Whisper/Nemotron round-trip test. The
+earlier 10-second initial-readiness miss still requires reproducible
+controlled cold-start timing before attributing a definitive cause.
+No model, backend, loader, installed OBS plugin, or remote repository
+was modified during this investigation.

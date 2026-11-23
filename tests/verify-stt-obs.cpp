@@ -109,8 +109,19 @@ int main(int argc,char** argv){
     obs_source_filter_add(s,f);obs_set_output_source(1,s);obs_source_set_audio_mixers(s,1);
     obs_source_inc_active(s);obs_source_set_audio_active(s,true);
     Dry dry;obs_source_add_audio_capture_callback(s,capture,&dry);
-    for(int i=0;i<500&&read(f).status!="ready";++i)std::this_thread::sleep_for(20ms);
-    bool ready=read(f).status=="ready";
+    const auto init_started=std::chrono::steady_clock::now();
+    // A measured Parakeet cold CPU load took 12.6 s. Allow 20 s to
+    // establish functional readiness, but separately report whether the
+    // original 10 s startup performance target was met.
+    const int functional_deadline_ms=parakeet?20000:10000;
+    for(int i=0;i<functional_deadline_ms/20&&read(f).status!="ready";++i)
+        std::this_thread::sleep_for(20ms);
+    const auto initial=read(f);
+    const auto init_ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-init_started).count();
+    bool ready=initial.status=="ready";
+    const bool within_startup_target=ready&&init_ms<=10000;
+    printf("SOUND_STT_INITIAL_READY backend=%s status=%s elapsed_ms=%lld deadline_ms=%d within_10s=%d ready=%d\n",
+        parakeet?"parakeet":"whisper",initial.status.c_str(),(long long)init_ms,functional_deadline_ms,within_startup_target,ready);
     std::string transcript;int64_t seq=0;
     feed(s,std::vector<float>(rate,0),rate,f,transcript,seq);
     bool silence=seq==0&&transcript.empty();

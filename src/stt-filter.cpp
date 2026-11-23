@@ -281,12 +281,17 @@ void run(State& s){
             enabled=on;++s.epoch;stream_epoch=s.epoch.load();
             set_status(s,on?"loading":"off");
             if(on){
+                const auto load_start=std::chrono::steady_clock::now();
                 ready=resampler&&(c.backend=="whisper"?engine.open(runtime,c.model,c.language,c.translate):
                     c.backend=="parakeet"?parakeet.open(c.parakeet_library,c.parakeet_model):
                     c.backend=="nemotron"?nemotron.open(c.nemotron_library.empty()?default_nemotron:c.nemotron_library,c.nemotron_model,c.nemotron_threads,c.nemotron_language,c.nemotron_right)&&nemotron.begin():false);
                 if(c.backend=="nemotron"){
                     if(ready)nemotron.reset();else nemotron.close();
                 }
+                const auto load_ms=std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now()-load_start).count();
+                blog(LOG_INFO,"[Sound/STT] SOUND_STT_MODEL_LOAD backend=%s elapsed_ms=%lld ready=%d",
+                    c.backend.c_str(),static_cast<long long>(load_ms),ready);
                 set_status(s,ready?"ready":"model_error");
                 if(ready)blog(LOG_INFO,"[Sound/STT] SOUND_STT_NATIVE_20261118_S813 CPU %s model ready at %u Hz",c.backend.c_str(),s.rate);
                 else blog(LOG_WARNING,"[Sound/STT] Could not load local model/runtime or language unsupported");
