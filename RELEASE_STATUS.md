@@ -192,3 +192,56 @@ earlier 10-second initial-readiness miss still requires reproducible
 controlled cold-start timing before attributing a definitive cause.
 No model, backend, loader, installed OBS plugin, or remote repository
 was modified during this investigation.
+
+## Hardware-adaptive Nemotron inference (2026-11-22)
+
+Removed the Sound-specific CPU-only barrier on the native streaming Nemotron
+GGUF integration. The runtime CMake build now enables CUDA automatically
+when a usable CUDA compiler is detected, or builds CPU-only when CUDA is
+unavailable/disabled. CPU-only builds remain supported with
+`-DSOUND_NEMOTRON_CUDA=OFF`. Runtime selection defaults to the upstream
+`TRANSCRIBE_BACKEND_AUTO`, with explicit `cpu` and `cuda` choices
+in OBS; explicit CUDA does not silently return CPU. A v2 runtime entrypoint
+adds device selection and reports the actual backend without changing the
+original ABI-1 entrypoints. On automatic initialization/stream-start failure,
+Sound retries the CPU path once. The old CPU runtime still opens under
+automatic mode. The arbitrary 12-thread CPU setting ceiling is replaced
+by the machine's reported hardware-concurrency limit.
+
+**Build evidence:** pinned `transcribe.cpp` version 0.4.1,
+NVIDIA RTX 2070 SUPER (compute capability 7.5), CUDA 12.0, GCC 12,
+`CMAKE_CUDA_ARCHITECTURES=75`, `GGML_CUDA_FA=OFF`,
+`GGML_CUDA_NCCL=OFF`. The isolated 140 MiB CUDA shared runtime linked
+and exposed only `sound_nemotron_*` native symbols (no exported GGML or
+transcribe engine symbols). The CPU variant also built.
+
+**Real model evidence:** the existing 533.4 MiB Q5_K_M Nemotron model
+loaded on **CUDA0** and passed the native streaming fixture twice, with
+encoder right-context settings 0, 6 and 13; it returned the expected
+recognition text. Native fixture processing measured **555–717 ms on CUDA**
+vs **1790–1812 ms on CPU** in the independent measured runs (not
+end-to-end OBS latency). Auto chose CUDA0 on this machine, explicit CPU
+on the CUDA-enabled runtime chose CPU, and a CPU-only runtime rejected
+an explicit CUDA selection. These measurements are machine-/cache-specific.
+
+**Actual OBS:** isolated staged plugin and CUDA runtime together, no
+custom runtime override in the test, explicit CUDA selected in the real
+OBS filter. At **48 kHz**: `SOUND_STT_NEMOTRON_LIVE pass=1`,
+`SOUND_STT_LIFECYCLE off=1 missing=1 recovered=1`,
+`SOUND_STT_NEMOTRON_SWITCH whisper=1 saved=1 returned=1 invalidated=1`,
+`SOUND_STT_REAL pass=1`, ready in **483 ms** and actual device **CUDA0**.
+At **44.1 kHz**: real streaming `pass=1`, lifecycle off/missing/recovered
+all 1, `SOUND_STT_REAL pass=1`, ready in **462 ms** and actual device
+**CUDA0**. Both rates preserved unchanged audio and caption routing.
+The harness separately reports the original 10-second performance target
+and a bounded 20-second functional startup deadline. CPU real-OBS 48 kHz,
+STT configuration and wakeup tests, and zero-effect quarantine also passed.
+A separate native CPU build passed recognition and right-context settings.
+
+A CUDA-linked build needs compatible NVIDIA driver/CUDA shared libraries
+available at runtime; it is not a zero-dependency GPU binary. CUDA,
+CPU, and model assets are not redistributed by this checkpoint. Full
+expanded profile acceptance and clean-machine packaging remain separate
+qualification tasks. This test modified only the ignored isolated
+`build-public-expanded/hot-test-stage` candidate, **not the normal
+installed OBS plugin**, and did not publish or push a release.

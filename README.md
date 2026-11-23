@@ -22,7 +22,7 @@ All entries use the `LLL.sound` prefix in OBS.
 | Microphone DSP | Microphone character, filtering and audio shaping | Both |
 | Native YAMNet (experimental) | Audio classification; dry stereo passthrough | Both |
 | Buffered stem (experimental) | CUDA HTDemucs separation of one stereo stem, fixed 12-second delay | Expanded |
-| STT | Select Whisper, Parakeet or streaming Nemotron | Expanded |
+| STT | Select Whisper, Parakeet or streaming Nemotron (CUDA or CPU) | Expanded |
 | TTS | Select Kokoro, Piper, Chatterbox, TikTok or Edge | Expanded |
 
 ### Speech and shared signals

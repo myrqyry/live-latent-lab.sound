@@ -22,6 +22,35 @@ Do not distribute those binaries until their licenses have been cleared.
 Models are separate. Set the paths in OBS; setup of external runtimes and
 workers on a clean machine is still unqualified.
 
+### Nemotron compute device (CUDA / CPU)
+
+Nemotron's pinned `transcribe.cpp` backend now selects a GPU automatically
+when one is compiled in and available. It falls back to CPU in Auto mode;
+the **CUDA** selection requires actual CUDA rather than silently using CPU.
+The OBS Nemotron filter exposes **Auto**, **CUDA**, and **CPU** and logs
+the backend it actually loaded. CPU threads can be set up to the machine's
+reported hardware concurrency, rather than a fixed 12-thread cap.
+
+To build the native runtime from the existing pinned `transcribe.cpp`
+source, rather than using NVIDIA NIM:
+
+```sh
+cmake -S tools/nemotron-runtime -B build-nemotron-runtime \
+  -DTRANSCRIBE_SOURCE=/path/to/pinned/transcribe.cpp \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-nemotron-runtime --target sound-nemotron-runtime -j 2
+```
+
+The runtime build detects an available CUDA compiler and builds CUDA
+kernels by default; on systems without one it builds CPU support. Use
+`-DSOUND_NEMOTRON_CUDA=OFF` to produce a CPU-only build. Optionally set
+`-DCMAKE_CUDA_ARCHITECTURES=native` (or a specific supported architecture)
+when targeting the current GPU, and `-DCMAKE_CUDA_HOST_COMPILER` when your
+CUDA toolkit requires a specific host compiler. This separate runtime must
+still be packaged with its required license notices for staging; no model
+weights are included. Test the actual selected backend and captions in OBS
+before replacing a working runtime.
+
 ## Reproduce the full native acceptance check
 
 The native acceptance runner requires explicit external asset paths

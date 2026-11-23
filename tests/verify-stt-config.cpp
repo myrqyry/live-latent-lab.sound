@@ -41,6 +41,8 @@ int main() {
     assert(stts::requires_model_reload(original, cold));
     cold = original; cold.nemotron_threads = 6;
     assert(stts::requires_model_reload(original, cold));
+    cold = original; cold.nemotron_device = "cpu";
+    assert(stts::requires_model_reload(original, cold));
     cold = original; cold.nemotron_right = 6;
     assert(stts::requires_model_reload(original, cold));
     assert(!stts::requires_model_reload(original, original));

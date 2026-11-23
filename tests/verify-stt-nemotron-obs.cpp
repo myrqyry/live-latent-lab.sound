@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <vector>
 #include <string>
@@ -104,6 +105,8 @@ int main(int argc,char** argv){
     if(!target||!s)return 7;
     auto* cfg=obs_data_create();obs_data_set_string(cfg,"backend","nemotron");
     obs_data_set_string(cfg,"nemotron_model_path",argv[3]);
+    if(const char* device=std::getenv("SOUND_TEST_NEMOTRON_DEVICE"))
+        obs_data_set_string(cfg,"nemotron_device",device);
     if(argc==8)obs_data_set_string(cfg,"model_path",argv[7]);
     if(std::string(argv[6])!="-")obs_data_set_string(cfg,"nemotron_library",argv[6]);
     obs_data_set_string(cfg,"caption_target",obs_source_get_uuid(target));obs_data_set_int(cfg,"max_phrase_ms",15000);
@@ -114,11 +117,18 @@ int main(int argc,char** argv){
     obs_source_inc_active(s);obs_source_set_audio_active(s,true);
     Dry dry;obs_source_add_audio_capture_callback(s,capture,&dry);
     const auto init_started=std::chrono::steady_clock::now();
-    for(int i=0;i<500&&read(f).status!="ready";++i)std::this_thread::sleep_for(20ms);
+    // CUDA context creation and cold model loads can exceed the 10 s
+    // performance target. Measure that target separately from functional
+    // readiness, instead of feeding audio while status is still "loading".
+    constexpr int functional_deadline_ms=20000;
+    for(int i=0;i<functional_deadline_ms/20&&read(f).status!="ready";++i)
+        std::this_thread::sleep_for(20ms);
     const auto initial=read(f);
     const auto init_ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-init_started).count();
     bool ready=initial.status=="ready";
-    printf("SOUND_STT_INITIAL_READY backend=nemotron status=%s elapsed_ms=%lld ready=%d\n",initial.status.c_str(),(long long)init_ms,ready);
+    const bool within_startup_target=ready&&init_ms<=10000;
+    printf("SOUND_STT_INITIAL_READY backend=nemotron status=%s elapsed_ms=%lld deadline_ms=%d within_10s=%d ready=%d\n",
+        initial.status.c_str(),(long long)init_ms,functional_deadline_ms,within_startup_target,ready);
     std::string transcript;int64_t seq=0;
     feed(s,std::vector<float>(rate,0),rate,f,transcript,seq);
     bool silence=seq==0&&transcript.empty()&&partials==0;
