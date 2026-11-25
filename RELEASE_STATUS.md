@@ -301,3 +301,25 @@ different generated build marker; the new packaging rule was checked
 separately. Full expanded regression and switching/coexistence across
 all four engines remain unverified. OBS was open, so installation was
 not changed. See docs/zipformer-stt.md.
+
+## SA3 continuous, transformation and conditioning (2026-11-24)
+
+Tested staged six-effect module SHA256: 54ea30cede47afa42f9b5634c89117517fa2fd1059c72a0888116bda16532768.
+Small SFX model files verified against their pinned Hugging Face revision
+(the shared T5Gemma weights are reused). Real OBS generation, SFX,
+WAV transformation, 48 kHz source capture/transform, extension,
+native prompt and LoRA automation with a nontrained rank-2 fixture,
+invalid adapter and WAV rejection, and output-duration bounds passed.
+Sight fresh/stale ABI fixture conditioning passed; live camera inference
+was not tested. Actual Zipformer transcript conditioning and recognition,
+caption routing and rolling history passed. Continuous three-boundary
+playout passed at both rates: 848143 frames at 48 kHz (max timestamp
+gap 354167 ns) and 779247 frames at 44.1 kHz (zero gap); no invalid or
+out-of-range captured samples, no failed segments, stop verified.
+Manual generation/replay/cancellation/recovery/disable regressions
+passed at both rates. Six-effect registry, four-engine STT properties,
+runtime hashes and default quarantine passed. Full expanded acceptance,
+long-duration soak, live YAMNet and Sight conditioning, trained adapter
+quality, and inline diffusion filter remain unqualified. Source capture
+keeps input dry and publishes separate generated audio. OBS was open:
+no installation replacement or remote publication.

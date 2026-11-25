@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <thread>
+#include <string>
 
 // Optional real overlapping audio generation and recognition in the same
 // libobs process. The STT harness still asserts the recognized words,
@@ -14,6 +15,7 @@ struct Sa3SttCoexist {
     obs_source_t* source=nullptr;
     const char* models=std::getenv("SOUND_TEST_SA3_MODELS");
     std::atomic<uint64_t> nonzero{0};
+    bool expect_cue=false;
     static void capture(void* p,obs_source_t*,const audio_data* a,bool){
         auto& s=*static_cast<Sa3SttCoexist*>(p);
         if(!a->data[0])return;
@@ -26,10 +28,12 @@ struct Sa3SttCoexist {
         calldata_t d{};bool ok=proc_handler_call(obs_source_get_proc_handler(source),"sound_diffusion_status_v1",&d);
         auto n=ok?calldata_int(&d,key):-1;calldata_free(&d);return n;
     }
-    bool start(){
+    bool start(const std::string& channel={}){
         if(!models)return true;
         auto* d=obs_data_create();obs_data_set_string(d,"models_dir",models);
         obs_data_set_string(d,"prompt","soft instrumental toy keyboard, bass and drums");
+        expect_cue=!channel.empty();
+        if(expect_cue)obs_data_set_string(d,"sound_channel",channel.c_str());
         obs_data_set_double(d,"duration",6);obs_data_set_int(d,"steps",32);obs_data_set_int(d,"seed",42);
         source=obs_source_create("sound_audio_diffusion_source","Coexist music",d,nullptr);obs_data_release(d);
         if(!source)return false;
@@ -41,6 +45,14 @@ struct Sa3SttCoexist {
         obs_properties_destroy(p);
         if(!b)return false;
         for(int i=0;i<100&&status("started")<1;i++)std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        if(expect_cue){
+            for(int i=0;i<100;i++){
+                calldata_t d{};
+                bool cue=proc_handler_call(obs_source_get_proc_handler(source),"sound_diffusion_status_v2",&d)&&calldata_int(&d,"sound_cues")>=1;
+                calldata_free(&d);if(cue)break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        }
         return status("started")==1;
     }
     bool finish(){
@@ -49,6 +61,13 @@ struct Sa3SttCoexist {
         for(int i=0;i<750&&status("played")<1&&status("failed")==0;i++)
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         bool ok=status("completed")==1&&status("played")==1&&status("failed")==0&&nonzero>1000;
+        if(expect_cue){
+            calldata_t d{};
+            const bool called=proc_handler_call(obs_source_get_proc_handler(source),"sound_diffusion_status_v2",&d);
+            const bool cue=called&&calldata_int(&d,"sound_cues")>=1;
+            calldata_free(&d);ok=ok&&cue;
+            printf("SOUND_DIFFUSION_STT_CUE=%d\n",cue);
+        }
         printf("SOUND_DIFFUSION_STT_COEXIST played=%lld samples=%llu pass=%d\n",
                (long long)status("played"),(unsigned long long)nonzero.load(),ok);
         obs_source_remove_audio_capture_callback(source,capture,this);

@@ -154,7 +154,8 @@ int main(int argc,char** argv){
     std::vector<float> audio(size_t(bytes)/4);file.seekg(0);file.read(reinterpret_cast<char*>(audio.data()),bytes);
     auto stream=audio;stream.resize(stream.size()+rate*2,0);
     Sa3SttCoexist diffusion;
-    const bool diffusion_started=diffusion.start();
+    const bool adapt=std::getenv("SOUND_TEST_SA3_ADAPT")!=nullptr;
+    bool diffusion_started=adapt?true:diffusion.start();
     feed(s,stream,rate,f,transcript,seq);
     for(int i=0;i<180;++i){
         drain_ui();auto r=read(f);if(r.available&&r.sequence!=seq){transcript+=" "+r.text;seq=r.sequence;}
@@ -166,6 +167,10 @@ int main(int argc,char** argv){
     bool words=lower.find("country")!=std::string::npos&&lower.find("ask")!=std::string::npos;
     cfg=obs_source_get_settings(target);std::string caption=obs_data_get_string(cfg,"text");obs_data_release(cfg);
     bool routed=!caption.empty()&&caption==result.text;
+    if(adapt){
+        const auto key=std::string(obs_source_get_uuid(s))+"/"+obs_source_get_uuid(f);
+        diffusion_started=diffusion.start(key);
+    }
     // Live tuning must not invalidate the recognizer or its final transcript.
     cfg=obs_data_create();
     obs_data_set_int(cfg,"voice_threshold_db",-43);

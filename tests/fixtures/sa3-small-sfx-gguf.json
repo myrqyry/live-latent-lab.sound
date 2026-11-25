@@ -1,0 +1,30 @@
+[
+  {
+    "repo": "thepatch/stable-audio-3-small-sfx-GGUF",
+    "revision": "fcbd756cde8f9cc4d0213433d868063593d6ca22",
+    "name": "sa3-small-sfx-LICENSE.md",
+    "size": 11852,
+    "sha256": "d6f6b1a4dce5c852bd6d7d9482d002baf0ccdb71e662250b73be9eec8764ee8d"
+  },
+  {
+    "repo": "thepatch/stable-audio-3-small-sfx-GGUF",
+    "revision": "fcbd756cde8f9cc4d0213433d868063593d6ca22",
+    "name": "stable-audio-3-small-sfx-conditioner-v1.0-F32.gguf",
+    "size": 793184,
+    "sha256": "c4f253c47d8feadb236619b2fe72a5df9c6a99751382738ed4b96be7ad1bc517"
+  },
+  {
+    "repo": "thepatch/stable-audio-3-small-sfx-GGUF",
+    "revision": "fcbd756cde8f9cc4d0213433d868063593d6ca22",
+    "name": "stable-audio-3-small-sfx-dit-0.5B-v1.0-Q4_K_M.gguf",
+    "size": 316195520,
+    "sha256": "09eaa89a98d2b483dafb1b0ec26dadccd7a0a38a2c0839582915f910c6040a13"
+  },
+  {
+    "repo": "thepatch/stable-audio-3-small-sfx-GGUF",
+    "revision": "fcbd756cde8f9cc4d0213433d868063593d6ca22",
+    "name": "stable-audio-3-small-sfx-same-s-v1.0-F16.gguf",
+    "size": 216721696,
+    "sha256": "e1854b7045a059f355639e0b92dd52a5f8701becb4a8a599035adb43124f4c89"
+  }
+]

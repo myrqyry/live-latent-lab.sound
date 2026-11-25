@@ -1,5 +1,8 @@
 #include <obs-module.h>
 #include <util/platform.h>
+#include <media-io/audio-io.h>
+#include "interop/sound_signal_client.hpp"
+#include <array>
 #include <libsa3_v1.h>
 #include <dlfcn.h>
 #include <algorithm>
@@ -8,6 +11,9 @@
 #include <cmath>
 #include <condition_variable>
 #include <filesystem>
+#include <future>
+#include <fstream>
+#include "framework/tts_wav.hpp"
 #include <memory>
 #include <mutex>
 #include <string>
@@ -21,7 +27,12 @@ constexpr int max_seconds=60;
 // Limit simultaneous diffusion jobs, including separate OBS sources.
 std::timed_mutex inference_gate;
 struct Config {
-    std::string models,prompt,negative,device;
+    std::string models,prompt,negative,device,variant="small-music",input_file,input_source,alternate_prompt,
+        lora_a,lora_b,sound_channel,sight_channel;
+    float lora_a_strength=1.f,lora_b_strength=1.f;
+    bool automate_b=false,capture_muted=false;
+    double capture_seconds=6;
+    float transform_noise=.5f;
     int steps=8;
     int64_t seed=-1;
     double seconds=12;
@@ -29,8 +40,9 @@ struct Config {
 struct Clip {
     std::vector<float> pcm;
     size_t frames=0;
+    uint32_t sample_rate=rate;
 };
-enum class Job { None, Generate, Replay };
+enum class Job { None, Generate, Replay, Continuous, Transform, Extend };
 struct State {
     explicit State(obs_source_t* s):source(s){}
     obs_source_t* source;
@@ -43,6 +55,7 @@ struct State {
     std::atomic<bool> active{false},enabled{true},closing{false};
     std::atomic<uint64_t> epoch{0},started{0},completed{0},played{0},failed{0};
     std::atomic<int> progress{0};
+    std::atomic<uint64_t> captured{0},sound_cues{0},sight_cues{0},automated{0};
     std::string message="Ready";
     bool current(uint64_t e) const {return !closing&&active&&enabled&&epoch==e;}
 };
@@ -80,7 +93,7 @@ struct Runtime {
            !api->context_destroy||!api->request_init||!api->result_init||
            !api->result_free||!api->generate){error="Incompatible SA3 ABI";return false;}
         sa3_context_config_v1 cfg{};cfg.size=sizeof cfg;api->context_config_init(&cfg);
-        cfg.models_dir=c.models.c_str();cfg.variant="small-music";cfg.dit_encoding="q4_k_m";
+        cfg.models_dir=c.models.c_str();cfg.variant=c.variant.c_str();cfg.dit_encoding="q4_k_m";
         cfg.text_encoder_encoding="f16";cfg.autoencoder_encoding="f16";
         cfg.device=c.device=="cpu"?"cpu":nullptr;cfg.cpu_threads=8;
         sa3_error_v1 e{};e.size=sizeof e;api->error_init(&e);
@@ -88,9 +101,76 @@ struct Runtime {
         return true;
     }
 };
-std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::string& error){
+struct SightMotionV1 {
+    uint32_t abi_version=1,struct_size=sizeof(SightMotionV1),source_width=0,source_height=0;
+    uint64_t sequence=0;
+    float energy=0;
+    uint32_t reserved=0;
+};
+static_assert(sizeof(SightMotionV1)==32,"Sight motion ABI mismatch");
+bool sight_filter(obs_source_t* source){
+    const auto* id=source?obs_source_get_unversioned_id(source):nullptr;
+    return id&&!std::strcmp(id,"sight_u2net_filter");
+}
+bool read_sight_motion(const std::string& channel,float& energy){
+    const auto sep=channel.find('/');
+    if(sep==std::string::npos||channel.size()>160)return false;
+    auto* parent=obs_get_source_by_uuid(channel.substr(0,sep).c_str());
+    if(!parent)return false;
+    struct Find {std::string uuid;obs_source_t* filter=nullptr;} find{channel.substr(sep+1)};
+    if(!obs_source_removed(parent)&&obs_source_enabled(parent))
+        obs_source_enum_filters(parent,[](obs_source_t*,obs_source_t* filter,void* opaque){
+            auto& f=*static_cast<Find*>(opaque);
+            if(!f.filter&&sight_filter(filter)&&obs_source_enabled(filter)&&!obs_source_removed(filter)&&
+               obs_source_get_uuid(filter)&&f.uuid==obs_source_get_uuid(filter))f.filter=obs_source_get_ref(filter);
+        },&find);
+    obs_source_release(parent);
+    if(!find.filter)return false;
+    SightMotionV1 result;
+    calldata_t args{};calldata_set_int(&args,"max_age_ms",750);calldata_set_ptr(&args,"snapshot",&result);
+    bool ok=proc_handler_call(obs_source_get_proc_handler(find.filter),"sight_motion_read_v1",&args)&&calldata_bool(&args,"available");
+    calldata_free(&args);
+    const auto w=obs_source_get_base_width(find.filter),h=obs_source_get_base_height(find.filter);
+    obs_source_release(find.filter);
+    if(!ok||result.abi_version!=1||result.struct_size!=sizeof(result)||!result.sequence||!w||!h||
+       result.source_width!=w||result.source_height!=h||!std::isfinite(result.energy)||result.energy<0||result.energy>1)return false;
+    energy=result.energy;return true;
+}
+std::string condition_prompt(State& s,const Config& c){
+    std::string prompt=c.prompt;
+    if(!c.sound_channel.empty()){
+        // A final transcript or classification label is an optional local
+        // conditioning cue, never an instruction to a separate LLM.
+        calldata_t d{};sound_signals::read(c.sound_channel,"final","",&d);
+        if(calldata_bool(&d,"available")&&calldata_bool(&d,"final")){
+            auto* raw=calldata_string(&d,"text");
+            if(raw&&*raw){prompt+=", spoken scene context: "+std::string(raw).substr(0,256);++s.sound_cues;}
+        }else{
+            calldata_free(&d);d={};
+            sound_signals::read(c.sound_channel,"latest","",&d);
+            auto* kind=calldata_string(&d,"kind"),*label=calldata_string(&d,"label");
+            if(calldata_bool(&d,"available")&&kind&&!std::strcmp(kind,"classification")&&label&&*label&&
+               calldata_float(&d,"score")>=.4){
+                prompt+=", ambient sound: "+std::string(label).substr(0,128);++s.sound_cues;
+            }
+        }
+        calldata_free(&d);
+    }
+    float motion=0;
+    if(!c.sight_channel.empty()&&read_sight_motion(c.sight_channel,motion)){
+        prompt+=motion>.08f?", energetic rhythm and dynamic arrangement":motion>.02f?", gently moving rhythm":", restrained calm arrangement";
+        ++s.sight_cues;
+    }
+    return prompt;
+}
+std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::string& error,
+                               const Clip* input=nullptr,bool extend=false,bool continuous=false){
+    if(continuous&&(!input||input->frames<rate/2)){error="Invalid continuation context";return {};}
     if(c.models.empty()||c.prompt.empty()){error="Choose a model directory and enter a prompt";return {};}
-    if(c.prompt.size()>8192||c.negative.size()>8192){error="Prompt exceeds 8192 bytes";return {};}
+    if(c.prompt.size()>7500||c.negative.size()>8192||c.alternate_prompt.size()>8192){error="Prompt exceeds 8192 bytes";return {};}
+    if(!s.current(epoch))return {};
+    // Snapshot cues when scheduling the segment, before model load or GPU wait.
+    const auto conditioned=condition_prompt(s,c);
     std::unique_lock<std::timed_mutex> gate(inference_gate,std::defer_lock);
     while(s.current(epoch)&&!gate.try_lock_for(50ms)){}
     if(!s.current(epoch)||!gate.owns_lock())return {};
@@ -99,9 +179,64 @@ std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::stri
     const auto* api=runtime.api;
     Cancel token{s,epoch};
     sa3_request_v1 req{};req.size=sizeof req;api->request_init(&req);
-    req.prompt=c.prompt.c_str();req.negative_prompt=c.negative.c_str();
+    req.prompt=conditioned.c_str();req.negative_prompt=c.negative.c_str();
     req.duration_seconds=c.seconds;req.steps=c.steps;req.seed=c.seed;req.cfg_scale=1.f;
     req.residency=SA3_RESIDENCY_FRUGAL_V1;
+    if(input){
+        req.operation=extend?SA3_OPERATION_CONTINUE_V1:SA3_OPERATION_TRANSFORM_V1;
+        req.input_audio.size=sizeof(req.input_audio);
+        req.input_audio.samples=input->pcm.data();req.input_audio.n_samples=input->frames;
+        req.input_audio.n_channels=2;req.input_audio.sample_rate=input->sample_rate;req.input_audio.layout=SA3_AUDIO_PLANAR_V1;
+        req.transform_noise_level=c.transform_noise;
+        req.encode_chunk_size=128;req.encode_overlap=32;req.decode_chunk_size=128;req.decode_overlap=32;
+        if(continuous){
+            // Hold back more than the runtime's 200 ms mask + 30 ms splice.
+            // Never renormalize already emitted audio.
+            req.continuation.gain_match=0;req.loudness.peak_normalize=0;req.loudness.limiter=0;
+        }
+    }
+    const uint64_t input_frames=input?uint64_t(std::llround(double(input->frames)*rate/input->sample_rate)):0;
+    const uint64_t expected=input?(extend?input_frames+uint64_t(std::llround(c.seconds*rate)):input_frames):
+        uint64_t(std::llround(c.seconds*rate));
+    if(expected>uint64_t(max_seconds)*rate){error="Result would exceed 60 seconds";return {};}
+    std::array<sa3_adapter_v1,2> adapters{};uint32_t adapter_count=0;
+    sa3_adapter_v1 lane_adapter{};sa3_lane_v1 lane{};float envelope[4]{};
+    sa3_error_v1 adapter_error{};adapter_error.size=sizeof adapter_error;api->error_init(&adapter_error);
+    const bool has_extended_api=api->size>=offsetof(sa3_api_v1,adapter_info)+sizeof(api->adapter_info);
+    auto adapter=[&](const std::string& path,float strength,sa3_adapter_v1& out,bool for_lane){
+        std::error_code ec;
+        if(!has_extended_api||!api->adapter_info||!api->adapter_init||
+           std::filesystem::path(path).extension()!=".gguf"||!std::filesystem::is_regular_file(path,ec)){
+            error="Choose a compatible local GGUF LoRA";return false;
+        }
+        sa3_adapter_info_v1 info{};info.size=sizeof info;
+        if(api->adapter_info(path.c_str(),&info,&adapter_error)!=SA3_STATUS_OK_V1){
+            error=adapter_error.message;return false;
+        }
+        if(for_lane&&!info.supports_lanes){error="This LoRA does not support automation lanes";return false;}
+        out.size=sizeof out;api->adapter_init(&out);out.path_or_name=path.c_str();out.strength=strength;
+        return true;
+    };
+    if(!c.lora_a.empty()&&c.lora_a_strength!=0){
+        if(!adapter(c.lora_a,c.lora_a_strength,adapters[adapter_count],false))return {};
+        ++adapter_count;
+    }
+    const bool ramp_adapter=c.automate_b&&!c.lora_b.empty()&&c.lora_b_strength!=0;
+    if(!c.lora_b.empty()&&c.lora_b_strength!=0){
+        if(!adapter(c.lora_b,c.lora_b_strength,ramp_adapter?lane_adapter:adapters[adapter_count],ramp_adapter))return {};
+        if(!ramp_adapter)++adapter_count;
+    }
+    if(adapter_count){req.adapters=adapters.data();req.adapter_count=adapter_count;req.adapter_stride=sizeof(sa3_adapter_v1);}
+    if(!c.alternate_prompt.empty()||ramp_adapter){
+        if(!has_extended_api||!api->lane_init){error="SA3 runtime does not support automation";return {};}
+        lane.size=sizeof lane;api->lane_init(&lane);
+        lane.prompt=c.alternate_prompt.empty()?nullptr:c.alternate_prompt.c_str();
+        if(ramp_adapter){lane.adapters=&lane_adapter;lane.adapter_count=1;lane.adapter_stride=sizeof lane_adapter;}
+        envelope[0]=extend?float(input_frames)/rate:0.f;
+        envelope[1]=0.f;envelope[2]=float(expected)/rate;envelope[3]=1.f;
+        lane.envelope=envelope;lane.envelope_point_count=2;
+        req.lanes=&lane;req.lane_count=1;req.lane_stride=sizeof lane;
+    }
     req.should_cancel=cancelled;req.on_progress=progress;req.callback_user=&token;
     sa3_result_v1 result{};result.size=sizeof result;api->result_init(&result);
     struct Release {const sa3_api_v1* api;sa3_result_v1* r;~Release(){api->result_free(r);}} release{api,&result};
@@ -110,32 +245,223 @@ std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::stri
     if(code!=SA3_STATUS_OK_V1){error=e.message;return {};}
     if(!s.current(epoch))return {};
     if(!result.samples||result.n_channels!=2||result.sample_rate!=rate||
-       result.layout!=SA3_AUDIO_PLANAR_V1||result.n_samples!=uint64_t(std::llround(c.seconds*rate))||
+       result.layout!=SA3_AUDIO_PLANAR_V1||result.n_samples!=expected||
        result.n_samples>uint64_t(max_seconds)*rate){error="Unexpected PCM format or duration";return {};}
+    if(extend&&!result.splice_applied){error="Continuation did not splice source";return {};}
     auto clip=std::make_shared<Clip>();clip->frames=size_t(result.n_samples);
     clip->pcm.assign(result.samples,result.samples+clip->frames*2);
-    for(auto& sample:clip->pcm){if(!std::isfinite(sample)){error="Non-finite PCM";return {};}sample=std::clamp(sample,-1.f,1.f);}
+    float peak=0;
+    for(float sample:clip->pcm){if(!std::isfinite(sample)){error="Non-finite PCM";return {};}peak=std::max(peak,std::abs(sample));}
+    // Preserve headroom for OBS's output resampler. Scale uniformly rather
+    // than hard-clipping the generated waveform.
+    if(peak>.75f)for(auto& sample:clip->pcm)sample*=.75f/peak;
+    if(req.lane_count)++s.automated;
     // Runtime and its model context are destroyed before playback begins.
     return clip;
 }
-bool play(State& s,const Clip& clip,uint64_t epoch){
-    const auto start=std::chrono::steady_clock::now();
-    const auto clock=os_gettime_ns();
+// Read a bounded, local PCM16 stereo/mono WAV at the model rate. Do not
+// pass unbounded or unsupported files into the native inference engine.
+std::shared_ptr<Clip> read_wav(const std::string& path,std::string& error){
+    std::ifstream f(path,std::ios::binary|std::ios::ate);
+    if(!f||f.tellg()<44||f.tellg()>std::streamoff(48000*max_seconds*4+65536)){error="Invalid or oversized WAV";return {};}
+    std::vector<uint8_t> b(size_t(f.tellg()));f.seekg(0);
+    if(!f.read(reinterpret_cast<char*>(b.data()),b.size())||std::memcmp(b.data(),"RIFF",4)||
+       std::memcmp(b.data()+8,"WAVE",4)||stts::wav_u32(b.data()+4)!=b.size()-8){error="Invalid RIFF WAV";return {};}
+    unsigned channels=0,wav_rate=0;const uint8_t* data=nullptr;size_t bytes=0;
+    for(size_t pos=12;pos+8<=b.size();){
+        auto* tag=b.data()+pos;auto n=stts::wav_u32(tag+4);pos+=8;
+        if(n>b.size()-pos){error="Truncated WAV";return {};}
+        if(!std::memcmp(tag,"fmt ",4)){
+            if(channels||n<16||stts::wav_u16(b.data()+pos)!=1||stts::wav_u16(b.data()+pos+14)!=16||
+               (stts::wav_u32(b.data()+pos+4)!=44100&&stts::wav_u32(b.data()+pos+4)!=48000)){error="Use 44.1 or 48 kHz PCM16 WAV";return {};}
+            wav_rate=stts::wav_u32(b.data()+pos+4);
+            channels=stts::wav_u16(b.data()+pos+2);
+            if((channels!=1&&channels!=2)||stts::wav_u16(b.data()+pos+12)!=channels*2||
+               stts::wav_u32(b.data()+pos+8)!=wav_rate*channels*2){error="Invalid WAV channel layout";return {};}
+        }else if(!std::memcmp(tag,"data",4)){
+            if(data){error="Duplicate WAV data";return {};}data=b.data()+pos;bytes=n;
+        }
+        pos+=n;if(n%2){if(pos==b.size()){error="Truncated WAV padding";return {};}++pos;}
+    }
+    if(!channels||!data||!bytes||bytes%(channels*2)||bytes/(channels*2)>wav_rate*max_seconds){error="Invalid WAV data";return {};}
+    auto clip=std::make_shared<Clip>();clip->frames=bytes/(channels*2);clip->sample_rate=wav_rate;clip->pcm.resize(clip->frames*2);
+    for(size_t ch=0;ch<2;++ch)for(size_t i=0;i<clip->frames;++i){
+        const auto v=stts::wav_u16(data+2*(i*channels+std::min(ch,size_t(channels-1))));
+        clip->pcm[ch*clip->frames+i]=float(int(v)-(v>=32768?65536:0))/32768.f;
+    }
+    return clip;
+}
+// Explicit bounded snapshot capture: keep the input source dry and submit
+// the transformed result as this source. No native inference in the callback.
+bool capture_source(obs_source_t* source){
+    const auto* id=source?obs_source_get_unversioned_id(source):nullptr;
+    return id&&std::strcmp(id,"sound_audio_diffusion_source")&&
+        obs_source_get_type(source)==OBS_SOURCE_TYPE_INPUT&&(obs_source_get_output_flags(source)&OBS_SOURCE_AUDIO);
+}
+struct CaptureJob {
+    Clip& clip;
+    unsigned channels;
+    bool muted;
+    std::atomic<size_t> written{0};
+    std::atomic<bool> invalid{false};
+    std::atomic_flag busy=ATOMIC_FLAG_INIT;
+};
+void capture_audio(void* opaque,obs_source_t*,const audio_data* audio,bool muted){
+    auto& job=*static_cast<CaptureJob*>(opaque);
+    if((muted&&!job.muted)||!audio||!audio->data[0]||job.invalid||job.busy.test_and_set(std::memory_order_acquire))return;
+    struct Unlock {std::atomic_flag& flag;~Unlock(){flag.clear(std::memory_order_release);}} unlock{job.busy};
+    const auto start=job.written.load(std::memory_order_relaxed);
+    const auto n=std::min<size_t>(audio->frames,job.clip.frames-start);
+    if(job.channels==2&&!audio->data[1]){job.invalid=true;return;}
+    for(size_t ch=0;ch<2;++ch){
+        auto* in=reinterpret_cast<const float*>(audio->data[job.channels==1?0:ch]);
+        auto* out=job.clip.pcm.data()+ch*job.clip.frames+start;
+        for(size_t i=0;i<n;++i){
+            if(!std::isfinite(in[i])){job.invalid=true;return;}
+            out[i]=std::clamp(in[i],-1.f,1.f);
+        }
+    }
+    job.written.store(start+n,std::memory_order_release);
+}
+std::shared_ptr<Clip> capture_input(State& s,const Config& c,uint64_t epoch,std::string& error){
+    auto* source=obs_get_source_by_uuid(c.input_source.c_str());
+    if(!capture_source(source)||source==s.source||obs_source_removed(source)||!obs_source_enabled(source)){
+        if(source)obs_source_release(source);
+        error="Input source unavailable";return {};
+    }
+    struct SourceRef {obs_source_t* s;~SourceRef(){obs_source_release(s);}} ref{source};
+    auto* audio=obs_get_audio();
+    const auto sample_rate=audio?audio_output_get_sample_rate(audio):0;
+    const auto channels=audio?audio_output_get_channels(audio):0;
+    if((sample_rate!=44100&&sample_rate!=48000)||(channels!=1&&channels!=2)){
+        error="Live capture requires mono/stereo at 44.1 or 48 kHz";return {};
+    }
+    auto clip=std::make_shared<Clip>();clip->sample_rate=sample_rate;
+    clip->frames=size_t(std::llround(c.capture_seconds*sample_rate));clip->pcm.resize(clip->frames*2);
+    CaptureJob job{*clip,unsigned(channels),c.capture_muted};
+    message(s,epoch,"Capturing input");
+    obs_source_add_audio_capture_callback(source,capture_audio,&job);
+    struct Remove {obs_source_t* source;CaptureJob* job;~Remove(){obs_source_remove_audio_capture_callback(source,capture_audio,job);}} remove{source,&job};
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(int(c.capture_seconds*1000))+5s;
+    while(s.current(epoch)&&job.written.load(std::memory_order_acquire)<clip->frames&&!job.invalid&&
+          !obs_source_removed(source)&&obs_source_enabled(source)&&std::chrono::steady_clock::now()<deadline){
+        std::unique_lock lock(s.mutex);s.cv.wait_for(lock,20ms,[&]{return !s.current(epoch);});
+    }
+    if(!s.current(epoch))return {};
+    if(job.invalid||job.written.load(std::memory_order_acquire)!=clip->frames){error="Incomplete or invalid source audio capture";return {};}
+    ++s.captured;
+    return clip;
+}
+struct PlayClock {
+    const std::chrono::steady_clock::time_point start=std::chrono::steady_clock::now();
+    const uint64_t clock=os_gettime_ns();
+    uint64_t emitted=0;
+    auto elapsed()const{return std::chrono::seconds(emitted/rate)+std::chrono::nanoseconds((emitted%rate)*1000000000ULL/rate);}
+};
+bool play_range(State& s,const Clip& clip,size_t count,PlayClock& clock,uint64_t epoch,size_t offset=0){
     constexpr size_t block=rate/50;
-    for(size_t i=0;i<clip.frames;i+=block){
-        auto elapsed=std::chrono::nanoseconds(uint64_t(i)*1000000000ULL/rate);
-        {std::unique_lock lock(s.mutex);s.cv.wait_until(lock,start+elapsed,[&]{return !s.current(epoch);});}
-        if(!s.current(epoch)||std::chrono::steady_clock::now()>start+elapsed+250ms)return false;
+    if(offset>clip.frames||count>clip.frames-offset)return false;
+    for(size_t i=0;i<count;i+=block){
+        auto elapsed=clock.elapsed();
+        {std::unique_lock lock(s.mutex);s.cv.wait_until(lock,clock.start+elapsed,[&]{return !s.current(epoch);});}
+        if(!s.current(epoch)||std::chrono::steady_clock::now()>clock.start+elapsed+250ms)return false;
         obs_source_audio out{};
-        out.data[0]=reinterpret_cast<const uint8_t*>(clip.pcm.data()+i);
-        out.data[1]=reinterpret_cast<const uint8_t*>(clip.pcm.data()+clip.frames+i);
-        out.frames=uint32_t(std::min(block,clip.frames-i));out.format=AUDIO_FORMAT_FLOAT_PLANAR;
-        out.speakers=SPEAKERS_STEREO;out.samples_per_sec=rate;out.timestamp=clock+uint64_t(elapsed.count());
-        obs_source_output_audio(s.source,&out);
+        out.data[0]=reinterpret_cast<const uint8_t*>(clip.pcm.data()+offset+i);
+        out.data[1]=reinterpret_cast<const uint8_t*>(clip.pcm.data()+clip.frames+offset+i);
+        out.frames=uint32_t(std::min(block,count-i));out.format=AUDIO_FORMAT_FLOAT_PLANAR;
+        out.speakers=SPEAKERS_STEREO;out.samples_per_sec=rate;out.timestamp=clock.clock+uint64_t(elapsed.count());
+        obs_source_output_audio(s.source,&out);clock.emitted+=out.frames;
     }
     std::unique_lock lock(s.mutex);
-    s.cv.wait_until(lock,start+std::chrono::nanoseconds(uint64_t(clip.frames)*1000000000ULL/rate),[&]{return !s.current(epoch);});
+    s.cv.wait_until(lock,clock.start+clock.elapsed(),[&]{return !s.current(epoch);});
     return s.current(epoch);
+}
+bool play(State& s,const Clip& clip,uint64_t epoch){PlayClock clock;return play_range(s,clip,clip.frames,clock,epoch);}
+constexpr size_t held=rate*35/100; // 350 ms unplayed splice region
+std::shared_ptr<Clip> tail(const Clip& clip,size_t frames){
+    auto out=std::make_shared<Clip>();out->frames=std::min(frames,clip.frames);
+    out->pcm.resize(out->frames*2);
+    for(size_t ch=0;ch<2;++ch)
+        std::copy_n(clip.pcm.data()+ch*clip.frames+clip.frames-out->frames,out->frames,out->pcm.data()+ch*out->frames);
+    return out;
+}
+struct Next {std::shared_ptr<Clip> clip;std::string error;};
+Next continuation(State& s,Config c,uint64_t epoch,std::shared_ptr<const Clip> current,uint64_t segment){
+    Next next;
+    try {
+        auto context=tail(*current,rate*4);
+        // With 4 seconds of context, cap each new segment at 56 seconds.
+        c.seconds=std::clamp(c.seconds,6.,56.);
+        if(c.seed>=0)c.seed=(c.seed+int64_t(segment%2147483647))%2147483647;
+        ++s.started;s.progress=0;
+        auto full=generate(s,c,epoch,next.error,context.get(),true,true);
+        if(!full)return next;
+        auto output=tail(*full,full->frames-context->frames+held);
+        // Preserve the start of the held region even if the native safety
+        // scaler adjusted the returned prefix. Blend into its real splice.
+        constexpr size_t blend=rate/50;
+        for(size_t ch=0;ch<2;++ch)for(size_t i=0;i<blend;++i){
+            float mix=float(i)/float(blend-1);
+            const float old=current->pcm[ch*current->frames+current->frames-held+i];
+            auto& x=output->pcm[ch*output->frames+i];x=old*(1-mix)+x*mix;
+        }
+        next.clip=std::move(output);
+        return next;
+    }catch(const std::exception& e){next.error=e.what();return next;}
+    catch(...){next.error="Continuation failed";return next;}
+}
+void continuous(State& s,Config c,uint64_t epoch){
+    // Continuous mode is music only. SFX remains explicit, bounded generation.
+    if(c.variant!="small-music"){
+        std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.failed;s.message="Continuous mode requires Small Music";}
+        return;
+    }
+    c.seconds=std::clamp(c.seconds,6.,56.);
+    ++s.started;s.progress=0;message(s,epoch,"Generating first segment");
+    std::string error;auto clip=generate(s,c,epoch,error);
+    if(!clip){
+        std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.failed;s.message=error.empty()?"Initial generation failed":error;}
+        return;
+    }
+    PlayClock clock;uint64_t segment=0;
+    while(s.current(epoch)){
+        {
+            std::lock_guard lock(s.mutex);
+            if(!s.current(epoch))return;
+            s.saved=clip;++s.completed;s.message="Playing / generating next";
+            // Read live prompt and sampling controls at each segment boundary.
+            // Model/device/variant are fixed until restart.
+            c.prompt=s.config.prompt;c.negative=s.config.negative;c.seconds=s.config.seconds;
+            c.steps=s.config.steps;c.seed=s.config.seed;
+            c.alternate_prompt=s.config.alternate_prompt;c.lora_a=s.config.lora_a;c.lora_b=s.config.lora_b;
+            c.lora_a_strength=s.config.lora_a_strength;c.lora_b_strength=s.config.lora_b_strength;
+            c.automate_b=s.config.automate_b;c.sound_channel=s.config.sound_channel;c.sight_channel=s.config.sight_channel;
+        }
+        auto future=std::async(std::launch::async,continuation,std::ref(s),c,epoch,std::shared_ptr<const Clip>(clip),++segment);
+        bool sent=play_range(s,*clip,clip->frames-held,clock,epoch);
+        if(!sent){
+            std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.epoch;++s.failed;s.message="Playback deadline missed";s.cv.notify_all();}
+            return; // joins producer after releasing the mutex
+        }
+        if(!s.current(epoch))return;
+        if(future.wait_for(0ms)!=std::future_status::ready){
+            // Do not repeat music or synthesize silence to hide an underrun.
+            // Cancel generation, play the held tail on the existing timeline.
+            // Preserve the held tail before invalidating the producer.
+            play_range(s,*clip,held,clock,epoch,clip->frames-held);
+            std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.epoch;++s.failed;s.message="Continuation missed lookahead deadline; increase duration";s.cv.notify_all();}
+            return;
+        }
+        auto next=future.get();
+        if(!s.current(epoch))return;
+        if(!next.clip){
+            play_range(s,*clip,held,clock,epoch,clip->frames-held);
+            std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.failed;s.message=next.error.empty()?"Continuation failed":next.error;}
+            return;
+        }
+        {std::lock_guard lock(s.mutex);if(!s.current(epoch))return;++s.played;}
+        clip=std::move(next.clip);
+    }
 }
 void worker(State* s){
     while(true){
@@ -145,10 +471,16 @@ void worker(State* s){
          job=s->pending;s->pending=Job::None;e=s->epoch;c=s->config;clip=s->saved;}
         if(!s->current(e))continue;
         try{
-            if(job==Job::Generate){
+            if(job==Job::Continuous){continuous(*s,c,e);continue;}
+            if(job==Job::Generate||job==Job::Transform||job==Job::Extend){
                 ++s->started;s->progress=0;message(*s,e,"Generating");
                 std::string error;
-                clip=generate(*s,c,e,error);
+                if(job==Job::Transform||job==Job::Extend){
+                    if(!c.input_source.empty())clip=capture_input(*s,c,e,error);
+                    else if(!c.input_file.empty())clip=read_wav(c.input_file,error);
+                    if(clip)clip=generate(*s,c,e,error,clip.get(),job==Job::Extend);
+                    else if(error.empty())error="Choose a WAV or generate a clip first";
+                }else clip=generate(*s,c,e,error);
                 std::lock_guard lock(s->mutex);
                 if(!s->current(e))continue;
                 if(!clip){++s->failed;s->message=error.empty()?"Generation failed":error;blog(LOG_WARNING,"[Sound/Diffusion] %s",s->message.c_str());continue;}
@@ -174,6 +506,17 @@ void update(void* p,obs_data_t* d){
     auto& s=*static_cast<State*>(p);Config c;
     c.models=obs_data_get_string(d,"models_dir");c.prompt=obs_data_get_string(d,"prompt");
     c.negative=obs_data_get_string(d,"negative_prompt");c.device=obs_data_get_string(d,"device");
+    c.variant=std::string(obs_data_get_string(d,"variant"))=="small-sfx"?"small-sfx":"small-music";
+    c.input_file=obs_data_get_string(d,"input_file");c.input_source=obs_data_get_string(d,"input_source");
+    c.alternate_prompt=obs_data_get_string(d,"alternate_prompt");
+    c.lora_a=obs_data_get_string(d,"lora_a");c.lora_b=obs_data_get_string(d,"lora_b");
+    auto strength=[&](const char* key){double x=obs_data_get_double(d,key);return std::isfinite(x)?float(std::clamp(x,0.,2.)):1.f;};
+    c.lora_a_strength=strength("lora_a_strength");c.lora_b_strength=strength("lora_b_strength");
+    c.automate_b=obs_data_get_bool(d,"automate_b");
+    c.sound_channel=obs_data_get_string(d,"sound_channel");c.sight_channel=obs_data_get_string(d,"sight_channel");
+    auto capture=obs_data_get_double(d,"capture_seconds");c.capture_seconds=std::isfinite(capture)?std::clamp(capture,1.,30.):6.;
+    c.capture_muted=obs_data_get_bool(d,"capture_muted");
+    auto noise=obs_data_get_double(d,"transform_noise");c.transform_noise=std::isfinite(noise)?float(std::clamp(noise,0.,1.)):.5f;
     c.steps=int(std::clamp<int64_t>(obs_data_get_int(d,"steps"),1,32));
     c.seed=std::max<int64_t>(-1,obs_data_get_int(d,"seed"));
     auto seconds=obs_data_get_double(d,"duration");c.seconds=std::isfinite(seconds)?std::clamp(seconds,1.,double(max_seconds)):12.;
@@ -185,7 +528,7 @@ void enabled(void* p,calldata_t* d){auto& s=*static_cast<State*>(p);std::lock_gu
 bool queue(void* p,Job job){
     if(!p)return false;
     auto& s=*static_cast<State*>(p);
-    if(job==Job::Generate){auto* d=obs_source_get_settings(s.source);update(&s,d);obs_data_release(d);}
+    if(job!=Job::Replay){auto* d=obs_source_get_settings(s.source);update(&s,d);obs_data_release(d);}
     std::lock_guard lock(s.mutex);
     if(!s.active||!s.enabled||s.closing){s.message="Activate the source first";return false;}
     if(job==Job::Replay&&!s.saved){s.message="Generate a clip first";return false;}
@@ -193,11 +536,17 @@ bool queue(void* p,Job job){
 }
 bool refresh(obs_properties_t*,obs_property_t*,void*){return true;}
 bool make(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Generate);}
+bool start_continuous(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Continuous);}
+bool transform(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Transform);}
+bool extend(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Extend);}
 bool replay(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Replay);}
 bool stop(obs_properties_t*,obs_property_t*,void* p){
     if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);invalidate(s);s.message="Stopped";}return false;
 }
 void defaults(obs_data_t* d){
+    obs_data_set_default_double(d,"capture_seconds",6);
+    obs_data_set_default_double(d,"lora_a_strength",1);obs_data_set_default_double(d,"lora_b_strength",1);
+    obs_data_set_default_string(d,"variant","small-music");obs_data_set_default_double(d,"transform_noise",.5);
     obs_data_set_default_string(d,"models_dir","");obs_data_set_default_string(d,"device","auto");
     obs_data_set_default_string(d,"prompt","warm instrumental bedroom pop, soft drums, toy keys");
     obs_data_set_default_double(d,"duration",12);obs_data_set_default_int(d,"steps",8);obs_data_set_default_int(d,"seed",-1);
@@ -205,6 +554,8 @@ void defaults(obs_data_t* d){
 obs_properties_t* props(void* p){
     auto* d=obs_properties_create();
     obs_properties_add_path(d,"models_dir","Stable Audio 3 GGUF model directory",OBS_PATH_DIRECTORY,nullptr,nullptr);
+    auto* variant=obs_properties_add_list(d,"variant","Model family",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(variant,"Small Music","small-music");obs_property_list_add_string(variant,"Small SFX","small-sfx");
     auto* device=obs_properties_add_list(d,"device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(device,"Auto (GPU preferred)","auto");obs_property_list_add_string(device,"CPU","cpu");
     obs_properties_add_text(d,"prompt","Prompt",OBS_TEXT_MULTILINE);
@@ -213,10 +564,48 @@ obs_properties_t* props(void* p){
     obs_properties_add_int_slider(d,"steps","Diffusion steps",1,32,1);
     obs_properties_add_int(d,"seed","Seed (-1 = random)",-1,2147483647,1);
     obs_properties_add_button2(d,"generate","Generate and play",make,p);
+    obs_properties_add_button2(d,"continuous","Start continuous music",start_continuous,p);
     obs_properties_add_button2(d,"replay","Replay last clip",replay,p);
+    auto* input=obs_properties_add_list(d,"input_source","Capture audio source (optional)",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(input,"None (WAV / last clip)","");
+    obs_enum_sources([](void* p,obs_source_t* source){
+        if(capture_source(source)&&!obs_source_removed(source))
+            obs_property_list_add_string(static_cast<obs_property_t*>(p),obs_source_get_name(source),obs_source_get_uuid(source));
+        return true;
+    },input);
+    obs_properties_add_float_slider(d,"capture_seconds","Capture duration (seconds)",1,30,1);
+    obs_properties_add_bool(d,"capture_muted","Capture muted source");
+    obs_properties_add_path(d,"input_file","Input WAV (optional, 44.1 / 48 kHz PCM16)",OBS_PATH_FILE,"WAV (*.wav)",nullptr);
+    obs_properties_add_float_slider(d,"transform_noise","Transform strength",0,1,.05);
+    obs_properties_add_button2(d,"transform","Transform input / last clip",transform,p);
+    obs_properties_add_button2(d,"extend","Extend input / last clip",extend,p);
     obs_properties_add_button2(d,"stop","Stop / cancel",stop,p);
+    auto* advanced=obs_properties_create();
+    obs_properties_add_text(advanced,"alternate_prompt","Fade toward prompt (optional)",OBS_TEXT_MULTILINE);
+    obs_properties_add_path(advanced,"lora_a","LoRA A (compatible GGUF)",OBS_PATH_FILE,"GGUF (*.gguf)",nullptr);
+    obs_properties_add_float_slider(advanced,"lora_a_strength","LoRA A strength",0,2,.05);
+    obs_properties_add_path(advanced,"lora_b","LoRA B (compatible GGUF)",OBS_PATH_FILE,"GGUF (*.gguf)",nullptr);
+    obs_properties_add_float_slider(advanced,"lora_b_strength","LoRA B strength",0,2,.05);
+    obs_properties_add_bool(advanced,"automate_b","Fade in LoRA B across generated segment");
+    auto* sound=obs_properties_add_list(advanced,"sound_channel","Sound context (optional)",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(sound,"None","");
+    for(const auto& e:sound_signals::discover())
+        if(e.kind==sound_signals::Kind::Transcript||e.kind==sound_signals::Kind::Classification)
+            obs_property_list_add_string(sound,e.label.c_str(),e.channel.c_str());
+    auto* sight=obs_properties_add_list(advanced,"sight_channel","Sight motion (optional)",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(sight,"None","");
+    obs_enum_sources([](void* p,obs_source_t* parent){
+        obs_source_enum_filters(parent,[](obs_source_t* parent,obs_source_t* filter,void* p){
+            if(sight_filter(filter)){
+                auto key=sound_signals::channel(parent,filter);
+                auto label=std::string(obs_source_get_name(parent))+" / "+obs_source_get_name(filter);
+                if(!key.empty())obs_property_list_add_string(static_cast<obs_property_t*>(p),label.c_str(),key.c_str());
+            }
+        },p);return true;
+    },sight);
+    obs_properties_add_group(d,"conditioning","Prompt automation and reactive conditioning",OBS_GROUP_NORMAL,advanced);
     obs_properties_add_button2(d,"refresh_status","Refresh status",refresh,p);
-    std::string status="Generate while active. Small-Music Q4_K_M; F16 encoder and autoencoder. Local inference only.";
+    std::string status="Generate while active. Q4_K_M / F16; local only. Continuous music uses 6–56 s segments. Selected source, WAV input or last generated clip for transform/extend (60 s result limit).";
     if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);status+="\nStatus: "+s.message+" ("+std::to_string(s.progress.load())+"%)";}
     obs_properties_add_text(d,"note",status.c_str(),OBS_TEXT_INFO);
     return d;
@@ -227,6 +616,11 @@ void status(void* p,calldata_t* d){
     calldata_set_int(d,"played",s.played);calldata_set_int(d,"failed",s.failed);calldata_set_int(d,"progress",s.progress);
     std::lock_guard lock(s.mutex);calldata_set_string(d,"message",s.message.c_str());
 }
+void status_v2(void* p,calldata_t* d){
+    status(p,d);auto& s=*static_cast<State*>(p);
+    calldata_set_int(d,"captured",s.captured);calldata_set_int(d,"automated",s.automated);
+    calldata_set_int(d,"sound_cues",s.sound_cues);calldata_set_int(d,"sight_cues",s.sight_cues);
+}
 void* create(obs_data_t* d,obs_source_t* source){
     try{
         auto s=std::make_unique<State>(source);update(s.get(),d);
@@ -234,6 +628,8 @@ void* create(obs_data_t* d,obs_source_t* source){
         signal_handler_connect(obs_source_get_signal_handler(source),"enable",enabled,s.get());
         proc_handler_add(obs_source_get_proc_handler(source),
           "void sound_diffusion_status_v1(out int started, out int completed, out int played, out int failed, out int progress, out string message)",status,s.get());
+        proc_handler_add(obs_source_get_proc_handler(source),
+          "void sound_diffusion_status_v2(out int started, out int completed, out int played, out int failed, out int progress, out string message, out int captured, out int automated, out int sound_cues, out int sight_cues)",status_v2,s.get());
         return s.release();
     }catch(...){return nullptr;}
 }
