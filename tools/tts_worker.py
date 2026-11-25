@@ -112,9 +112,68 @@ class Retention:
             name: sum(row[0] for row in self.records.get(name, {}).values())
             for name in names}}
 
+def load_piper_voice(piper, model_path, device="auto"):
+    """Prefer CUDA when ONNX Runtime actually provides it; retain CPU fallback.
+
+    ONNX Runtime can silently replace an unavailable CUDA EP with CPU. Inspect
+    the resulting session instead of treating use_cuda=True as proof of GPU.
+    """
+    import onnxruntime as ort
+    if device not in ("auto", "cpu", "cuda"):
+        raise ValueError("Unknown reader device")
+    cuda_available = "CUDAExecutionProvider" in ort.get_available_providers()
+    if device == "cuda" and not cuda_available:
+        raise RuntimeError("CUDA execution provider unavailable")
+    if cuda_available and device != "cpu":
+        try:
+            voice = piper.load(model_path, use_cuda=True)
+            if "CUDAExecutionProvider" in voice.session.get_providers():
+                print("SOUND_TTS_PROVIDER model=piper selected=cuda", flush=True)
+                return voice
+            if device == "cuda":
+                raise RuntimeError("CUDA execution provider not selected")
+            print("SOUND_TTS_PROVIDER_FALLBACK model=piper cause=cuda_not_selected", flush=True)
+        except Exception as exc:
+            if device == "cuda":
+                raise
+            print("SOUND_TTS_PROVIDER_FALLBACK model=piper cause=" + type(exc).__name__, flush=True)
+    voice = piper.load(model_path, use_cuda=False)
+    print("SOUND_TTS_PROVIDER model=piper selected=cpu", flush=True)
+    return voice
+
+
+def load_kokoro_voice(kokoro, model_path, voices_path, device="auto"):
+    import onnxruntime as ort
+    if device not in ("auto", "cpu", "cuda"):
+        raise ValueError("Unknown reader device")
+    available = ort.get_available_providers()
+    cuda = "CUDAExecutionProvider" in available and device != "cpu"
+    if device == "cuda" and not cuda:
+        raise RuntimeError("CUDA execution provider unavailable")
+    if cuda:
+        try:
+            session = ort.InferenceSession(str(model_path), providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+            if "CUDAExecutionProvider" in session.get_providers():
+                voice = kokoro.from_session(session, str(voices_path))
+                print("SOUND_TTS_PROVIDER model=kokoro registered=" + ",".join(session.get_providers()), flush=True)
+                return voice
+            if device == "cuda":
+                raise RuntimeError("CUDA execution provider not selected")
+            print("SOUND_TTS_PROVIDER_FALLBACK model=kokoro cause=cuda_not_selected", flush=True)
+        except Exception as exc:
+            if device == "cuda":
+                raise
+            print("SOUND_TTS_PROVIDER_FALLBACK model=kokoro cause=" + type(exc).__name__, flush=True)
+    session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+    voice = kokoro.from_session(session, str(voices_path))
+    print("SOUND_TTS_PROVIDER model=kokoro registered=" + ",".join(session.get_providers()), flush=True)
+    return voice
+
+
 class Engine:
-    def __init__(self, mode, assets):
+    def __init__(self, mode, assets, device="auto"):
         self.mode, self.assets = mode, assets
+        self.device = device
         self.models = {}
         self.retention = Retention()
 
@@ -148,8 +207,8 @@ class Engine:
         if model == 'kokoro' and self.mode == 'reader':
             from kokoro_onnx import Kokoro
             if model not in self.models:
-                self.models[model] = Kokoro(str(self.assets/'kokoro/kokoro-v1.0.fp16.onnx'),
-                                            str(self.assets/'kokoro/voices-v1.0.bin'))
+                self.models[model] = load_kokoro_voice(Kokoro, self.assets/'kokoro/kokoro-v1.0.fp16.onnx',
+                                                       self.assets/'kokoro/voices-v1.0.bin', self.device)
             engine = self.models[model]
             if voice not in engine.get_voices() or voice[:2] not in ('af','am','bf','bm'):
                 raise ValueError('Select a supported English Kokoro voice')
@@ -162,7 +221,7 @@ class Engine:
             if voice != 'en_US-amy-low':
                 raise ValueError('Unknown local Piper voice')
             if model not in self.models:
-                self.models[model] = PiperVoice.load(self.assets/'piper/en_US-amy-low.onnx', use_cuda=False)
+                self.models[model] = load_piper_voice(PiperVoice, self.assets/'piper/en_US-amy-low.onnx', self.device)
             from piper.config import SynthesisConfig
             chunks = list(self.models[model].synthesize(text, SynthesisConfig(**options)))
             if not chunks:
@@ -297,6 +356,7 @@ def main():
     parser.add_argument('--mode', choices=['reader','chatterbox'], required=True)
     parser.add_argument('--assets', type=Path, required=True)
     parser.add_argument('--socket', type=Path, required=True)
+    parser.add_argument('--device', choices=['auto','cpu','cuda'], default='auto', help='Reader ONNX provider policy')
     args = parser.parse_args()
     os.environ['HF_HUB_OFFLINE'] = '1'
     os.environ['TRANSFORMERS_OFFLINE'] = '1'
@@ -308,7 +368,7 @@ def main():
         raise SystemExit('Socket already exists; refusing overwrite')
     args.assets.resolve(strict=True)
     with Server(str(args.socket), Handler) as server:
-        server.engine = Engine(args.mode, args.assets)
+        server.engine = Engine(args.mode, args.assets, args.device)
         os.chmod(args.socket, 0o600)
         print('SOUND_TTS_WORKER_READY', args.mode, flush=True)
         try:
