@@ -53,11 +53,13 @@ int main(int argc,char** argv){
     obs_register_source(&fixture);
     auto* source=obs_source_create("rvc_fixture","tone",nullptr,nullptr);
     auto* d=obs_data_create();obs_data_set_string(d,"helper",argv[3]);obs_data_set_string(d,"library",argv[4]);if(std::getenv("SOUND_RVC_LEGACY"))obs_data_set_string(d,"voice_path","old-voice.onnx");else obs_data_set_string(d,"model",argv[5]);
+    if(const char* v=std::getenv("SOUND_RVC_VOICE"))obs_data_set_string(d,"voice_checkpoint",v);
+    if(const char* v=std::getenv("SOUND_RVC_INDEX")){obs_data_set_string(d,"retrieval_index",v);obs_data_set_double(d,"retrieval",.3);}
     obs_data_set_double(d,"mix",1);obs_data_set_double(d,"noise",0);
     auto* filter=obs_source_create("stts_rvc_filter","timbre",d,nullptr);
     if(!source||!filter)return 6;
     auto* props=obs_source_properties(filter);
-    bool picker=obs_properties_get(props,"pitch")&&obs_properties_get(props,"mix")&&obs_properties_get(props,"model");
+    bool picker=obs_properties_get(props,"pitch")&&obs_properties_get(props,"mix")&&obs_properties_get(props,"model")&&obs_properties_get(props,"voice_checkpoint")&&obs_properties_get(props,"retrieval_index")&&obs_properties_get(props,"retrieval");
     obs_properties_destroy(props);
     obs_source_filter_add(source,filter);obs_set_output_source(1,source);
     obs_source_set_audio_mixers(source,1);obs_source_inc_active(source);obs_source_set_audio_active(source,true);

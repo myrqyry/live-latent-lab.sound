@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
 namespace {
 void check(bool ok,const char* what){if(!ok)throw std::runtime_error(what);}
 void verify(const char* path){
@@ -58,12 +59,18 @@ struct Codec {
 #define MEMBER(n) decltype(&audiocpp_##n) n=nullptr;
     API(MEMBER)
 #undef MEMBER
+    std::string voice,index;
     audiocpp_registry* registry=nullptr;
     audiocpp_model* model=nullptr;
     audiocpp_session* session=nullptr;
     void status(audiocpp_status s){if(s!=0)throw std::runtime_error(last_error()?last_error():"RVC ABI failed");}
-    Codec(const char* library,const char* model_path,const char* device){
+    Codec(const char* library,const char* model_path,const char* device,const char* checkpoint,const char* retrieval):voice(checkpoint),index(retrieval){
         verify(model_path);
+        auto asset=[](const std::string& p,size_t max){
+            return std::filesystem::is_regular_file(p)&&std::filesystem::file_size(p)>0&&std::filesystem::file_size(p)<=max;
+        };
+        check(voice.empty()||asset(voice,512ULL*1024*1024),"Invalid or oversized RVC voice checkpoint");
+        check(index.empty()||(!voice.empty()&&asset(index,1024ULL*1024*1024)),"Invalid or oversized RVC retrieval index");
         lib=dlopen(library,RTLD_NOW|RTLD_LOCAL);if(!lib)throw std::runtime_error(dlerror());
         try{
 #define LOAD(n) n=reinterpret_cast<decltype(n)>(dlsym(lib,"audiocpp_" #n));check(n!=nullptr,"Missing ABI " #n);
@@ -83,12 +90,12 @@ struct Codec {
     }
     ~Codec(){close();}
     void close(){if(session)session_free(session);if(model)model_free(model);if(registry)registry_free(registry);if(lib)dlclose(lib);}
-    std::vector<float> convert(const float* input,uint32_t rate,int pitch){
+    std::vector<float> convert(const float* input,uint32_t rate,int pitch,float blend){
         std::unique_ptr<audiocpp_request,decltype(request_free)> req(request_create(),request_free);
         check(bool(req),"RVC request");
         status(request_set_audio(req.get(),input,rvc_native::input_frames,16000,1));
         auto set=[&](const char* k,const std::string& v){status(request_set_option(req.get(),k,v.c_str()));};
-        set("voice_id","default");set("retrieval_blend","0");set("semitone_shift",std::to_string(pitch));set("output_sample_rate",std::to_string(rate));
+        set("voice_id","default");if(!voice.empty())set("voice_model_path",voice);if(!index.empty())set("retrieval_index_file",index);set("retrieval_blend",std::to_string(blend));set("semitone_shift",std::to_string(pitch));set("output_sample_rate",std::to_string(rate));
         audiocpp_result* raw=nullptr;auto rc=session_run(session,req.get(),&raw);
         std::unique_ptr<audiocpp_result,decltype(result_free)> result(raw,result_free);status(rc);
         const float* samples=nullptr;size_t frames=0;int hz=0,ch=0;
@@ -108,23 +115,23 @@ bool transfer(void* data,size_t bytes,bool write){
 }
 int main(int argc,char** argv){
     using namespace rvc_native;
-    if(argc!=4|| (std::strcmp(argv[3],"cuda")&&std::strcmp(argv[3],"cpu")))return 2;
+    if(argc!=6|| (std::strcmp(argv[3],"cuda")&&std::strcmp(argv[3],"cpu")))return 2;
     try{
         int type=0;socklen_t n=sizeof(type);check(getsockopt(0,SOL_SOCKET,SO_TYPE,&type,&n)==0&&type==SOCK_STREAM,"Expected private socket");
         CudaBudget budget(std::strcmp(argv[3],"cuda")==0);
-        Codec codec(argv[1],argv[2],argv[3]);
+        Codec codec(argv[1],argv[2],argv[3],argv[4],argv[5]);
         std::array<float,input_frames> pcm{};
         for(;;){
             Request req{};if(!transfer(&req,sizeof(req),false))return 0;
             if(req.magic!=magic||req.frames!=input_frames)return 3;
             if(!transfer(pcm.data(),sizeof(pcm),false))return 4;
             Reply reply{magic,req.sequence,1,0};
-            if(!valid(req)||!std::all_of(pcm.begin(),pcm.end(),[](float v){return std::isfinite(v)&&std::abs(v)<=1;})){
+            if(!valid(req)||(req.retrieval>0&&codec.index.empty())||!std::all_of(pcm.begin(),pcm.end(),[](float v){return std::isfinite(v)&&std::abs(v)<=1;})){
                 if(!transfer(&reply,sizeof(reply),true))return 5;
                 continue;
             }
             budget.reserve(1024);
-            auto out=codec.convert(pcm.data(),req.rate,req.semitones);
+            auto out=codec.convert(pcm.data(),req.rate,req.semitones,req.retrieval);
             budget.reserve(1024);
             reply.status=0;reply.frames=uint32_t(out.size());
             if(!transfer(&reply,sizeof(reply),true)||!transfer(out.data(),out.size()*sizeof(float),true))return 6;

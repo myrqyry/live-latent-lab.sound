@@ -645,3 +645,21 @@ Default native voice only, no custom model/retrieval UI yet;
 subjective audition, long soak, contention, A/V compensation,
 in-filter worker-crash recovery, and full expanded suite remain
 unqualified. See docs/native-rvc.md and docs/native-rvc-qualification.md.
+
+## Native RVC custom voices (2026-11-25)
+
+Existing external voice library located through its relocation notice;
+17 .pth files and 14 same-stem .index pairs. Native v2 protocol and
+helper support a selected local checkpoint and optional matching FAISS
+index, live blend, index warmup, default-voice regression and bounded
+asset sizes. Actual custom RVC v2 40 kHz synthetic-voice conversion
+with 768-dimension IVF index passed the focused real OBS runner at
+48/44.1 kHz (16 hops each, last 328.1/326.2 ms); private requests
+with cached retrieval 320.8–322.2 ms. Registry seven effects passed.
+Stage SHA256 7c81e7c70eacf94e672d7fcb603575ff489d61b7f80ce7dc3ef9780fe2ae6cd6.
+New helper and local voice-library symlink preserved; existing
+weights, runtime and v1 helper unchanged. No private checkpoint
+paths or model files committed. Only one custom pair qualified,
+no subjective audition or full regression run. Paths apply after
+scene reload; no auto-pairing or live checkpoint switching yet.
+OBS open, staged not installed.

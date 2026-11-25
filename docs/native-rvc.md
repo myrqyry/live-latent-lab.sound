@@ -33,7 +33,7 @@ private helper in Sound, with the pinned upstream header:
 
 ```sh
 c++ -std=c++17 -O2 -I src -I /path/to/audio.cpp/include \
-  tools/rvc-native-worker.cpp -ldl -lcrypto -o rvc-native-worker
+  tools/rvc-native-worker.cpp -ldl -lcrypto -o rvc-native-worker-v2
 cmake -S . -B build-sound-rvc -DSOUND_EXPERIMENTAL=ON \
   -DSOUND_EFFECTS=rvc -DOBS_PLUGIN_DESTINATION=bin/64bit \
   -DOBS_DATA_DESTINATION=data
@@ -41,7 +41,7 @@ cmake --build build-sound-rvc -j3
 ```
 
 Default local paths are under
-`~/.local/share/live-latent-lab-sound/rvc/`: rvc-native-worker,
+`~/.local/share/live-latent-lab-sound/rvc/`: rvc-native-worker-v2,
 libaudiocpp.so.0.1.0, and rvc-f16.gguf. Keep upstream licenses and
 record runtime/library hashes. The helper verifies the pinned model
 byte count and SHA-256, checks C ABI major version, and explicitly
@@ -55,13 +55,21 @@ voices you are entitled to use.
 
 ## Behavior and limitations
 
-The first version uses only the packaged default voice, F32 runtime
-weights, and disables retrieval. Live pitch shift (-24 to +24
-semitones) and wet/dry mix are exposed. Voice selection, custom
-checkpoint and FAISS retrieval UI remain future work.
+Uses F32 runtime weights. Leave the optional voice checkpoint empty
+to use the packaged default, or select a local compatible RVC .pth/.pt
+checkpoint. Choose its matching FAISS .index for optional retrieval.
+The picker starts in the local runtime's voice-library directory
+(which can be a symlink to an existing model collection).
+No file copies or automatic checkpoint conversion are needed.
+Save checkpoint/index paths and reload the scene to apply them.
+Pitch shift (-24 to +24 semitones), retrieval blend (0–1 with an
+index selected), and wet/dry mix are live. The selected index is
+loaded during warmup; incompatible or missing assets fail closed.
+The helper bounds checkpoint/index size to 512 MiB/1 GiB.
+Only trusted checkpoints should be used.
 A single private worker owns the RVC CUDA session; additional
 instances fail closed. The binary protocol carries 16000 mono
-float samples per request, an output rate, pitch and sequence.
+float samples per request, an output rate, pitch, retrieval blend and sequence (RVC2 framing).
 The child is spawned with an inherited socketpair, no listener.
 The worker is cancelled by closing/reaping its own child process;
 the audio callback never waits on the worker.
@@ -136,3 +144,25 @@ exposed. The runtime and model are present at the default paths.
 The tested module is staged, not installed: the existing installed
 module predates the separate removal of deterministic mic
 processing in commit 5df496d.
+
+## Custom voice and retrieval qualification (2026-11-25)
+
+The v2 helper supports a fixed local checkpoint and optional index
+per resident session. A real RVC v2 40 kHz synthetic-voice checkpoint
+and matching 768-dimensional FAISS IVF-flat index from the local
+library were accepted by the native C ABI. The library files remain
+untouched. The existing pinned GGUF/runtime are reused; no PyTorch
+execution or ONNX path is required. Warm private requests with
+retrieval took 320.8–322.2 ms in the focused run. An earlier first
+index request took 505.1 ms, motivating index warmup before activation.
+Actual OBS custom-voice streams passed at 48/44.1 kHz, 16 hops each,
+last processing time 328.1/326.2 ms, valid nonzero mono wet and
+preserved stereo dry. Default voice private regression, invalid blend
+rejection and seven-effect registry passed. The staged module
+SHA256 is 7c81e7c70eacf94e672d7fcb603575ff489d61b7f80ce7dc3ef9780fe2ae6cd6.
+The optional environment variables SOUND_RVC_VOICE and SOUND_RVC_INDEX
+select a checkpoint/index in the focused test runner. Only this pair
+has been exercised; no claim of universal compatibility or subjective
+voice quality, automatic index pairing, live voice switching, or
+seamless recovery. OBS is open; the module remains staged. The v1
+helper is retained separately.

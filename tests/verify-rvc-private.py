@@ -7,7 +7,7 @@ with wave.open(str(fixture),'rb') as w:
     src=array.array('h',w.readframes(16000))
 assert len(src)==16000
 pcm=array.array('f',(x/32768 for x in src))
-MAGIC=0x52564331
+MAGIC=0x52564332
 def receive(s,n):
     b=bytearray()
     while len(b)<n:
@@ -18,12 +18,13 @@ def receive(s,n):
 def run(device):
     parent,child=socket.socketpair()
     parent.settimeout(45)
-    p=subprocess.Popen([str(helper),str(lib),str(model),device],stdin=child,stdout=subprocess.DEVNULL)
+    voice=os.environ.get("SOUND_RVC_VOICE",""); index=os.environ.get("SOUND_RVC_INDEX","")
+    p=subprocess.Popen([str(helper),str(lib),str(model),device,voice,index],stdin=child,stdout=subprocess.DEVNULL)
     child.close()
     try:
-        def req(seq,shift,rate=48000,valid=True):
+        def req(seq,shift,rate=48000,valid=True,blend=0.):
             start=time.monotonic()
-            parent.sendall(struct.pack('<IIIIi',MAGIC,seq,16000,rate,shift)+pcm.tobytes())
+            parent.sendall(struct.pack('<IIIIif',MAGIC,seq,16000,rate,shift,blend)+pcm.tobytes())
             magic,reply,status,count=struct.unpack('<IIII',receive(parent,16))
             assert magic==MAGIC and seq==reply
             if not valid:
@@ -40,6 +41,13 @@ def run(device):
         b=req(3,4)
         assert a!=b
         req(4,0,44100)
+        req(5,0,valid=False,blend=float('nan'))
+        if index:
+            c=req(6,0,blend=.3)
+            assert a!=c
+            req(7,0,blend=.6)
+        else:
+            req(6,0,valid=False,blend=.3)
         assert p.poll() is None
         print('RVC_PRIVATE_PASS='+device,flush=True)
     finally:
