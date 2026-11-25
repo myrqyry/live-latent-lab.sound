@@ -1,3 +1,4 @@
+#include "sa3-stt-coexist.hpp"
 #include <obs.h>
 #include <obs-module.h>
 #include <callback/proc.h>
@@ -136,6 +137,8 @@ int main(int argc,char** argv){
     const auto bytes=file.tellg();if(bytes<=0)return 9;
     std::vector<float> audio(size_t(bytes)/4);file.seekg(0);file.read(reinterpret_cast<char*>(audio.data()),bytes);
     auto stream=audio;stream.resize(stream.size()+rate*2,0);
+    Sa3SttCoexist diffusion;
+    const bool diffusion_started=diffusion.start();
     feed(s,stream,rate,f,transcript,seq);
     for(int i=0;i<180;++i){
         drain_ui();auto r=read(f);if(r.available&&r.sequence!=seq){transcript+=" "+r.text;seq=r.sequence;}
@@ -204,6 +207,8 @@ int main(int argc,char** argv){
         ok=ok&&whisper&&saved&&returned&&invalidated;
     }
 
+    const bool diffusion_finished=diffusion.finish();
+    ok=ok&&diffusion_started&&diffusion_finished;
     printf("SOUND_STT_REAL rate=%u ui=%d ready=%d silence=%d words=%d routed=%d dry=%d muted=%d sequences=%lld inference_ms=%lld frames=%llu pass=%d\n",rate,ui,ready,silence,words,routed,clean,muted,(long long)seq,(long long)result.ms,(unsigned long long)dry.frames.load(),ok);
     printf("SOUND_STT_FIXTURE_TEXT: %s\n",transcript.c_str());
     obs_source_remove_audio_capture_callback(s,capture,&dry);obs_source_dec_active(s);obs_set_output_source(1,nullptr);

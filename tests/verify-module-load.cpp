@@ -23,6 +23,7 @@ static const Effect effects[] = {
     {"musicgen_source", "musicgen"},
     {"whisper_text_source", "whisper"},
     {"sound_stt_filter", "stt"},
+    {"sound_audio_diffusion_source", "diffusion"},
     {"mediapipe_filter", "mediapipe"},
     {"yamnet_classifier_source", "yamnet"},
     {"sound_kokoro_tts_source", nullptr},

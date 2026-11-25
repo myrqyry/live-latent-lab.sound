@@ -24,6 +24,7 @@ All entries use the `LLL.sound` prefix in OBS.
 | Buffered stem (experimental) | CUDA HTDemucs separation of one stereo stem, fixed 12-second delay | Expanded |
 | STT | Select Whisper, Parakeet or streaming Nemotron (CUDA or CPU) | Expanded |
 | TTS | Select Kokoro, Piper, Chatterbox, TikTok or Edge | Expanded |
+| [Audio Diffusion](docs/audio-diffusion.md) | Local Stable Audio 3 music generation and replay | Explicit opt-in |
 
 ### Speech and shared signals
 
@@ -50,8 +51,9 @@ YAMNet requires a separately supplied compatible MediaPipe 1.2.3 runtime
 and classification model.
 
 The baseline profile includes only Mic DSP and YAMNet. The expanded
-profile registers all five entries above. Other historical effects stay
-quarantined.
+profile registers the five baseline/expanded entries above. Audio Diffusion
+requires a separately qualified SA3 runtime and the explicit diffusion gate.
+Other historical effects stay quarantined.
 
 ## Build and stage
 

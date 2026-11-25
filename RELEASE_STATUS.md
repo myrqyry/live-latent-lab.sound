@@ -267,3 +267,21 @@ in this checkpoint; unrelated YAMNet and TTS worker edits remain separate.
 Full expanded acceptance, 44.1 kHz retest and fresh-machine installation are
 not qualified by this checkpoint. Model catalog, live telemetry UI, optional
 retention and improved VAD are still open.
+
+## Native audio diffusion source (2026-11-24)
+
+Opt-in six-effect local candidate: df99726e9fb514d29ad88dd037c2188f1b7866990978c312f1f3845668f8d956.
+Small-Music Q4_K_M/F16; real CUDA generation and timed stereo PCM playout
+passed at 48 kHz (95983 captured frames for two seconds) and 44.1 kHz
+(88200 frames), replay without re-inference, cancellation after sampling
+progress, missing-model recovery, disabled-source rejection. Exact six-entry
+registration and zero-entry quarantine passed. The same module passed
+real overlapping diffusion playback and recognition with Nemotron CUDA
+and Whisper CPU, including expected transcript/caption routing and dry
+audio checks. No inference occurs on the OBS audio/render callback.
+Runtime and model provenance: docs/sa3-native-qualification.md.
+No full expanded acceptance suite rerun; pending unrelated MediaPipe/TTS
+work remains uncommitted. Small-SFX, audio-to-audio in OBS, continuous
+music and arbitrary GPU plugin coexistence remain unqualified. The
+existing expanded preset intentionally still requires explicit diffusion
+enablement.

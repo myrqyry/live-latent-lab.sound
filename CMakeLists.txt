@@ -6,7 +6,7 @@ set(SOUND_EFFECTS "" CACHE STRING "Semicolon-separated experimental effect IDs")
 option(SOUND_EXPERIMENTAL "Permit explicitly selected unverified effects" OFF)
 option(SOUND_TOOLS_MENU "Include optional Qt Tools menu" OFF)
 set(SOUND_SUPPORTED_EFFECTS
-    mic stem_live yamnet tts stt rvc deepfilter demucs_filter demucs_source whisper
+    mic stem_live yamnet tts stt diffusion rvc deepfilter demucs_filter demucs_source whisper
     chatterbox kokoro matchering musicgen mediapipe meanvc2_bridge)
 set(SOUND_SELECTED_EFFECTS "")
 foreach(effect IN LISTS SOUND_EFFECTS)
@@ -143,7 +143,7 @@ foreach(effect IN LISTS SOUND_SELECTED_EFFECTS)
     if(NOT effect STREQUAL "mic" AND NOT effect STREQUAL "matchering" AND
        NOT effect STREQUAL "meanvc2_bridge" AND
        NOT effect STREQUAL "stem_live" AND
-       NOT effect STREQUAL "yamnet" AND NOT effect STREQUAL "tts" AND NOT effect STREQUAL "stt")
+       NOT effect STREQUAL "yamnet" AND NOT effect STREQUAL "tts" AND NOT effect STREQUAL "stt" AND NOT effect STREQUAL "diffusion")
         set(SOUND_NEEDS_ONNX TRUE)
     endif()
 endforeach()
@@ -245,6 +245,7 @@ set(SOUND_EFFECT_SOURCE_mic src/mic-filter.cpp)
 set(SOUND_EFFECT_SOURCE_yamnet src/yamnet-worker-filter.cpp)
 set(SOUND_EFFECT_SOURCE_tts src/tts-source.cpp)
 set(SOUND_EFFECT_SOURCE_stt src/stt-filter.cpp)
+set(SOUND_EFFECT_SOURCE_diffusion src/audio-diffusion-source.cpp)
 set(SOUND_EFFECT_SOURCE_stem_live src/stem-live-filter.cpp)
 set(SOUND_EFFECT_SOURCE_meanvc2_bridge src/meanvc2-bridge-source.cpp)
 set(SOUND_EFFECT_SOURCE_rvc src/stts-filter.cpp)
@@ -287,6 +288,23 @@ if(stt IN_LIST SOUND_SELECTED_EFFECTS)
         message(FATAL_ERROR "STT requires explicit matched Whisper headers and runtime")
     endif()
     target_include_directories(live-latent-lab-sound PRIVATE "${SOUND_STT_WHISPER_INCLUDE}")
+    target_link_libraries(live-latent-lab-sound PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
+if(diffusion IN_LIST SOUND_SELECTED_EFFECTS)
+    if(NOT (UNIX AND NOT APPLE))
+        message(FATAL_ERROR "Sound Audio Diffusion currently supports Linux only")
+    endif()
+    set(SOUND_SA3_RUNTIME_DIR "" CACHE PATH "Qualified SA3 runtime with private GGML libraries")
+    if(NOT EXISTS "${SOUND_SA3_RUNTIME_DIR}/libsa3.so" OR NOT EXISTS "${SOUND_SA3_RUNTIME_DIR}/libsa3_v1.h"
+       OR NOT EXISTS "${SOUND_SA3_RUNTIME_DIR}/LICENSE-sa3.txt" OR NOT EXISTS "${SOUND_SA3_RUNTIME_DIR}/LICENSE-ggml.txt")
+        message(FATAL_ERROR "Audio Diffusion requires the qualified SA3 runtime, header and licenses")
+    endif()
+    file(SHA256 "${SOUND_SA3_RUNTIME_DIR}/libsa3_v1.h" SOUND_SA3_HEADER_HASH)
+    if(NOT SOUND_SA3_HEADER_HASH STREQUAL "d4eb236988c978393dac3a7b6470049720dcb3e5dee57a4800d31b5d213342e6")
+        message(FATAL_ERROR "Unqualified SA3 ABI header")
+    endif()
+    target_include_directories(live-latent-lab-sound PRIVATE "${SOUND_SA3_RUNTIME_DIR}")
     target_link_libraries(live-latent-lab-sound PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
@@ -426,4 +444,10 @@ if(stt IN_LIST SOUND_SELECTED_EFFECTS)
             FILES_MATCHING PATTERN "libsound-nemotron-runtime.so" PATTERN "NEMOTRON-*-LICENSE" PATTERN "NEMOTRON-THIRD-PARTY-LICENSES")
     endif()
 
+endif()
+
+
+if(diffusion IN_LIST SOUND_SELECTED_EFFECTS)
+    install(DIRECTORY "${SOUND_SA3_RUNTIME_DIR}/" DESTINATION "${OBS_PLUGIN_DESTINATION}/sa3-runtime"
+        FILES_MATCHING PATTERN "libsa3*.so*" PATTERN "LICENSE*.txt" PATTERN "THIRD_PARTY_NOTICES.md" PATTERN "SHA256SUMS")
 endif()

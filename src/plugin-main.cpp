@@ -1,6 +1,10 @@
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#if defined(SOUND_WITH_DIFFUSION)
+extern void register_sound_diffusion();
+#endif
+
 // Compiled-source and registration gates match exactly. No source is even
 // linked into the default module, so unchecked effects cannot appear in OBS.
 #if defined(SOUND_WITH_TTS)
@@ -131,6 +135,9 @@ bool obs_module_load(void)
 #endif
 #if defined(SOUND_WITH_TTS)
     register_sound_tts();
+#endif
+#if defined(SOUND_WITH_DIFFUSION)
+    register_sound_diffusion();
 #endif
     return true;
 }
