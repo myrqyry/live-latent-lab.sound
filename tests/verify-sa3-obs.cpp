@@ -43,10 +43,13 @@ int main(int argc,char** argv){
     if(obs_open_module(&m,argv[1],argv[2])!=MODULE_SUCCESS||!obs_init_module(m))return 5;
     auto* p=obs_get_source_properties("sound_audio_diffusion_source");
     if(!p){puts("DIFFUSION_SOURCE_REGISTERED=0");obs_shutdown();return 6;}
+    bool advanced=obs_properties_get(p,"cfg_scale")&&obs_properties_get(p,"distribution_shift")&&obs_properties_get(p,"generation_tail")&&obs_properties_get(p,"continuation_tail");
     obs_properties_destroy(p);
+    if(!advanced){puts("DIFFUSION_MODEL_CONTROLS=0");return 6;}
     auto* cfg=obs_data_create();obs_data_set_string(cfg,"models_dir",argv[3]);
     obs_data_set_string(cfg,"prompt","gentle toy keyboard, bass, soft drums, instrumental bedroom pop");
     obs_data_set_double(cfg,"duration",2.0);obs_data_set_int(cfg,"seed",42);
+    obs_data_set_double(cfg,"cfg_scale",1.5);obs_data_set_int(cfg,"distribution_shift",3);obs_data_set_double(cfg,"generation_tail",3);obs_data_set_double(cfg,"continuation_tail",4);
     auto* s=obs_source_create("sound_audio_diffusion_source","Diffusion fixture",cfg,nullptr);
     if(!s)return 7;
     Capture c;obs_source_add_audio_capture_callback(s,capture,&c);
@@ -70,6 +73,7 @@ int main(int argc,char** argv){
     printf("DIFFUSION_DISABLED=%d\n",disabled);
     obs_source_remove_audio_capture_callback(s,capture,&c);obs_set_output_source(1,nullptr);
     obs_source_release(s);obs_data_release(cfg);obs_wait_for_destroy_queue();obs_shutdown();
+    puts("DIFFUSION_MODEL_CONTROLS=1");
     printf("DIFFUSION_OBS generated=%d audio=%d frames=%llu replay=%d cancel=%d missing=%d recovery=%d bad=%llu\n",
         generated,audio,(unsigned long long)first,replay,cancel,missing,recovery,(unsigned long long)c.bad.load());
     return generated&&audio&&replay&&cancel&&missing&&recovery&&disabled&&!c.bad?0:1;

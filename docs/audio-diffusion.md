@@ -378,3 +378,26 @@ qualification, every Sound/Sight signal source, or full expanded
 acceptance is made. Audio capture and transformation use this source's
 separate output; a continuously processing inline audio-to-audio filter
 and a dedicated generative soundboard remain distinct work.
+
+### Advanced generation model settings (2026-11-25)
+
+The source properties now expose CFG (0–20, default 1), distribution
+schedule (LogSNR, Flux, Full, None; default LogSNR), generation tail
+padding and continuation tail padding (0–12 seconds, both default 6).
+These are forwarded through the actual libsa3 V1 request and sampled
+at the next continuous-segment boundary. Defaults preserve the old
+behavior. CFG other than 1 adds an unconditioned inference pass;
+higher guidance or padding can change throughput and GPU memory.
+For the currently used SA3 distilled variants the SAT-only sampler and
+sigma fields have no effect and are not presented as editable controls.
+The dock retains its smaller quick-control view; these advanced
+settings are in source properties.
+
+Real libobs Small Music tests with CFG 1.5, None distribution,
+3-second generation tail and 4-second continuation tail passed
+48/44.1 kHz generation (95983/88200 frames), replay, cancellation,
+missing-model failure, recovery and disable. The first lifecycle run
+timed out; a focused single generation completed in 3874 ms including
+playback, and the full lifecycle retry passed at both rates. This
+does not qualify all numeric extremes, SFX variants, or continuous
+playback at all new settings. See the model-settings audit.

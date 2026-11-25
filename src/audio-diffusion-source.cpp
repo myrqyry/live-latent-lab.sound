@@ -50,7 +50,8 @@ struct Config {
     std::string morph_a,morph_b,morph_effect="blend";float morph_mix=.5f,morph_position=.5f;int morph_radius=2,morph_grain=2,live_reserve=4;bool morph_ramp=false;
     bool automate_b=false,capture_muted=false,adaptive_buffer=false;
     double capture_seconds=6;
-    float transform_noise=.5f;
+    float transform_noise=.5f,cfg_scale=1.f,generation_tail=6.f,continuation_tail=6.f;
+    int distribution_shift=SA3_DISTRIBUTION_LOGSNR_V1;
     int steps=8;
     int64_t seed=-1;
     double seconds=12;
@@ -255,7 +256,8 @@ std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::stri
     auto& token=generation.token;
     sa3_request_v1 req{};req.size=sizeof req;api->request_init(&req);
     req.prompt=conditioned.c_str();req.negative_prompt=c.negative.c_str();
-    req.duration_seconds=c.seconds;req.steps=c.steps;req.seed=c.seed;req.cfg_scale=1.f;
+    req.duration_seconds=c.seconds;req.steps=c.steps;req.seed=c.seed;req.cfg_scale=c.cfg_scale;
+    req.distribution_shift=c.distribution_shift;req.generation_tail_padding_seconds=c.generation_tail;req.continuation_tail_padding_seconds=c.continuation_tail;
     req.residency=SA3_RESIDENCY_FRUGAL_V1;
     if(input){
         req.operation=extend?SA3_OPERATION_CONTINUE_V1:SA3_OPERATION_TRANSFORM_V1;
@@ -494,7 +496,8 @@ Next continuation(State& s,Config c,uint64_t epoch,std::shared_ptr<const Clip> c
 // Caller holds s.mutex. Family and device stay fixed for the session.
 void live_config(Config& c,const Config& live){
     c.prompt=live.prompt;c.negative=live.negative;c.seconds=live.seconds;
-    c.steps=live.steps;c.seed=live.seed;
+    c.steps=live.steps;c.seed=live.seed;c.cfg_scale=live.cfg_scale;c.distribution_shift=live.distribution_shift;
+    c.generation_tail=live.generation_tail;c.continuation_tail=live.continuation_tail;
     c.alternate_prompt=live.alternate_prompt;c.lora_a=live.lora_a;c.lora_b=live.lora_b;
     c.lora_a_strength=live.lora_a_strength;c.lora_b_strength=live.lora_b_strength;
     c.automate_b=live.automate_b;c.sound_channel=live.sound_channel;c.sight_channel=live.sight_channel;
@@ -1077,6 +1080,10 @@ void update(void* p,obs_data_t* d){
     auto capture=obs_data_get_double(d,"capture_seconds");c.capture_seconds=std::isfinite(capture)?std::clamp(capture,1.,30.):6.;
     c.capture_muted=obs_data_get_bool(d,"capture_muted");c.adaptive_buffer=obs_data_get_bool(d,"adaptive_buffer");
     auto noise=obs_data_get_double(d,"transform_noise");c.transform_noise=std::isfinite(noise)?float(std::clamp(noise,0.,1.)):.5f;
+    auto bounded=[&](const char* key,double low,double high,float fallback){double v=obs_data_get_double(d,key);return std::isfinite(v)?float(std::clamp(v,low,high)):fallback;};
+    c.cfg_scale=bounded("cfg_scale",0,20,1);
+    c.generation_tail=bounded("generation_tail",0,12,6);c.continuation_tail=bounded("continuation_tail",0,12,6);
+    c.distribution_shift=int(std::clamp<int64_t>(obs_data_get_int(d,"distribution_shift"),0,3));
     c.steps=int(std::clamp<int64_t>(obs_data_get_int(d,"steps"),1,32));
     c.seed=std::max<int64_t>(-1,obs_data_get_int(d,"seed"));
     auto seconds=obs_data_get_double(d,"duration");c.seconds=std::isfinite(seconds)?std::clamp(seconds,1.,double(max_seconds)):12.;
@@ -1144,6 +1151,8 @@ void defaults(obs_data_t* d){
     obs_data_set_default_string(d,"variant","small-music");obs_data_set_default_double(d,"transform_noise",.5);
     obs_data_set_default_string(d,"models_dir","");obs_data_set_default_string(d,"device","auto");
     obs_data_set_default_string(d,"prompt","warm instrumental bedroom pop, soft drums, toy keys");
+    obs_data_set_default_double(d,"cfg_scale",1);obs_data_set_default_int(d,"distribution_shift",SA3_DISTRIBUTION_LOGSNR_V1);
+    obs_data_set_default_double(d,"generation_tail",6);obs_data_set_default_double(d,"continuation_tail",6);
     obs_data_set_default_double(d,"duration",12);obs_data_set_default_int(d,"steps",8);obs_data_set_default_int(d,"seed",-1);
 }
 obs_properties_t* props(void* p){
@@ -1158,6 +1167,17 @@ obs_properties_t* props(void* p){
     obs_properties_add_float_slider(d,"duration","Duration (seconds)",1,60,1);
     obs_properties_add_int_slider(d,"steps","Diffusion steps",1,32,1);
     obs_properties_add_int(d,"seed","Seed (-1 = random)",-1,2147483647,1);
+    auto* generation=obs_properties_create();
+    obs_properties_add_float_slider(generation,"cfg_scale","Classifier-free guidance",0,20,.1);
+    auto* distribution=obs_properties_add_list(generation,"distribution_shift","Noise schedule distribution",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
+    obs_property_list_add_int(distribution,"LogSNR (default)",SA3_DISTRIBUTION_LOGSNR_V1);
+    obs_property_list_add_int(distribution,"Flux",SA3_DISTRIBUTION_FLUX_V1);
+    obs_property_list_add_int(distribution,"Full",SA3_DISTRIBUTION_FULL_V1);
+    obs_property_list_add_int(distribution,"None",SA3_DISTRIBUTION_NONE_V1);
+    obs_properties_add_float_slider(generation,"generation_tail","Generation tail padding (seconds)",0,12,.5);
+    obs_properties_add_float_slider(generation,"continuation_tail","Continuation tail padding (seconds)",0,12,.5);
+    obs_properties_add_text(generation,"guidance_note","Guidance other than 1 uses an extra unconditioned pass per step. Higher padding and guidance can increase processing time and memory.",OBS_TEXT_INFO);
+    obs_properties_add_group(d,"generation_advanced","Advanced generation",OBS_GROUP_NORMAL,generation);
     obs_properties_add_button2(d,"generate","Generate and play",make,p);
     obs_properties_add_bool(d,"adaptive_buffer","Adaptive playback reserve (longer startup)");
     obs_properties_add_button2(d,"continuous","Start continuous music",start_continuous,p);
