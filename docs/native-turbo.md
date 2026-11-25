@@ -153,3 +153,14 @@ recovery checks (3 completed, 0 failed, 0 invalid samples).
 The prior plugin and reader drop-ins were backed up. CUDA Turbo
 remains quarantined; no CUDA substitution or subjective quality
 claim is made.
+
+### Additional native generation settings
+
+CPU Turbo also exposes seed (0–2147483647, default 0), maximum
+speech tokens per model generation (1–1000, default 1000), and model
+text chunk size (16–128 characters, default 128). The existing
+128-byte transport limit is unchanged. Very low token caps may yield
+truncated or unusable speech. Nondefault seed 42, token cap 512 and
+chunk size 64 passed native and actual isolated OBS synthesis;
+controls, cancel and recovery passed. CPU inference remains slower
+than real time.

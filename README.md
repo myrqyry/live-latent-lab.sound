@@ -116,3 +116,5 @@ See LICENSE (GPL-2.0). Model weights and third-party runtime distribution
 are separate terms. No weights are included. The candidate is not yet
 approved for external publication; dependency provenance, fresh-machine
 testing and packaging remain open.
+
+See the [model settings coverage audit](docs/model-settings-audit.md) for backend-specific controls, fixed runtime contracts and remaining gaps.

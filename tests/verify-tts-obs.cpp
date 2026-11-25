@@ -282,7 +282,7 @@ int main(int argc,char** argv){
         auto* selector=obs_properties_get(props,"backend");
         auto visible=[&](const char* key){auto* f=obs_properties_get(props,key);return f&&obs_property_visible(f);};
         bool controls=selector&&visible("chatterbox_native_temperature")&&visible("chatterbox_native_top_k")&&
-            visible("chatterbox_native_top_p")&&visible("chatterbox_native_repetition_penalty")&&!visible("chatterbox_audio_prompt_path");
+            visible("chatterbox_native_top_p")&&visible("chatterbox_native_repetition_penalty")&&visible("chatterbox_native_seed")&&visible("chatterbox_native_max_tokens")&&visible("chatterbox_native_chunk")&&!visible("chatterbox_audio_prompt_path");
         if(selector){
             obs_data_set_string(settings,"backend","chatterbox");
             obs_property_modified(selector,settings);
@@ -326,6 +326,7 @@ int main(int argc,char** argv){
     if(backend=="kokoro_native"&&first){
         auto* d=obs_source_get_settings(source);
         obs_data_set_double(d,"kokoro_native_speed",1.5);
+        obs_data_set_int(d,"kokoro_native_seed",42);obs_data_set_int(d,"kokoro_native_chunk",80);
         obs_source_update(source,d);obs_data_release(d);
         auto before=audio.frames.load();
         button(source,"speak");
@@ -352,6 +353,7 @@ int main(int argc,char** argv){
         obs_data_set_int(d,"chatterbox_native_top_k",50);
         obs_data_set_double(d,"chatterbox_native_top_p",.9);
         obs_data_set_double(d,"chatterbox_native_repetition_penalty",1.3);
+        obs_data_set_int(d,"chatterbox_native_seed",42);obs_data_set_int(d,"chatterbox_native_max_tokens",512);obs_data_set_int(d,"chatterbox_native_chunk",64);
         obs_data_set_string(d,"text","[laugh] That was unexpected. [sigh] Let us try again.");
         obs_source_update(source,d);obs_data_release(d);
         auto before=audio.frames.load();button(source,"speak");

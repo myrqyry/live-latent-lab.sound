@@ -663,3 +663,24 @@ paths or model files committed. Only one custom pair qualified,
 no subjective audition or full regression run. Paths apply after
 scene reload; no auto-pairing or live checkpoint switching yet.
 OBS open, staged not installed.
+
+## Model settings expansion (2026-11-25)
+
+RVC V3 native protocol, four packaged voices and their embedded
+retrieval indexes passed private CUDA inference; custom checkpoint/
+index, nondefault RMS/protection/median settings and invalid-value
+rejection passed native and real OBS tests at both rates (16 hops,
+332.5/312.9 ms final hop). Speaker ID is exposed; only zero tested.
+Native Kokoro CUDA seed/chunk and CPU Turbo seed/token cap/chunk
+passed real native generation and actual isolated OBS playback,
+controls/cancel/recovery, each three completed and zero failed.
+Reader policy, options, retention and device tests passed. SA3 CFG,
+distribution and tail padding passed real Small Music OBS generation,
+replay, cancel, missing-model recovery and disable at both rates on
+retry; first lifecycle attempt timed out, focused diagnostic passed.
+Combined seven-effect registration passed. Stage module SHA256
+78898414cd21b074b9ebf975b49d6e0dff23f43387527ca326bafa758e6e4f3c.
+No module or reader service installation performed in this pass.
+No blanket qualification of all model options or numeric extremes.
+The remaining supported-control gaps and fixed contracts are listed
+in docs/model-settings-audit.md; full expanded regression not rerun.

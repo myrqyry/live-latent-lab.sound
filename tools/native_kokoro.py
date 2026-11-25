@@ -41,11 +41,13 @@ def packet(sock, limit):
 def send(sock, data):
     sock.sendall(struct.pack('<I', len(data)) + data)
 
-def validate(voice, text, speed):
+def validate(voice, text, speed, seed=-1, chunk=240):
     if not isinstance(voice, str) or voice not in VOICES or not isinstance(text, str) or not text.strip() or '\x00' in text or len(text.encode()) > 600:
         raise ValueError('Invalid native English speech request')
     if type(speed) not in (float, int) or not math.isfinite(speed) or not .5 <= speed <= 2:
         raise ValueError('Invalid speed')
+    if type(seed) is not int or not -1 <= seed <= 2147483647 or type(chunk) is not int or not 16 <= chunk <= 240:
+        raise ValueError('Invalid native generation settings')
 
 class Worker:
     entrypoint = Path(__file__)
@@ -81,9 +83,9 @@ class Worker:
                     self.process.kill()
             self.process.wait()
 
-    def synthesize(self, voice, text, speed):
-        validate(voice, text, speed)
-        return self.request([voice, text, speed])
+    def synthesize(self, voice, text, speed, seed=-1, chunk=240):
+        validate(voice, text, speed, seed, chunk)
+        return self.request([voice, text, speed, seed, chunk])
 
     def request(self, args):
         try:
@@ -158,10 +160,13 @@ class Codec:
                 getattr(self, name+'_free')(p)
                 p.value = None
 
-    def synthesize(self, voice, text, speed):
-        validate(voice, text, speed)
+    def synthesize(self, voice, text, speed, seed=-1, chunk=240):
+        validate(voice, text, speed, seed, chunk)
         language = b'en-gb' if voice.startswith('b') else b'en-us'
-        return self.run(voice, text, language, {'speed':speed})
+        options = {'speed':speed, 'text_chunk_size':chunk}
+        if seed >= 0:
+            options['seed'] = seed
+        return self.run(voice, text, language, options)
 
     def run(self, voice, text, language, options):
         request, result = self.request_create(), C.c_void_p()

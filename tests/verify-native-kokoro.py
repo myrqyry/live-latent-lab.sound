@@ -2,7 +2,7 @@
 import sys, pathlib, io, wave, time
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'tools'))
 from tts_worker import Engine,speech_options
-assert speech_options('kokoro_native',{})=={'speed':1.0}
+assert speech_options('kokoro_native',{})=={'speed':1.0,'seed':-1,'text_chunk_size':240}
 for raw in ({'is_phonemes':True},{'speed':3},{'trim':True}):
     try:speech_options('kokoro_native',raw)
     except ValueError:pass
@@ -28,7 +28,7 @@ if len(sys.argv)==3:
     assert e.supports('kokoro_native')
     def synth(voice='af_heart',speed=1):
         t=time.monotonic()
-        b=e.synthesize('kokoro_native',voice,'Hello from Live Latent Lab.',{'speed':speed})
+        b=e.synthesize('kokoro_native',voice,'Hello from Live Latent Lab.',{'speed':speed,'seed':42,'text_chunk_size':80})
         with wave.open(io.BytesIO(b)) as f:
             assert (f.getframerate(),f.getnchannels(),f.getsampwidth())==(24000,1,2)
             assert any(f.readframes(f.getnframes()))

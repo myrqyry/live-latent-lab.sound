@@ -71,8 +71,13 @@ constexpr Option options[]={
     {Engine::ChatterboxNative,"chatterbox_native_top_k","top_k","Top-K (0 = disabled)",OptionKind::Int,1000,0,6563,1},
     {Engine::ChatterboxNative,"chatterbox_native_top_p","top_p","Top-P",OptionKind::Float,.95,.05,1,.01},
     {Engine::ChatterboxNative,"chatterbox_native_repetition_penalty","repetition_penalty","Repetition penalty",OptionKind::Float,1.2,.5,2,.05},
+    {Engine::ChatterboxNative,"chatterbox_native_seed","seed","Generation seed",OptionKind::Int,0,0,2147483647,1},
+    {Engine::ChatterboxNative,"chatterbox_native_max_tokens","max_tokens","Maximum speech tokens",OptionKind::Int,1000,1,1000,1},
+    {Engine::ChatterboxNative,"chatterbox_native_chunk","text_chunk_size","Model text chunk (characters)",OptionKind::Int,128,16,128,1},
     {Engine::ChatterboxNative,"chatterbox_native_note",nullptr,"CPU-only native reader; slower than real time on the qualified machine. Built-in voice only. Use Nano for reference cloning. Supports [laugh] and [sigh].",OptionKind::Note},
     {Engine::KokoroNative,"kokoro_native_speed","speed","Speed",OptionKind::Float,1,.5,2,.05},
+    {Engine::KokoroNative,"kokoro_native_seed","seed","Generation seed (-1 = random)",OptionKind::Int,-1,-1,2147483647,1},
+    {Engine::KokoroNative,"kokoro_native_chunk","text_chunk_size","Model text chunk (characters)",OptionKind::Int,240,16,240,1},
     {Engine::KokoroNative,"kokoro_native_note",nullptr,"Requires the configured native reader helper. Voice-matched pronunciation; phoneme input, batch trim and pause controls require ONNX.",OptionKind::Note},
     {Engine::Kokoro,"kokoro_speed","speed","Speed",OptionKind::Float,1,.5,2,.05},
     {Engine::Kokoro,"kokoro_language","language","Pronunciation",OptionKind::Language},
@@ -145,7 +150,7 @@ void add_options(obs_properties_t* p){
         obs_property_t* field=nullptr;
         switch(o.kind){
         case OptionKind::Float:field=obs_properties_add_float_slider(p,o.key,o.label,o.low,o.high,o.step);break;
-        case OptionKind::Int:field=obs_properties_add_int_slider(p,o.key,o.label,int(o.low),int(o.high),int(o.step));break;
+        case OptionKind::Int:field=o.high>100000?obs_properties_add_int(p,o.key,o.label,int(o.low),int(o.high),int(o.step)):obs_properties_add_int_slider(p,o.key,o.label,int(o.low),int(o.high),int(o.step));break;
         case OptionKind::Bool:field=obs_properties_add_bool(p,o.key,o.label);break;
         case OptionKind::Language:
             field=obs_properties_add_list(p,o.key,o.label,OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);

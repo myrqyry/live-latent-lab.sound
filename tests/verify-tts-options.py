@@ -14,6 +14,14 @@ class SpeechOptionsTest(unittest.TestCase):
         self.assertEqual(speech_options('piper',{'normalize_audio':False})['normalize_audio'],False)
         self.assertEqual(speech_options('chatterbox',{'temperature':.6,'top_k':50})['top_k'],50)
         self.assertEqual(speech_options('edge',{'rate':-20,'pitch':15,'volume':-30})['rate'],-20)
+    def test_native_generation_controls(self):
+        self.assertEqual(speech_options('kokoro_native',{'seed':42,'text_chunk_size':80})['seed'],42)
+        self.assertEqual(speech_options('kokoro_native',{})['seed'],-1)
+        self.assertEqual(speech_options('chatterbox_native',{'seed':42,'max_tokens':512,'text_chunk_size':64})['max_tokens'],512)
+        for model,opts in [('kokoro_native',{'seed':-2}),('kokoro_native',{'text_chunk_size':0}),
+                           ('chatterbox_native',{'seed':-1}),('chatterbox_native',{'max_tokens':1001}),
+                           ('chatterbox_native',{'text_chunk_size':129})]:
+            with self.subTest(model=model,opts=opts),self.assertRaises(ValueError):speech_options(model,opts)
     def test_bad_settings_rejected(self):
         for model,opts in [('kokoro',{'speed':2.1}),('kokoro',{'speed':True}),('kokoro',{'language':'xx'}),('kokoro',{'continuous':True}),
                            ('piper',{'speaker_id':2}),('piper',{'noise_scale':float('nan')}),

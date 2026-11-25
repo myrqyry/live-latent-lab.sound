@@ -64,3 +64,12 @@ SOUND_READER_ASSETS and SOUND_STAGE for isolated actual libobs/reader
 playback, speed, cancel, recovery, CPU reader regression, lease eviction,
 and unsupported-option rejection. Existing service and scenes are not
 modified by the test.
+
+### Additional native generation settings
+
+Native Kokoro exposes seed (-1 requests a fresh random seed; otherwise
+0–2147483647) and model text chunk size (16–240 characters, default
+240) alongside speed. Real native requests and actual isolated OBS
+playback passed with seed 42 and chunk size 80, including speed change,
+cancellation and recovery. This is not a claim of bit-identical seeded
+waveforms across runtimes.

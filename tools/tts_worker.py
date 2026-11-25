@@ -19,10 +19,11 @@ MAX_SECONDS = 90
 # Per-engine native controls. Ranges are qualified application bounds,
 # not a claim that every extreme value produces pleasing speech.
 OPTIONS = {
-    'kokoro_native': {'speed': (1.0, .5, 2.0)},
+    'kokoro_native': {'speed': (1.0, .5, 2.0), 'seed': (-1, -1, 2147483647), 'text_chunk_size': (240, 16, 240)},
     'chatterbox_native': {
         'temperature': (.8, .1, 1.5), 'top_k': (1000, 0, 6563),
         'top_p': (.95, .05, 1.), 'repetition_penalty': (1.2, .5, 2.),
+        'seed': (0, 0, 2147483647), 'max_tokens': (1000, 1, 1000), 'text_chunk_size': (128, 16, 128),
     },
     'kokoro': {
         'speed': (1.0, .5, 2.0), 'language': ('auto', 'en-us', 'en-gb'),
@@ -236,7 +237,7 @@ class Engine:
             if model not in self.models:
                 self.models[model] = Worker(self.native_library, self.native_model)
             try:
-                return self.models[model].synthesize(voice, text, options['speed'])
+                return self.models[model].synthesize(voice, text, options['speed'], options['seed'], options['text_chunk_size'])
             except RuntimeError:
                 self.models.pop(model).close()
                 raise

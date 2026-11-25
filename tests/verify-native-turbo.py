@@ -7,7 +7,7 @@ from native_kokoro import Codec as KokoroCodec, Worker as KokoroWorker
 assert Codec.device == Worker.device == 'cpu'
 assert KokoroCodec.device == KokoroWorker.device == 'cuda'
 
-assert speech_options('chatterbox_native',{})==dict(temperature=.8,top_k=1000,top_p=.95,repetition_penalty=1.2)
+assert speech_options('chatterbox_native',{})==dict(temperature=.8,top_k=1000,top_p=.95,repetition_penalty=1.2,seed=0,max_tokens=1000,text_chunk_size=128)
 for raw in ({'audio_prompt_path':'x.wav'},{'norm_loudness':True},{'top_k':6564},{'temperature':False}):
     try:speech_options('chatterbox_native',raw)
     except ValueError:pass
@@ -33,7 +33,7 @@ if len(sys.argv)==3:
     try:
         synth()
         p=e.models['chatterbox_native'].process.pid
-        synth('[laugh] That was unexpected. [sigh] Let us try again.',{'temperature':.65,'top_k':50,'top_p':.9,'repetition_penalty':1.3})
+        synth('[laugh] That was unexpected. [sigh] Let us try again.',{'temperature':.65,'top_k':50,'top_p':.9,'repetition_penalty':1.3,'seed':42,'max_tokens':512,'text_chunk_size':64})
         assert e.models['chatterbox_native'].process.pid==p
         try:e.synthesize('chatterbox_native','other','Hello.')
         except ValueError:pass
