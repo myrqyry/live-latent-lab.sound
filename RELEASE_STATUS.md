@@ -369,3 +369,25 @@ Six-effect registry and default quarantine passed. The previous
 full-model SA3 regression was not rerun for this UI-only checkpoint.
 Advanced source properties, adaptive buffer sizing and indefinite
 continuous soak remain outside this dock pass.
+
+## Optional adaptive diffusion reserve (2026-11-24)
+
+Verified staged module SHA256: 774b2dcce256df0560bb41a1080cc01d6861f95aa3c9f8d7efbb8f14a3a192a1.
+Two to three ready clips, decaying generation wall-time high-water policy,
+single ordered producer, bounded queue, opt-in source setting and dock
+draft/apply control. The deterministic policy test exercises expansion
+to three clips and decay to two. Actual CUDA adaptive 24-second sessions
+passed at both 48 and 44.1 kHz with 12000 ms prefill/reserve, zero
+underruns, no invalid samples, and graceful finish. At 44.1 kHz a second
+SA3 source completed a 60-second 32-step generation during playback;
+the reserve target remained two clips (three-clip growth is policy-tested
+only). Prefill cancellation discarded queued audio and subsequent manual
+generation recovered with 95983 captured frames at 48 kHz. Dock setting
+isolation and conflict tests passed. The focused SA3 regression runner
+completed with exit 0, including operations, capture, automation,
+Sight ABI fixture, continuous and manual paths at both sample rates.
+Six-effect registration and quarantine passed. No guarantee against
+arbitrary GPU contention, sustained slower-than-real-time generation,
+or perceptual seams; full expanded Sound acceptance and indefinite soak
+remain outstanding. The adaptive setting applies at the next start and
+adds prompt-to-playback latency. No change to steps or quality settings.

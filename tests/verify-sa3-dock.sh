@@ -12,5 +12,6 @@ inc="$(pkg-config --variable=includedir libobs)/obs"
     -std=c++17 $(pkg-config --libs Qt6Widgets Qt6Test libobs) -o "$work/test"
 QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 40 "$work/test" \
     "$SOUND_SA3_STAGE/bin/64bit/live-latent-lab-sound.so" "$SOUND_SA3_STAGE/data" "$SOUND_SA3_MODELS" >"$work/test.log" 2>&1 || { cat "$work/test.log"; exit 1; }
+grep -F 'SA3_DOCK_RESERVE_SETTING=1' "$work/test.log"
 grep -F 'SA3_DOCK_DRAFT_CONFLICT=1 SWITCH_BLOCKED=1' "$work/test.log"
 grep -F 'SA3_DOCK discovered=1 selected=1 draft=1 saved=1 generated=1 live=1 isolated=1 removed=1 pass=1' "$work/test.log"

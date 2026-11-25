@@ -47,6 +47,45 @@ isolation, real CUDA generation, live telemetry and source removal.
 Actual OBS startup additionally qualifies frontend dock registration;
 the Qt harness is not a screenshot or full manual frontend interaction test.
 
+### Adaptive playback reserve
+
+Enable **Adaptive reserve (longer startup)** in the dock or
+**Adaptive playback reserve** in source properties before starting
+continuous music. The existing single-lookahead mode remains the default.
+Adaptive mode generates the first segment and pre-fills two continuations
+before starting playback. It then keeps a bounded queue of two to three
+ready clips using recent generation wall time (including model loading
+and inference-gate contention). The policy keeps a one-second margin,
+raises the target when generation approaches segment duration, and decays
+its high-water estimate as generation speeds recover. It does not change
+the selected diffusion steps or prompt. Only one producer generates the
+next clip, always extending the last generated clip in chronological order.
+
+Reserve duration excludes the held 350 ms splice region of each queued
+clip; V3 next_ms still describes the first queued clip. The separate
+`sound_diffusion_buffer_v1` status procedure reports adaptive,
+prefilling, queued_clips, target_clips, reserve_ms and prefill_ms
+(the generated reserve at playback start). The dock updates these fields
+while visible. The mode applies on the next continuous start, and pending
+prompt changes apply to future generation rather than already buffered
+audio: with six-second segments, expect roughly 12–18 seconds of queued
+audio in addition to the current segment. This is a reliability/latency
+trade-off, not a zero-latency live prompt mode.
+
+Stop invalidates the current command and queued clips; Finish segment
+discards queued future clips, cancels pending generation and plays only
+the current clip's remaining tail. If the reserve runs out, playback ends
+at the available tail and reports an underrun, without fabricating audio.
+A queue cap of three keeps memory bounded independently of session length.
+The reserve cannot compensate indefinitely for generation slower than
+playback, nor guarantee coexistence with arbitrary GPU workloads.
+
+Run `tests/verify-sa3-buffer.sh` with SOUND_SA3_STAGE and
+SOUND_SA3_MODELS. It checks the deterministic policy and actual CUDA
+continuous playback at both rates, including a competing 60-second
+32-step generation at 44.1 kHz. The latter is a specific same-plugin
+contention test, not a comprehensive GPU-load qualification.
+
 ### Playback and audio-to-audio
 
 - Generate and play: prompt, optional negative prompt, 1–60 s, 1–32 steps,

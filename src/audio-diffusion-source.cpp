@@ -12,6 +12,8 @@
 #include <condition_variable>
 #include <filesystem>
 #include <future>
+#include <deque>
+#include "framework/sa3_buffer_policy.hpp"
 #include <fstream>
 #include "framework/tts_wav.hpp"
 #include <memory>
@@ -30,7 +32,7 @@ struct Config {
     std::string models,prompt,negative,device,variant="small-music",input_file,input_source,alternate_prompt,
         lora_a,lora_b,sound_channel,sight_channel;
     float lora_a_strength=1.f,lora_b_strength=1.f;
-    bool automate_b=false,capture_muted=false;
+    bool automate_b=false,capture_muted=false,adaptive_buffer=false;
     double capture_seconds=6;
     float transform_noise=.5f;
     int steps=8;
@@ -59,7 +61,9 @@ struct State {
     // Session telemetry is protected by mutex. The cooperative finish flag
     // is also read by the native lookahead callback without taking a lock.
     std::atomic<bool> finish_requested{false};
-    bool continuous_session=false,generating=false;
+    bool continuous_session=false,generating=false,adaptive_session=false,prefilling=false;
+    unsigned queued_clips=0,target_clips=0;
+    uint64_t reserve_frames=0,prefill_frames=0;
     uint64_t generation_ms=0,buffer_frames=0,session_frames=0,next_frames=0,underruns=0;
     const char* stage="idle";
     std::string message="Ready";
@@ -116,6 +120,7 @@ struct SessionEnd {
         if(s.current(epoch)){
             s.continuous_session=false;s.finish_requested=false;s.generating=false;
             s.buffer_frames=s.next_frames=0;s.stage="idle";
+            s.adaptive_session=s.prefilling=false;s.queued_clips=s.target_clips=0;s.reserve_frames=0;
         }
     }
 };
@@ -441,7 +446,7 @@ std::shared_ptr<Clip> tail(const Clip& clip,size_t frames){
     return out;
 }
 struct Next {std::shared_ptr<Clip> clip;std::string error;};
-Next continuation(State& s,Config c,uint64_t epoch,std::shared_ptr<const Clip> current,uint64_t segment){
+Next continuation(State& s,Config c,uint64_t epoch,std::shared_ptr<const Clip> current,uint64_t segment,bool publish_next=true){
     Next next;
     try {
         auto context=tail(*current,rate*4);
@@ -461,10 +466,117 @@ Next continuation(State& s,Config c,uint64_t epoch,std::shared_ptr<const Clip> c
             auto& x=output->pcm[ch*output->frames+i];x=old*(1-mix)+x*mix;
         }
         next.clip=std::move(output);
-        {std::lock_guard lock(s.mutex);if(s.current(epoch)&&!s.finish_requested)s.next_frames=next.clip->frames;}
+        {std::lock_guard lock(s.mutex);if(publish_next&&s.current(epoch)&&!s.finish_requested)s.next_frames=next.clip->frames;}
         return next;
     }catch(const std::exception& e){next.error=e.what();return next;}
     catch(...){next.error="Continuation failed";return next;}
+}
+// Caller holds s.mutex. Family and device stay fixed for the session.
+void live_config(Config& c,const Config& live){
+    c.prompt=live.prompt;c.negative=live.negative;c.seconds=live.seconds;
+    c.steps=live.steps;c.seed=live.seed;
+    c.alternate_prompt=live.alternate_prompt;c.lora_a=live.lora_a;c.lora_b=live.lora_b;
+    c.lora_a_strength=live.lora_a_strength;c.lora_b_strength=live.lora_b_strength;
+    c.automate_b=live.automate_b;c.sound_channel=live.sound_channel;c.sight_channel=live.sight_channel;
+}
+void buffered_play(State& s,Config c,uint64_t epoch,std::shared_ptr<Clip> clip){
+    // One producer follows the last generated clip, never the current
+    // playback position. The queue is bounded, ordered and mutex-protected.
+    std::deque<std::shared_ptr<Clip>> queue;
+    sa3buffer::Policy policy;
+    bool producer_done=false;
+    std::string producer_error;
+    {
+        std::lock_guard lock(s.mutex);
+        if(!s.current(epoch))return;
+        policy.observe(s.generation_ms);
+        s.target_clips=policy.target(uint64_t(c.seconds*1000));
+        s.prefilling=true;s.message="Preparing playback reserve";
+    }
+    auto publish=[&]{
+        s.queued_clips=unsigned(queue.size());
+        s.next_frames=queue.empty()?0:queue.front()->frames;
+        s.reserve_frames=0;
+        for(auto& item:queue)s.reserve_frames+=item->frames-held;
+    };
+    auto producer=std::async(std::launch::async,[&,last=clip,config=c]() mutable {
+        uint64_t segment=0;
+        try{
+            while(true){
+                {
+                    std::unique_lock lock(s.mutex);
+                    s.cv.wait(lock,[&]{return !s.current(epoch)||s.finish_requested||queue.size()<s.target_clips;});
+                    if(!s.current(epoch)||s.finish_requested)break;
+                    live_config(config,s.config);
+                }
+                auto next=continuation(s,config,epoch,last,++segment,false);
+                std::lock_guard lock(s.mutex);
+                if(!s.current(epoch)||s.finish_requested)break;
+                if(!next.clip){producer_error=next.error.empty()?"Continuation failed":next.error;break;}
+                last=next.clip;queue.push_back(std::move(next.clip));
+                policy.observe(s.generation_ms);
+                s.target_clips=policy.target((last->frames-held)*1000/rate);
+                publish();s.cv.notify_all();
+            }
+        }catch(...){
+            std::lock_guard lock(s.mutex);producer_error="Buffer generation failed";
+        }
+        std::lock_guard lock(s.mutex);producer_done=true;s.cv.notify_all();
+    });
+    // Cancel and wake the producer before the future destructor joins it,
+    // including exceptional exits and superseded commands.
+    struct CancelProducer {
+        State& s;uint64_t epoch;
+        ~CancelProducer(){std::lock_guard lock(s.mutex);if(s.current(epoch))s.finish_requested=true;s.cv.notify_all();}
+    } cancel{s,epoch};
+    {
+        std::unique_lock lock(s.mutex);
+        s.cv.wait(lock,[&]{return !s.current(epoch)||s.finish_requested||producer_done||queue.size()>=s.target_clips;});
+        if(!s.current(epoch))return;
+        s.prefilling=false;s.prefill_frames=s.reserve_frames;
+    }
+    PlayClock clock;
+    while(s.current(epoch)){
+        bool finish;
+        {
+            std::lock_guard lock(s.mutex);
+            if(!s.current(epoch))return;
+            s.saved=clip;++s.completed;
+            finish=s.finish_requested;
+            s.message=finish?"Finishing current segment":"Playing / buffering";
+        }
+        const auto count=finish?clip->frames:clip->frames-held;
+        if(!play_range(s,*clip,count,clock,epoch)){
+            std::lock_guard lock(s.mutex);
+            if(s.current(epoch)){++s.failed;++s.underruns;s.message="Playback deadline missed";}
+            return;
+        }
+        enum class End { Finish, Miss, Failure };
+        End reason=End::Finish;
+        std::string error;
+        {
+            std::lock_guard lock(s.mutex);
+            if(!s.current(epoch))return;
+            if(!s.finish_requested&&!queue.empty()){
+                ++s.played;clip=std::move(queue.front());queue.pop_front();publish();s.cv.notify_all();
+                continue;
+            }
+            if(!s.finish_requested){
+                reason=producer_done?End::Failure:End::Miss;
+                error=producer_error;
+            }
+            s.finish_requested=true;queue.clear();publish();s.cv.notify_all();
+        }
+        bool tail_sent=finish||play_range(s,*clip,held,clock,epoch,clip->frames-held);
+        std::lock_guard lock(s.mutex);
+        if(s.current(epoch)){
+            if(!tail_sent){++s.failed;++s.underruns;s.message="Playback deadline missed";}
+            else if(reason==End::Finish){++s.played;s.message="Finished segment";}
+            else if(reason==End::Miss){++s.failed;++s.underruns;s.message="Adaptive reserve exhausted; increase duration";}
+            else{++s.failed;s.message=error.empty()?"Continuation failed":error;}
+        }
+        return;
+    }
 }
 void continuous(State& s,Config c,uint64_t epoch){
     // Continuous mode is music only. SFX remains explicit, bounded generation.
@@ -479,6 +591,7 @@ void continuous(State& s,Config c,uint64_t epoch){
         std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.failed;s.message=error.empty()?"Initial generation failed":error;}
         return;
     }
+    if(c.adaptive_buffer){buffered_play(s,c,epoch,std::move(clip));return;}
     PlayClock clock;uint64_t segment=0;
     while(s.current(epoch)){
         {
@@ -488,11 +601,7 @@ void continuous(State& s,Config c,uint64_t epoch){
             s.message=s.finish_requested?"Finishing current segment":"Playing / generating next";
             // Read live prompt and sampling controls at each segment boundary.
             // Model/device/variant are fixed until restart.
-            c.prompt=s.config.prompt;c.negative=s.config.negative;c.seconds=s.config.seconds;
-            c.steps=s.config.steps;c.seed=s.config.seed;
-            c.alternate_prompt=s.config.alternate_prompt;c.lora_a=s.config.lora_a;c.lora_b=s.config.lora_b;
-            c.lora_a_strength=s.config.lora_a_strength;c.lora_b_strength=s.config.lora_b_strength;
-            c.automate_b=s.config.automate_b;c.sound_channel=s.config.sound_channel;c.sight_channel=s.config.sight_channel;
+            live_config(c,s.config);
         }
         if(s.finish_requested){
             const bool sent=play_range(s,*clip,clip->frames,clock,epoch);
@@ -503,7 +612,7 @@ void continuous(State& s,Config c,uint64_t epoch){
             }
             return;
         }
-        auto future=std::async(std::launch::async,continuation,std::ref(s),c,epoch,std::shared_ptr<const Clip>(clip),++segment);
+        auto future=std::async(std::launch::async,continuation,std::ref(s),c,epoch,std::shared_ptr<const Clip>(clip),++segment,true);
         bool sent=play_range(s,*clip,clip->frames-held,clock,epoch);
         if(!sent){
             std::lock_guard lock(s.mutex);if(s.current(epoch)){s.finish_requested=true;++s.failed;++s.underruns;s.message="Playback deadline missed";s.cv.notify_all();}
@@ -587,7 +696,8 @@ void worker(State* s){
 void invalidate(State& s){
     ++s.epoch;s.pending=Job::None;s.progress=0;
     s.continuous_session=false;s.finish_requested=false;s.generating=false;
-    s.buffer_frames=s.next_frames=0;s.stage="idle";s.cv.notify_all();
+    s.buffer_frames=s.next_frames=0;s.stage="idle";
+    s.adaptive_session=s.prefilling=false;s.queued_clips=s.target_clips=0;s.reserve_frames=0;s.cv.notify_all();
 }
 void update(void* p,obs_data_t* d){
     auto& s=*static_cast<State*>(p);Config c;
@@ -602,7 +712,7 @@ void update(void* p,obs_data_t* d){
     c.automate_b=obs_data_get_bool(d,"automate_b");
     c.sound_channel=obs_data_get_string(d,"sound_channel");c.sight_channel=obs_data_get_string(d,"sight_channel");
     auto capture=obs_data_get_double(d,"capture_seconds");c.capture_seconds=std::isfinite(capture)?std::clamp(capture,1.,30.):6.;
-    c.capture_muted=obs_data_get_bool(d,"capture_muted");
+    c.capture_muted=obs_data_get_bool(d,"capture_muted");c.adaptive_buffer=obs_data_get_bool(d,"adaptive_buffer");
     auto noise=obs_data_get_double(d,"transform_noise");c.transform_noise=std::isfinite(noise)?float(std::clamp(noise,0.,1.)):.5f;
     c.steps=int(std::clamp<int64_t>(obs_data_get_int(d,"steps"),1,32));
     c.seed=std::max<int64_t>(-1,obs_data_get_int(d,"seed"));
@@ -621,6 +731,7 @@ bool queue(void* p,Job job){
     if(job==Job::Replay&&!s.saved){s.message="Generate a clip first";return false;}
     invalidate(s);s.pending=job;s.message="Queued";
     s.continuous_session=job==Job::Continuous;
+    s.adaptive_session=s.continuous_session&&s.config.adaptive_buffer;s.prefill_frames=0;
     s.session_frames=s.generation_ms=s.underruns=0;s.cv.notify_all();return false;
 }
 std::string status_description(void* p){
@@ -628,7 +739,8 @@ std::string status_description(void* p){
     if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);status+="\nStatus: "+s.message+" ("+std::to_string(s.progress.load())+"%)";
         status+="\nStage: "+std::string(s.stage)+" | Last generation: "+std::to_string(s.generation_ms)+" ms";
         status+="\nCurrent buffer: "+std::to_string(s.buffer_frames*1000/rate)+" ms | Next clip: "+std::to_string(s.next_frames*1000/rate)+" ms";
-        status+="\nPlayed: "+std::to_string(s.session_frames/rate)+" s | Underruns: "+std::to_string(s.underruns);}
+        status+="\nPlayed: "+std::to_string(s.session_frames/rate)+" s | Underruns: "+std::to_string(s.underruns);
+        if(s.adaptive_session)status+="\nReserve: "+std::to_string(s.reserve_frames*1000/rate)+" ms | "+std::to_string(s.queued_clips)+"/"+std::to_string(s.target_clips)+" clips"+(s.prefilling?" | Prefilling":"");}
     return status;
 }
 bool refresh(obs_properties_t* props,obs_property_t*,void* p){
@@ -653,6 +765,7 @@ bool stop(obs_properties_t*,obs_property_t*,void* p){
 }
 void defaults(obs_data_t* d){
     obs_data_set_default_double(d,"capture_seconds",6);
+    obs_data_set_default_bool(d,"adaptive_buffer",false);
     obs_data_set_default_double(d,"lora_a_strength",1);obs_data_set_default_double(d,"lora_b_strength",1);
     obs_data_set_default_string(d,"variant","small-music");obs_data_set_default_double(d,"transform_noise",.5);
     obs_data_set_default_string(d,"models_dir","");obs_data_set_default_string(d,"device","auto");
@@ -672,6 +785,7 @@ obs_properties_t* props(void* p){
     obs_properties_add_int_slider(d,"steps","Diffusion steps",1,32,1);
     obs_properties_add_int(d,"seed","Seed (-1 = random)",-1,2147483647,1);
     obs_properties_add_button2(d,"generate","Generate and play",make,p);
+    obs_properties_add_bool(d,"adaptive_buffer","Adaptive playback reserve (longer startup)");
     obs_properties_add_button2(d,"continuous","Start continuous music",start_continuous,p);
     obs_properties_add_button2(d,"finish_segment","Finish current segment",finish_segment,p);
     obs_properties_add_button2(d,"replay","Replay last clip",replay,p);
@@ -739,6 +853,13 @@ void status_v3(void* p,calldata_t* d){
     calldata_set_int(d,"underruns",s.underruns);calldata_set_int(d,"next_ms",s.next_frames*1000/rate);
     calldata_set_string(d,"stage",s.stage);
 }
+void buffer_status(void* p,calldata_t* d){
+    auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);
+    calldata_set_bool(d,"adaptive",s.adaptive_session);calldata_set_bool(d,"prefilling",s.prefilling);
+    calldata_set_int(d,"queued_clips",s.queued_clips);calldata_set_int(d,"target_clips",s.target_clips);
+    calldata_set_int(d,"reserve_ms",s.reserve_frames*1000/rate);
+    calldata_set_int(d,"prefill_ms",s.prefill_frames*1000/rate);
+}
 void* create(obs_data_t* d,obs_source_t* source){
     try{
         auto s=std::make_unique<State>(source);update(s.get(),d);
@@ -750,6 +871,8 @@ void* create(obs_data_t* d,obs_source_t* source){
           "void sound_diffusion_status_v2(out int started, out int completed, out int played, out int failed, out int progress, out string message, out int captured, out int automated, out int sound_cues, out int sight_cues)",status_v2,s.get());
         proc_handler_add(obs_source_get_proc_handler(source),
           "void sound_diffusion_status_v3(out int started, out int completed, out int played, out int failed, out int progress, out string message, out int captured, out int automated, out int sound_cues, out int sight_cues, out bool continuous, out bool finishing, out bool generating, out bool next_ready, out int generation_ms, out int buffer_ms, out int played_ms, out int underruns, out int next_ms, out string stage)",status_v3,s.get());
+        proc_handler_add(obs_source_get_proc_handler(source),
+          "void sound_diffusion_buffer_v1(out bool adaptive, out bool prefilling, out int queued_clips, out int target_clips, out int reserve_ms, out int prefill_ms)",buffer_status,s.get());
         return s.release();
     }catch(...){return nullptr;}
 }

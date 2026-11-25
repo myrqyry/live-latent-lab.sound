@@ -2,6 +2,7 @@
 #include <obs.h>
 #include <QWidget>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QPlainTextEdit>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
@@ -27,10 +28,11 @@ class DiffusionPanel final : public QWidget {
     using Source=std::unique_ptr<obs_source_t,Release>;
     struct Settings {
         QString prompt;
-        double duration=12;int steps=8;
-        bool operator==(const Settings& b)const{return prompt==b.prompt&&std::abs(duration-b.duration)<.005&&steps==b.steps;}
+        double duration=12;int steps=8;bool adaptive=false;
+        bool operator==(const Settings& b)const{return prompt==b.prompt&&std::abs(duration-b.duration)<.005&&steps==b.steps&&adaptive==b.adaptive;}
     };
     QComboBox* picker_=nullptr;
+    QCheckBox* adaptive_=nullptr;
     QPlainTextEdit* prompt_=nullptr;
     QDoubleSpinBox* duration_=nullptr;QSpinBox* steps_=nullptr;
     QPushButton *apply_=nullptr,*revert_=nullptr,*generate_=nullptr,*continuous_=nullptr,*finish_=nullptr,*stop_=nullptr,*replay_=nullptr,*models_=nullptr;
@@ -53,13 +55,13 @@ class DiffusionPanel final : public QWidget {
         auto* d=obs_source_get_settings(s);
         auto duration=obs_data_get_double(d,"duration");
         if(!std::isfinite(duration))duration=12.;
-        Settings a{QString::fromUtf8(obs_data_get_string(d,"prompt")),std::clamp(duration,1.,60.),int(std::clamp<long long>(obs_data_get_int(d,"steps"),1,32))};
+        Settings a{QString::fromUtf8(obs_data_get_string(d,"prompt")),std::clamp(duration,1.,60.),int(std::clamp<long long>(obs_data_get_int(d,"steps"),1,32)),obs_data_get_bool(d,"adaptive_buffer")};
         // Preserve fractional duration unless the user actually changes it.
         obs_data_release(d);return a;
     }
-    Settings draft()const{return {prompt_->toPlainText(),duration_->value(),steps_->value()};}
+    Settings draft()const{return {prompt_->toPlainText(),duration_->value(),steps_->value(),adaptive_->isChecked()};}
     void load(const Settings& a){
-        loading_=true;baseline_=a;prompt_->setPlainText(a.prompt);duration_->setValue(a.duration);steps_->setValue(a.steps);
+        loading_=true;baseline_=a;prompt_->setPlainText(a.prompt);duration_->setValue(a.duration);steps_->setValue(a.steps);adaptive_->setChecked(a.adaptive);
         dirty_=false;loading_=false;notice_->clear();
     }
     void changed(){
@@ -100,13 +102,15 @@ class DiffusionPanel final : public QWidget {
         const auto a=draft(),live=read(s.get());
         if((a.prompt!=baseline_.prompt&&live.prompt!=baseline_.prompt)||
            (std::abs(a.duration-baseline_.duration)>=.005&&std::abs(live.duration-baseline_.duration)>=.005)||
-           (a.steps!=baseline_.steps&&live.steps!=baseline_.steps)){
+           (a.steps!=baseline_.steps&&live.steps!=baseline_.steps)||
+           (a.adaptive!=baseline_.adaptive&&live.adaptive!=baseline_.adaptive)){
             notice_->setText("Source changed elsewhere. Revert to reload.");return;
         }
         auto* d=obs_data_create();
         if(a.prompt!=baseline_.prompt)obs_data_set_string(d,"prompt",a.prompt.toUtf8().constData());
         if(std::abs(a.duration-baseline_.duration)>=.005)obs_data_set_double(d,"duration",a.duration);
         if(a.steps!=baseline_.steps)obs_data_set_int(d,"steps",a.steps);
+        if(a.adaptive!=baseline_.adaptive)obs_data_set_bool(d,"adaptive_buffer",a.adaptive);
         obs_source_update(s.get(),d);obs_data_release(d);load(read(s.get()));refreshStatus();
     }
     void command(const char* key){
@@ -137,10 +141,18 @@ class DiffusionPanel final : public QWidget {
                     .arg(calldata_int(&d,"generation_ms")));
             }
             calldata_free(&d);
+            calldata_t b{};
+            if(proc_handler_call(obs_source_get_proc_handler(s.get()),"sound_diffusion_buffer_v1",&b)&&calldata_bool(&b,"adaptive")){
+                telemetry_->setText(telemetry_->text()+QString("\nReserve %1 s · %2/%3 clips%4")
+                    .arg(calldata_int(&b,"reserve_ms")/1000.,0,'f',1)
+                    .arg(calldata_int(&b,"queued_clips")).arg(calldata_int(&b,"target_clips"))
+                    .arg(calldata_bool(&b,"prefilling")?" · Prefilling":""));
+            }
+            calldata_free(&b);
         }
         if(!called){message_->setText(s?"Status unavailable":"Select an Audio Diffusion source");progress_->setValue(0);telemetry_->clear();}
         else if(!active)message_->setText("Inactive or disabled · "+message_->text());
-        prompt_->setEnabled(bool(s));duration_->setEnabled(bool(s));steps_->setEnabled(bool(s));models_->setEnabled(bool(s)&&!dirty_);
+        prompt_->setEnabled(bool(s));duration_->setEnabled(bool(s));steps_->setEnabled(bool(s));adaptive_->setEnabled(bool(s));models_->setEnabled(bool(s)&&!dirty_);
         apply_->setEnabled(bool(s)&&dirty_);revert_->setEnabled(bool(s)&&dirty_);
         generate_->setEnabled(active&&called&&!dirty_);continuous_->setEnabled(active&&called&&!dirty_&&!continuous);
         finish_->setEnabled(active&&continuous);stop_->setEnabled(bool(s)&&called);replay_->setEnabled(active&&called&&!dirty_);
@@ -179,6 +191,7 @@ public:
         auto* controls=new QHBoxLayout;v->addLayout(controls);
         duration_=new QDoubleSpinBox;duration_->setDecimals(2);duration_->setRange(1,60);duration_->setSuffix(" s");controls->addWidget(new QLabel("Duration"));controls->addWidget(duration_);
         steps_=new QSpinBox;steps_->setRange(1,32);controls->addWidget(new QLabel("Steps"));controls->addWidget(steps_);
+        adaptive_=new QCheckBox("Adaptive reserve (longer startup)");adaptive_->setObjectName("diffusion_adaptive");v->addWidget(adaptive_);
         auto* edit=new QHBoxLayout;v->addLayout(edit);
         apply_=button(edit,"diffusion_apply","Apply",[this]{apply();});
         revert_=button(edit,"diffusion_revert","Revert",[this]{auto s=source();if(s)load(read(s.get()));refreshStatus();});
@@ -187,6 +200,7 @@ public:
         connect(prompt_,&QPlainTextEdit::textChanged,this,[this]{changed();});
         connect(duration_,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this]{changed();});
         connect(steps_,qOverload<int>(&QSpinBox::valueChanged),this,[this]{changed();});
+        connect(adaptive_,&QCheckBox::toggled,this,[this]{changed();});
         timer_=new QTimer(this);timer_->setInterval(500);connect(timer_,&QTimer::timeout,this,[this]{refreshSources();refreshStatus();});
         refreshSources();refreshStatus();
     }
