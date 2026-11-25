@@ -5,6 +5,7 @@ project(live-latent-lab-sound VERSION 0.3.0 LANGUAGES C CXX)
 set(SOUND_EFFECTS "" CACHE STRING "Semicolon-separated experimental effect IDs")
 option(SOUND_EXPERIMENTAL "Permit explicitly selected unverified effects" OFF)
 option(SOUND_TOOLS_MENU "Include optional Qt Tools menu" OFF)
+option(SOUND_DIFFUSION_DOCK "Include native Qt Audio Diffusion dock" OFF)
 set(SOUND_SUPPORTED_EFFECTS
     mic stem_live yamnet tts stt diffusion rvc deepfilter demucs_filter demucs_source whisper
     chatterbox kokoro matchering musicgen mediapipe meanvc2_bridge)
@@ -25,6 +26,9 @@ if(SOUND_SELECTED_EFFECTS AND NOT SOUND_EXPERIMENTAL)
     message(FATAL_ERROR "Quarantine: enable -DSOUND_EXPERIMENTAL=ON for individual effects")
 endif()
 message(STATUS "Sound enabled effects: [${SOUND_SELECTED_EFFECTS}]")
+if(SOUND_DIFFUSION_DOCK AND NOT diffusion IN_LIST SOUND_SELECTED_EFFECTS)
+    message(FATAL_ERROR "Audio Diffusion dock requires the diffusion effect")
+endif()
 
 # ===== PLATFORM & LANGUAGE =====
 set(CMAKE_CXX_STANDARD 17)
@@ -48,7 +52,7 @@ endif()
 # =============================================================================
 # Qt6 Integration (OBS Compatible)
 # =============================================================================
-if(SOUND_TOOLS_MENU)
+if(SOUND_TOOLS_MENU OR SOUND_DIFFUSION_DOCK)
     find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -269,6 +273,13 @@ if(SOUND_TOOLS_MENU)
 endif()
 
 add_library(live-latent-lab-sound MODULE ${PLUGIN_SOURCES})
+if(SOUND_DIFFUSION_DOCK)
+    find_package(obs-frontend-api REQUIRED)
+    target_sources(live-latent-lab-sound PRIVATE src/ui/diffusion_dock.cpp)
+    target_compile_definitions(live-latent-lab-sound PRIVATE SOUND_WITH_DIFFUSION_DOCK=1)
+    target_link_libraries(live-latent-lab-sound PRIVATE Qt6::Widgets OBS::obs-frontend-api)
+endif()
+
 if(stt IN_LIST SOUND_SELECTED_EFFECTS)
     if(NOT (UNIX AND NOT APPLE))
         message(FATAL_ERROR "Sound STT currently supports Linux only")

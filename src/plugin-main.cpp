@@ -3,6 +3,10 @@
 
 #if defined(SOUND_WITH_DIFFUSION)
 extern void register_sound_diffusion();
+#ifdef SOUND_WITH_DIFFUSION_DOCK
+void register_diffusion_dock();
+void unregister_diffusion_dock();
+#endif
 #endif
 
 // Compiled-source and registration gates match exactly. No source is even
@@ -142,7 +146,17 @@ bool obs_module_load(void)
     return true;
 }
 
+#ifdef SOUND_WITH_DIFFUSION_DOCK
+void obs_module_post_load(void)
+{
+    register_diffusion_dock();
+}
+#endif
+
 void obs_module_unload(void)
 {
+#ifdef SOUND_WITH_DIFFUSION_DOCK
+    unregister_diffusion_dock();
+#endif
     obs_log(LOG_INFO, "Sound quarantine module unloaded");
 }

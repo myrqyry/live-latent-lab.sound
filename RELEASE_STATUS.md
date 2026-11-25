@@ -355,3 +355,17 @@ manual refresh; finish is a segment boundary, not beat detection. A
 minute-scale soak is not indefinite stability. Full expanded acceptance,
 real Sight/YAMNet conditioning, trained LoRA quality and inline audio
 diffusion remain unqualified. No remote publication.
+
+## Optional native Audio Diffusion dock (2026-11-24)
+
+Dock-enabled module SHA256: da695ff43d0ff43c595d22407f7a41032f48c53f22c05db2301f2edb4965975d. Separate SOUND_DIFFUSION_DOCK option,
+no old Tools menu, no additional source registration. Real Qt/libobs
+harness and CUDA model passed discovery, UUID selection, draft/apply,
+generation, live status, source isolation and removal. External-edit
+conflict and dirty-switch blocking also passed via the repeatable dock
+runner. Isolated actual OBS 32.2.0 startup registered the dock and shut
+down. No manual interaction with the frontend's dock menu was tested.
+Six-effect registry and default quarantine passed. The previous
+full-model SA3 regression was not rerun for this UI-only checkpoint.
+Advanced source properties, adaptive buffer sizing and indefinite
+continuous soak remain outside this dock pass.

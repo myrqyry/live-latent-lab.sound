@@ -22,6 +22,31 @@ T5Gemma files. No model is bundled or automatically downloaded. Auto prefers
 GPU where available; CPU is an explicit option. The backend log identifies
 the actual selected compute device.
 
+### Native performance dock
+
+Enable `-DSOUND_DIFFUSION_DOCK=ON` with the diffusion effect and matching
+OBS frontend API / Qt 6 Widgets development packages. This is independent
+of the historical Tools menu and defaults off for headless builds.
+Open **LLL.sound Audio Diffusion** from OBS Docks. Select an existing
+Audio Diffusion source by UUID; no additional source is created. The
+dock displays real V3 generation progress, playback, lookahead and
+underrun status every 500 ms while visible. Generate, Continuous, Finish
+segment, Stop and Replay call the same source commands as the properties
+dialog. Prompt, duration and steps use Apply/Revert; a dirty draft
+blocks source switching and new generation until explicitly applied or
+reverted. An external edit to a drafted setting is rejected rather than
+overwritten. If the source disappears, the dock drops the draft and
+disables the controls. The model directory can be selected directly.
+Use source properties for model family, device, WAV/source capture,
+LoRA and reactive conditioning. The dock follows the OBS theme.
+It does not start generation on load or automatically select a source.
+
+Run `tests/verify-sa3-dock.sh` with SOUND_SA3_STAGE and SOUND_SA3_MODELS
+for Qt/libobs verification of source discovery, selection, draft/apply
+isolation, real CUDA generation, live telemetry and source removal.
+Actual OBS startup additionally qualifies frontend dock registration;
+the Qt harness is not a screenshot or full manual frontend interaction test.
+
 ### Playback and audio-to-audio
 
 - Generate and play: prompt, optional negative prompt, 1–60 s, 1–32 steps,
@@ -101,7 +126,8 @@ splice, so they should not be blindly summed. Session measurements reset
 when a new command is accepted; stop preserves the completed session's
 elapsed and timing measurements. The phase and lookahead state clear
 when the worker finishes. Counters in V1/V2 remain lifetime counters.
-Refresh status displays this information; it is manual, not a live dock.
+Refresh status displays this information in source properties; the optional
+performance dock updates automatically while visible.
 Runtime libraries use private GGML SONAMEs with local binding.
 
 ## Testing
@@ -135,4 +161,4 @@ soak stability, arbitrary third-party LoRA compatibility, live camera
 qualification, every Sound/Sight signal source, or full expanded
 acceptance is made. Audio capture and transformation use this source's
 separate output; a continuously processing inline audio-to-audio filter
-and a dedicated generative soundboard/dock remain distinct work.
+and a dedicated generative soundboard remain distinct work.
