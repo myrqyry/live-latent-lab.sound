@@ -145,3 +145,15 @@ was approximately 218 MiB; not a measured incremental model RSS.
 These are tone and silence fixtures, not subjective voice or music
 quality tests. The seven-effect registry and default empty quarantine
 passed. The full expanded STT/TTS/SA3/stem suite was not rerun.
+
+## Installed verification (2026-11-25)
+
+The combined seven-effect module built from d9f98f9 was installed locally
+after OBS was closed. SHA256 matches the qualified stage:
+`89f6e75003821ff31d43fa60c7cd93fc65cdc0398001dc24c1133b10944217fc`.
+The installed module passed registration and the real 48 kHz probe:
+595 hops, last worker hop 1.376 ms, correct pitch, live switching and
+morphing, noise-only output, dry stereo preservation and settled
+silence. The original module was backed up. Models and LiteRT are
+provided separately at the default local paths; no OBS scenes were
+changed. The limitations above still apply.

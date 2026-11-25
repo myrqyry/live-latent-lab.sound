@@ -583,3 +583,23 @@ SHA256/size manifest and model/runtime licenses. See docs/ddsp.md.
 OBS was open, so the new package was staged without replacing the
 loaded plugin. The previous CPU Turbo checkpoint is included in
 the combined build, but its reader configuration remains pending.
+
+## Local seven-effect installation (2026-11-25)
+
+Installed module from d9f98f9 SHA256
+89f6e75003821ff31d43fa60c7cd93fc65cdc0398001dc24c1133b10944217fc,
+matching the qualified stage. Verified all DDSP model/runtime
+checksums and CPU-only Turbo model/runtime checksums. Existing
+SA3/STT runtime trees matched and were preserved. Prior plugin and
+reader service drop-ins backed up. Added a reader service drop-in
+retaining native Kokoro and enabling CPU-only native Turbo.
+Post-install actual libobs registration: seven effects.
+DDSP at 48 kHz: 595 hops, final worker hop 1.376 ms; all audio
+acceptance conditions passed. Turbo through the installed reader:
+picker, controls, cancel, recovery passed; 103648 frames, 77129
+nonzero, zero invalid samples, 3 completed and 0 failed.
+Both reader and Nano services active. No OBS scene changes.
+This supersedes the preceding deferred installation status.
+No full expanded acceptance rerun, subjective audition, or
+CUDA Turbo qualification. Local installation is not a release
+or redistribution approval.

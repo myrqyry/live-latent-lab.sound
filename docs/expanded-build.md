@@ -2,7 +2,11 @@
 
 The expanded profile selects
 mic;stem_live;yamnet;tts;stt. The smaller public-linux preset has no speech
-runtime or GPU dependency and remains available. The expanded profile exposes one TTS source, with all five speech backends selectable inside it; there are no separate per-backend registrations.
+runtime or GPU dependency and remains available. The expanded profile exposes one TTS source, with seven speech backends
+selectable inside it (including optional native Kokoro CUDA and native
+Turbo CPU). There are no separate per-backend registrations.
+Audio Diffusion and DDSP are additional explicit opt-in effects,
+not part of the five-entry preset.
 
 Build prerequisites: C++17, CMake 3.28+, Ninja, libobs and frontend headers,
 pkg-config, libcurl, FFmpeg development libraries (libavformat, libavcodec, libavutil, libswresample), and separately acquired matched native speech runtimes.
@@ -56,14 +60,14 @@ before replacing a working runtime.
 Use the existing **LLL.sound STT** filter. Choose the recognition engine,
 then its model and compute device. Caption destination, energy gate, phrase
 timing, caption hold and muted-audio policy occupy the same positions for
-all three engines. Engine-specific options follow the shared controls.
+all supported engines. Engine-specific options follow the shared controls.
 The model and device widgets use the existing per-engine saved keys so a
 switch restores that engine's previous selection rather than overwriting it.
 
 A worker-owned recognition session exposes common open, close, device,
-reset, finalize and cancellation operations. Only Nemotron advertises
-native incremental transcription; Whisper and Parakeet publish completed
-phrases. Cancellation checks discard stale results from non-interruptible
+reset, finalize and cancellation operations. Nemotron and the optional [Zipformer CPU runtime](zipformer-stt.md)
+provide incremental transcription; Whisper and Parakeet publish
+completed phrases. Cancellation checks discard stale results from non-interruptible
 native calls; they do not promise immediate native cancellation. The
 existing capture, caption and versioned transcript-signal contracts remain
 unchanged. Settings belonging to an inactive engine do not reload the
@@ -90,13 +94,18 @@ ONNX may still partition unsupported operations onto CPU; provider
 registration is not proof of per-operation acceleration. Both Piper
 and Kokoro log their session provider choices. Chatterbox retains its
 existing CUDA-specific worker and is not controlled by this reader
-policy. No new CUDA runtime is installed.
+policy. This ONNX device policy does not control native Kokoro CUDA or native Turbo CPU.
 
 Run `python3 tests/verify-tts-device.py` for policy coverage.
 Actual local Piper and Kokoro speech generation and Unix HTTP requests
 were tested using the existing reader runtime, which advertises only
-CPU (and Azure) providers. CPU is the qualified real device on this
-machine; CUDA branches have deterministic policy coverage only.
+CPU (and Azure) providers. CPU is the qualified real ONNX device on this
+machine; ONNX CUDA branches have deterministic policy coverage only.
+Separate [native Kokoro CUDA](native-kokoro.md) and
+[native Turbo CPU](native-turbo.md) backends use qualified audio.cpp
+libraries and explicit reader arguments. The local combined build
+was installed and native Turbo tested through the running reader
+on 2026-11-25. Nano remains a separate service.
 
 ## Reproduce the full native acceptance check
 

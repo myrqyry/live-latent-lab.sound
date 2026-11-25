@@ -76,9 +76,11 @@ bin/64bit and locale assets under data. Do not overwrite a working plugin
 until it has been backed up. The public candidate does not register
 obsolete development-only speech sources.
 
-For all five entries, use the
-[expanded build instructions](docs/expanded-build.md), which describe
-required runtime paths, models and acceptance tests.
+For the five-entry expanded preset, use the
+[expanded build instructions](docs/expanded-build.md). To add the
+two optional neural effects, see [Audio Diffusion](docs/audio-diffusion.md)
+and [Neural Timbre](docs/ddsp.md) for their required runtimes,
+models, explicit build gates and acceptance tests.
 
 ## Verify
 
@@ -94,12 +96,20 @@ classification, missing/invalid model handling, stale expiry and 44.1/48 kHz
 stereo passthrough in isolated libobs. It requires xvfb-run. Neither test
 edits normal OBS scenes or installs to the user profile.
 
-The latest expanded build passed the five-entry registration check,
-real five-engine TTS switching and playback, cancellation/recovery and
-the independent signal-client test. Earlier full feature-group tests
-passed individually, with an intermittent Parakeet lifecycle failure at
-44.1 kHz. The full STT/stem suite has not been rerun on the latest build.
-See [release status](RELEASE_STATUS.md); the expanded profile remains opt-in.
+The locally installed seven-effect build (2026-11-25) includes the
+expanded profile plus Audio Diffusion and Neural Timbre (DDSP).
+Native Kokoro CUDA and CPU-only Chatterbox Turbo are additional
+backends within the single TTS source, for seven selectable engines.
+The installed module passed seven-effect registration, actual DDSP
+audio at 48 kHz, and Turbo speech playback, controls, cancellation
+and recovery. The staged DDSP build also passed 44.1 kHz and
+missing-model recovery. The complete expanded STT/stem/TTS/SA3 suite
+has not been rerun on this build. Earlier Parakeet testing had an
+intermittent 44.1 kHz lifecycle failure. See
+[release status](RELEASE_STATUS.md) for evidence and limitations.
+The smaller and expanded presets remain unchanged; diffusion and
+DDSP require explicit opt-in gates. No release binaries or model
+weights are published here.
 
 ## License and distribution
 

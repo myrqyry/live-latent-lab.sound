@@ -141,3 +141,15 @@ options, and existing native Kokoro/ONNX/Piper regression paths
 with an isolated reader. Set SOUND_TURBO_LIBRARY, SOUND_TURBO_MODEL,
 SOUND_KOKORO_LIBRARY, SOUND_KOKORO_MODEL, SOUND_READER_PYTHON,
 SOUND_READER_ASSETS and SOUND_STAGE.
+
+## Installed verification (2026-11-25)
+
+The seven-effect Sound build includes the CPU-only Turbo choice.
+The existing reader service was restarted with both native Kokoro
+and native Turbo library/model arguments, preserving the ONNX
+device policy and separate Nano service. Actual installed OBS
+playback passed the picker, sampling controls, cancellation and
+recovery checks (3 completed, 0 failed, 0 invalid samples).
+The prior plugin and reader drop-ins were backed up. CUDA Turbo
+remains quarantined; no CUDA substitution or subjective quality
+claim is made.
