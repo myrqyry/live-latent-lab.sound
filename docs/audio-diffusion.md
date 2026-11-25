@@ -131,11 +131,12 @@ Auto prefers CUDA; CPU can be selected explicitly. No sample format
 conversion, automatic truncation of different input durations, live
 source morph, beat alignment, or per-frame slider scrubbing is provided.
 
-The OBS worker launches a fixed local executable with argv (no shell),
-using a private temporary output directory, and shares the existing
-inference gate with diffusion. It waits for the result off the audio/UI
+The OBS worker launches a fixed local executable with argv (no shell)
+and shares the existing inference gate with diffusion. A/B morph and
+one-shot fallback use a private temporary output directory; resident
+texture requests use the socket transport described below. It waits for the result off the audio/UI
 threads; cancellation terminates and reaps only its own helper process.
-A 45-second deadline bounds the helper. Successful results use the
+A 45-second deadline bounds each helper request. Successful results use the
 existing playout and replay cache. Existing inputs remain unchanged.
 A helper crash or validation failure cannot directly abort OBS.
 This is batch generation, not a low-latency inline audio effect.
@@ -159,6 +160,49 @@ deterministic latent indexing, effect amount zero, distinct audio for
 all three modes, CPU/GPU agreement and actual OBS playback of each
 mode without a second WAV. Subjective quality and live neural granular
 processing remain separate qualification steps.
+
+### Resident SAME-S texture worker
+
+Single-input freeze, smear and grain requests now use a resident
+autoencoder helper rather than launching a new process for each clip.
+The first request verifies and loads the same pinned model. Subsequent
+requests reuse the model, encoder/decoder graph pair and bounded
+host buffers. A different padded frame count replaces the graph pair;
+there is no unbounded graph cache. PCM is transferred directly through
+a private local socket, not temporary WAV files.
+
+One warm context is allowed across Sound sources. If another source
+already owns it, the existing isolated one-shot path is used. All
+inference still shares the diffusion gate; idle warm weights can remain
+resident while another source runs diffusion. The worker is released
+after eight seconds of inactivity following playback, on Stop,
+deactivation, destruction, or before another kind of generation in
+the same source. Model/device changes are picked up on the next request.
+Model verification happens once per worker lifetime. A/B morph remains
+on the original isolated batch path.
+
+The source status procedure `sound_same_resident_v1` exposes lifetime
+worker starts and successful resident requests, the current worker's
+graph-pair build count, and active (0/1). The Properties status text
+shows warm state and counters. The worker can be cancelled during
+model loading or inference without blocking the audio callback.
+The private little-endian socket protocol uses bounded frame counts
+and sequence-tagged replies; the worker has no listener or network
+service. Invalid parameter/sample requests are rejected; framing,
+backend or connection failures terminate the worker and the source
+reports failure rather than playing stale audio.
+
+For direct qualification, invoke
+`python3 tests/verify-same-resident.py HELPER MODEL A.wav gpu:CUDA0`
+or select cpu. Set SAME_RESIDENT_SOAK=1 for the additional 60 changing
+16384-frame requests. The harness checks reuse, changing inputs,
+geometry replacement, invalid requests, clean EOF and measured
+short-block throughput. Use SOUND_SAME_RESIDENT_OBS=1 with the existing
+texture runner to exercise warm reuse, Stop, restart, idle expiry and
+resident cancellation in actual OBS. Short-block throughput is not a
+measurement of live audio latency, decoder seam quality or an inline
+filter. Live capture scheduling and overlap/context management remain
+separate work.
 
 ### Playback and audio-to-audio
 

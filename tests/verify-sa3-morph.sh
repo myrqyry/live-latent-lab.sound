@@ -48,9 +48,13 @@ assert ca>.5 and cb>.5 and cc>.9 and difference>.005 and ramp_difference>.005
 PY
 inc="$(pkg-config --variable=includedir libobs)/obs"
 "${CXX:-c++}" -std=c++17 -O2 -pthread -I"$inc" "$root/tests/verify-sa3-morph-obs.cpp" $(pkg-config --libs libobs) -o "$work/probe"
-QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 45 "$work/probe" "$SOUND_SA3_STAGE/bin/64bit/live-latent-lab-sound.so" "$SOUND_SA3_STAGE/data" "$SOUND_SA3_MODELS" "$SOUND_SAME_INPUT_A" "$SOUND_SAME_INPUT_B" >"$work/obs.log" 2>&1 || { cat "$work/obs.log";exit 1; }
+QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 65 "$work/probe" "$SOUND_SA3_STAGE/bin/64bit/live-latent-lab-sound.so" "$SOUND_SA3_STAGE/data" "$SOUND_SA3_MODELS" "$SOUND_SAME_INPUT_A" "$SOUND_SAME_INPUT_B" >"$work/obs.log" 2>&1 || { cat "$work/obs.log";exit 1; }
 grep -F 'SA3_MORPH_CANCEL cancelled=1 retry=1' "$work/obs.log"
 grep -F 'SA3_MORPH_OBS available=1 generated=1 audio=1 replay=1 missing=1 recovered=1 pass=1' "$work/obs.log"
 if [[ "${SOUND_SAME_TEXTURE:-0}" == 1 ]]; then
     for mode in freeze smear grain; do grep -F "SAME_TEXTURE_OBS mode=$mode pass=1" "$work/obs.log";done
+fi
+if [[ "${SOUND_SAME_RESIDENT_OBS:-0}" == 1 ]]; then
+    grep -F 'SAME_RESIDENT_OBS reused=1 warm=1 closed=1 restarted=1 idle=1' "$work/obs.log"
+    grep -F 'SAME_RESIDENT_OBS_CANCEL cancelled=1 recovered=1' "$work/obs.log"
 fi

@@ -4,6 +4,7 @@
 #include "same_ae.h"
 #include "wav.h"
 #include "../src/framework/same_texture.hpp"
+#include "../src/framework/same_resident.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -17,6 +18,10 @@
 #include <unistd.h>
 #include <stdexcept>
 #include <vector>
+#include <sys/socket.h>
+#include <cerrno>
+#include <cstdint>
+#include <limits>
 
 namespace {
 using Clock=std::chrono::steady_clock;
@@ -72,8 +77,10 @@ struct Graph {
     ggml_tensor *in=nullptr,*out=nullptr,*pos=nullptr,*pos2=nullptr;
     sa3::GgufModel& model;
     const int n,n2;
+    std::vector<int32_t> positions;
     Graph(sa3::GgufModel& w,const sa3::SameConfig& c,int frames,bool encode):
-        model(w),n(frames*c.sub_chunk),n2(n+2*c.shift){
+        model(w),n(frames*c.sub_chunk),n2(n+2*c.shift),positions(n2){
+        for(int j=0;j<n2;++j)positions[j]=j;
         try{
             ctx=ggml_init({64*1024*1024,nullptr,true});
             if(!ctx)throw std::runtime_error("Graph context allocation failed");
@@ -96,29 +103,131 @@ struct Graph {
     Graph& operator=(const Graph&)=delete;
     void release(){if(alloc)ggml_gallocr_free(alloc);if(ctx)ggml_free(ctx);alloc=nullptr;ctx=nullptr;}
     ~Graph(){release();}
-    std::vector<float> run(const std::vector<float>& input){
+    void run_into(const std::vector<float>& input,std::vector<float>& result){
         if(input.size()!=size_t(ggml_nelements(in)))throw std::runtime_error("Wrong input shape");
         ggml_backend_tensor_set(in,input.data(),0,input.size()*sizeof(float));
         for(auto* t:{pos,pos2}){
-            std::vector<int32_t> p(ggml_nelements(t));for(size_t i=0;i<p.size();++i)p[i]=int32_t(i);
-            ggml_backend_tensor_set(t,p.data(),0,p.size()*sizeof(int32_t));
+            ggml_backend_tensor_set(t,positions.data(),0,size_t(ggml_nelements(t))*sizeof(int32_t));
         }
         std::string err;
         if(!sa3::graph_compute_checked(model.backend,graph,"SAME graph",err))throw std::runtime_error(err);
-        std::vector<float> result(ggml_nelements(out));
+        result.resize(ggml_nelements(out));
         ggml_backend_tensor_get(out,result.data(),0,result.size()*sizeof(float));
         for(float v:result)if(!std::isfinite(v))throw std::runtime_error("Nonfinite model output");
-        return result;
     }
+    std::vector<float> run(const std::vector<float>& input){std::vector<float> out;run_into(input,out);return out;}
 };
 std::vector<float> pad(const Audio& a,int n){
     std::vector<float> out(size_t(n)*2);
     for(int c=0;c<2;++c)std::copy_n(a.pcm.data()+c*a.frames,a.frames,out.data()+c*n);
     return out;
 }
+// Private local socket transport. No listener, path-based commands or
+// network service: the caller passes an already connected socket as stdin.
+// Requests and replies are fixed little-endian headers followed by planar f32.
+using namespace same_resident;
+bool receive(void* p,size_t n,bool allow_eof=false){
+    auto* b=static_cast<char*>(p);size_t done=0;
+    while(done<n){
+        auto r=recv(STDIN_FILENO,b+done,n-done,0);
+        if(r<0&&errno==EINTR)continue;
+        if(r==0&&done==0&&allow_eof)return false;
+        if(r<=0)throw std::runtime_error("Incomplete resident request");
+        done+=size_t(r);
+    }
+    return true;
+}
+void send_all(const void* p,size_t n){
+    auto* b=static_cast<const char*>(p);
+    while(n){
+        auto r=send(STDIN_FILENO,b,n,MSG_NOSIGNAL);
+        if(r<0&&errno==EINTR)continue;
+        if(r<=0)throw std::runtime_error("Resident response failed");
+        b+=r;n-=size_t(r);
+    }
+}
+struct Resident {
+    std::unique_ptr<ggml_backend,decltype(&ggml_backend_free)> backend;
+    sa3::GgufModel weights;
+    sa3::SameConfig config;
+    std::unique_ptr<Graph> enc,dec;
+    int shape=0;uint32_t builds=0;
+    std::vector<float> input,padded,latent,valid,modified,decoded,result;
+    static ggml_backend_t select(const char* device){
+        const std::string d=device;
+        if(d!="auto"&&d!="cpu"&&d!="gpu:CUDA0")throw std::runtime_error("Unsupported device");
+        auto b=sa3::make_backend(8,device);
+        if(!b)throw std::runtime_error("Backend unavailable");
+        if((d=="gpu:CUDA0"&&std::string(ggml_backend_name(b))!="CUDA0")||
+           (d=="cpu"&&ggml_backend_dev_type(ggml_backend_get_device(b))!=GGML_BACKEND_DEVICE_TYPE_CPU)){
+            ggml_backend_free(b);throw std::runtime_error("Requested backend unavailable");
+        }
+        return b;
+    }
+    Resident(const char* model,const char* device):
+        backend(select(device),ggml_backend_free),weights(sa3::load_gguf(model,backend.get())),config(sa3::SameConfig::from(weights)){
+        if(!config.chunk||config.patch_size*config.output_seg!=4096||config.out_channels/config.patch_size!=2||config.latent!=256)
+            throw std::runtime_error("Unsupported SAME-S geometry");
+    }
+    bool valid_request(const Request& r){
+        return r.mode>=1&&r.mode<=3&&std::isfinite(r.amount)&&r.amount>=0&&r.amount<=1&&
+            std::isfinite(r.position)&&r.position>=0&&r.position<=1&&r.radius>=1&&r.radius<=16&&r.grain>=1&&r.grain<=16&&
+            std::all_of(input.begin(),input.end(),[](float v){return std::isfinite(v)&&std::abs(v)<=1;});
+    }
+    void process(const Request& r){
+        int frames=int((r.frames+8191)/8192*2),n=frames*4096;
+        if(shape!=frames){
+            // Release both old graphs before allocating replacement geometry.
+            enc.reset();dec.reset();shape=0;
+            enc=std::make_unique<Graph>(weights,config,frames,true);
+            dec=std::make_unique<Graph>(weights,config,frames,false);
+            shape=frames;++builds;
+        }
+        padded.assign(size_t(n)*2,0);
+        for(int ch=0;ch<2;++ch)std::copy_n(input.data()+ch*r.frames,r.frames,padded.data()+ch*n);
+        enc->run_into(padded,latent);
+        const int count=int((r.frames+4095)/4096);
+        valid.assign(latent.begin(),latent.begin()+size_t(count)*config.latent);
+        auto mode=r.mode==1?same_texture::Mode::Freeze:r.mode==2?same_texture::Mode::Smear:same_texture::Mode::Grain;
+        same_texture::process_into(valid,modified,config.latent,count,mode,r.amount,r.position,int(r.radius),int(r.grain));
+        std::copy(modified.begin(),modified.end(),latent.begin());
+        dec->run_into(latent,decoded);
+        if(decoded.size()!=size_t(n)*2)throw std::runtime_error("Invalid decoded shape");
+        float peak=0;for(float v:decoded)peak=std::max(peak,std::abs(v));
+        const float gain=peak>.75f?.75f/peak:1.f;
+        result.resize(size_t(r.frames)*2);
+        for(int ch=0;ch<2;++ch)for(uint32_t j=0;j<r.frames;++j)result[size_t(ch)*r.frames+j]=decoded[size_t(ch)*n+j]*gain;
+    }
+};
+int serve(const char* model,const char* device){
+    verify_model(model);
+    Resident codec(model,device);
+    std::cerr<<"SAME_RESIDENT_READY device="<<ggml_backend_name(codec.backend.get())<<std::endl;
+    Request r{};
+    while(receive(&r,sizeof r,true)){
+        // Bad framing is fatal; do not allocate or drain an unbounded payload.
+        if(r.magic!=magic||r.frames<8192||r.frames>max_samples||!r.sequence)
+            throw std::runtime_error("Invalid resident framing");
+        codec.input.resize(size_t(r.frames)*2);
+        receive(codec.input.data(),codec.input.size()*sizeof(float));
+        Reply reply{magic,r.sequence,1,0,codec.builds,0};
+        if(codec.valid_request(r)){
+            const auto t=Clock::now();
+            // Backend failures terminate the helper: never continue on a
+            // potentially poisoned graph or silently return stale audio.
+            codec.process(r);
+            reply={magic,r.sequence,0,r.frames,codec.builds,uint32_t(ms(t))};
+        }
+        send_all(&reply,sizeof reply);
+        if(reply.status==0)send_all(codec.result.data(),codec.result.size()*sizeof(float));
+    }
+    return 0;
+}
+
 }
 int main(int argc,char** argv){
     try{
+        if(argc==4&&std::string(argv[1])=="--serve")return serve(argv[2],argv[3]);
         if(argc!=8&&argc!=11)throw std::runtime_error("usage: sa3-latent-morph MODEL A.wav B.wav MIX OUTPUT DEVICE fixed|ramp; or MODE freeze|smear|grain POSITION RADIUS GRAIN (B ignored)");
         const std::string mix_text=argv[4];size_t parsed=0;
         const float mix=std::stof(mix_text,&parsed);

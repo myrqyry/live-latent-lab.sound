@@ -23,6 +23,9 @@
 #include <vector>
 #ifdef SOUND_WITH_SAME_MORPH
 #include <spawn.h>
+#include <sys/socket.h>
+#include <poll.h>
+#include "framework/same_resident.hpp"
 #include <sys/wait.h>
 #include <signal.h>
 #include <unistd.h>
@@ -52,7 +55,7 @@ struct Config {
 struct Clip {
     std::vector<float> pcm;
     size_t frames=0;
-    uint32_t sample_rate=rate;
+    uint32_t sample_rate=rate,source_channels=2;
 };
 enum class Job { None, Generate, Replay, Continuous, Transform, Extend, Morph };
 struct State {
@@ -68,6 +71,8 @@ struct State {
     std::atomic<uint64_t> epoch{0},started{0},completed{0},played{0},failed{0};
     std::atomic<int> progress{0};
     std::atomic<uint64_t> captured{0},sound_cues{0},sight_cues{0},automated{0};
+    std::atomic<uint64_t> resident_starts{0},resident_requests{0},resident_graph_builds{0};
+    std::atomic<bool> resident_active{false};
     // Session telemetry is protected by mutex. The cooperative finish flag
     // is also read by the native lookahead callback without taking a lock.
     std::atomic<bool> finish_requested{false};
@@ -350,7 +355,7 @@ std::shared_ptr<Clip> read_wav(const std::string& path,std::string& error){
         pos+=n;if(n%2){if(pos==b.size()){error="Truncated WAV padding";return {};}++pos;}
     }
     if(!channels||!data||!bytes||bytes%(channels*2)||bytes/(channels*2)>wav_rate*max_seconds){error="Invalid WAV data";return {};}
-    auto clip=std::make_shared<Clip>();clip->frames=bytes/(channels*2);clip->sample_rate=wav_rate;clip->pcm.resize(clip->frames*2);
+    auto clip=std::make_shared<Clip>();clip->frames=bytes/(channels*2);clip->sample_rate=wav_rate;clip->source_channels=channels;clip->pcm.resize(clip->frames*2);
     for(size_t ch=0;ch<2;++ch)for(size_t i=0;i<clip->frames;++i){
         const auto v=stts::wav_u16(data+2*(i*channels+std::min(ch,size_t(channels-1))));
         clip->pcm[ch*clip->frames+i]=float(int(v)-(v>=32768?65536:0))/32768.f;
@@ -665,20 +670,122 @@ void continuous(State& s,Config c,uint64_t epoch){
     }
 }
 #ifdef SOUND_WITH_SAME_MORPH
-std::shared_ptr<Clip> morph(State& s,const Config& c,uint64_t epoch,std::string& error){
+// One retained autoencoder across all sources. Contending sources retain
+// the previous one-shot path instead of creating unbounded warm contexts.
+std::mutex same_residency_gate;
+class ResidentWorker {
+    State& state;
+    std::unique_lock<std::mutex> slot{same_residency_gate,std::defer_lock};
+    int fd=-1;
+    pid_t pid=0;
+    std::string model,device;
+    uint32_t seq=0;
+public:
+    uint64_t epoch=0;
+    explicit ResidentWorker(State& s):state(s){}
+    ~ResidentWorker(){close();}
+    bool active()const{return pid>0;}
+    void close() noexcept {
+        if(fd>=0){::close(fd);fd=-1;}
+        if(pid>0){
+            int status=0;pid_t r;
+            do{r=waitpid(pid,&status,WNOHANG);}while(r<0&&errno==EINTR);
+            if(r==0){kill(pid,SIGKILL);do{r=waitpid(pid,&status,0);}while(r<0&&errno==EINTR);}
+            pid=0;
+        }
+        state.resident_active=false;seq=0;
+        if(slot.owns_lock())slot.unlock();
+    }
+    bool start(const std::string& exe,const std::string& path,const std::string& backend){
+        if(active()&&(path!=model||backend!=device||seq==UINT32_MAX))close();
+        if(active())return true;
+        if(!slot.try_lock())return false;
+        try{
+            model=path;device=backend;
+            int fds[2];
+            if(socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,fds))throw std::runtime_error("Cannot open SAME socket");
+            fd=fds[0];
+            struct ChildFd{int fd;~ChildFd(){if(fd>=0)::close(fd);}} child{fds[1]};
+            // Do not accidentally overwrite one of the socket endpoints
+            // while arranging the child's standard descriptors.
+            if(child.fd<3){const int dup=fcntl(child.fd,F_DUPFD_CLOEXEC,3);if(dup<0)throw std::runtime_error("Cannot duplicate SAME socket");::close(child.fd);child.fd=dup;}
+            if(fd<3){const int dup=fcntl(fd,F_DUPFD_CLOEXEC,3);if(dup<0)throw std::runtime_error("Cannot duplicate SAME socket");::close(fd);fd=dup;}
+            posix_spawn_file_actions_t actions;
+            if(posix_spawn_file_actions_init(&actions))throw std::runtime_error("Cannot initialize SAME worker");
+            struct Guard{posix_spawn_file_actions_t* p;~Guard(){posix_spawn_file_actions_destroy(p);}} guard{&actions};
+            if(posix_spawn_file_actions_adddup2(&actions,child.fd,STDIN_FILENO)||
+               posix_spawn_file_actions_addopen(&actions,STDOUT_FILENO,"/dev/null",O_WRONLY,0)||
+               posix_spawn_file_actions_adddup2(&actions,STDOUT_FILENO,STDERR_FILENO))
+                throw std::runtime_error("Cannot configure SAME worker");
+            std::array<std::string,4> args={exe,"--serve",path,backend};
+            std::array<char*,5> argv{};for(size_t i=0;i<args.size();++i)argv[i]=args[i].data();
+            pid_t spawned=0;
+            if(posix_spawn(&spawned,exe.c_str(),&actions,nullptr,argv.data(),environ))
+                throw std::runtime_error("Cannot start resident SAME worker");
+            pid=spawned;state.resident_active=true;++state.resident_starts;
+            state.resident_graph_builds=0;return true;
+        }catch(...){close();throw;}
+    }
+    bool transfer(void* bytes,size_t size,bool writing,const Cancel& token,std::chrono::steady_clock::time_point deadline){
+        auto* p=static_cast<char*>(bytes);
+        while(size&&token.current()){
+            const auto now=std::chrono::steady_clock::now();if(now>=deadline)return false;
+            pollfd event{fd,short(writing?POLLOUT:POLLIN),0};
+            const int ready=poll(&event,1,20);
+            if(ready<0){if(errno==EINTR)continue;return false;}
+            if(!ready)continue;
+            if(!(event.revents&(writing?POLLOUT:POLLIN)))return false;
+            const auto n=writing?send(fd,p,size,MSG_NOSIGNAL|MSG_DONTWAIT):recv(fd,p,size,MSG_DONTWAIT);
+            if(n<0&&(errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK))continue;
+            if(n<=0)return false;
+            p+=n;size-=size_t(n);
+        }
+        return size==0&&token.current();
+    }
+    std::shared_ptr<Clip> request(Clip& input,const Config& c,const Cancel& token){
+        using namespace same_resident;
+        try{
+            Request r{magic,++seq,uint32_t(input.frames),c.morph_effect=="freeze"?1u:c.morph_effect=="smear"?2u:3u,
+                c.morph_mix,c.morph_position,uint32_t(c.morph_radius),uint32_t(c.morph_grain)};
+            Reply reply{};
+            const auto deadline=std::chrono::steady_clock::now()+45s;
+            if(!transfer(&r,sizeof r,true,token,deadline)||
+               !transfer(input.pcm.data(),input.pcm.size()*sizeof(float),true,token,deadline)||
+               !transfer(&reply,sizeof reply,false,token,deadline)||
+               reply.magic!=magic||reply.sequence!=r.sequence||reply.status!=0||reply.frames!=r.frames||!reply.builds)
+                throw std::runtime_error("Resident SAME worker cancelled, rejected input or failed");
+            auto out=std::make_shared<Clip>();out->frames=reply.frames;out->pcm.resize(size_t(reply.frames)*2);
+            if(!transfer(out->pcm.data(),out->pcm.size()*sizeof(float),false,token,deadline)||
+               !std::all_of(out->pcm.begin(),out->pcm.end(),[](float v){return std::isfinite(v)&&std::abs(v)<=.751f;}))
+                throw std::runtime_error("Invalid resident SAME output");
+            state.resident_graph_builds=reply.builds;++state.resident_requests;
+            epoch=token.epoch;return out;
+        }catch(...){close();throw;}
+    }
+};
+std::shared_ptr<Clip> morph(State& s,const Config& c,uint64_t epoch,std::string& error,ResidentWorker& resident){
     GenerationStatus generation(s,epoch,false);
     if(!generation.token.current())return {};
     // Existing PCM reader bounds size and validates RIFF before spawning.
     auto a=read_wav(c.morph_a,error);if(!a)return {};
     const bool blend=c.morph_effect=="blend";
     std::shared_ptr<Clip> b;if(blend){b=read_wav(c.morph_b,error);if(!b)return {};}
-    if(a->sample_rate!=rate||(blend&&(b->sample_rate!=rate||a->frames!=b->frames))||
+    if(a->sample_rate!=rate||a->source_channels!=2||(blend&&(b->sample_rate!=rate||b->source_channels!=2||a->frames!=b->frames))||
        a->frames<8192||a->frames>12*rate){error="Use stereo 44.1 kHz WAVs, 0.19–12 seconds; blend requires equal lengths";return {};}
     std::unique_lock<std::timed_mutex> gate(inference_gate,std::defer_lock);
     while(generation.token.current()&&!gate.try_lock_for(50ms)){}
     if(!generation.token.current()||!gate.owns_lock())return {};
     auto helper=std::filesystem::path(obs_get_module_binary_path(obs_current_module())).parent_path()/"sa3-runtime/sound-sa3-morph";
     const auto model=std::filesystem::path(c.models)/"stable-audio-3-small-music-same-s-v1.0-F16.gguf";
+    if(!blend&&resident.start(helper.string(),model.string(),c.device=="cpu"?"cpu":"auto")){
+        {std::lock_guard lock(s.mutex);if(!s.current(epoch)){resident.close();return {};}
+            s.stage="morphing";s.message="Resident SAME-S processing";}
+        auto clip=resident.request(*a,c,generation.token);
+        generation.succeeded=true;
+        blog(LOG_INFO,"[Sound/Morph] Resident SAME-S texture completed (%zu frames)",clip->frames);
+        return clip;
+    }
+
     std::array<char,32> pattern{};std::strcpy(pattern.data(),"/tmp/sound-sa3-morph.XXXXXX");
     const auto* dir=mkdtemp(pattern.data());
     if(!dir){error="Cannot create private morph workspace";return {};}
@@ -724,11 +831,25 @@ std::shared_ptr<Clip> morph(State& s,const Config& c,uint64_t epoch,std::string&
 }
 #endif
 void worker(State* s){
+#ifdef SOUND_WITH_SAME_MORPH
+    ResidentWorker resident(*s);
+#endif
     while(true){
         Config c;Job job;uint64_t e;std::shared_ptr<const Clip> clip;
-        {std::unique_lock lock(s->mutex);s->cv.wait(lock,[&]{return s->closing||s->pending!=Job::None;});
+        {std::unique_lock lock(s->mutex);
+#ifdef SOUND_WITH_SAME_MORPH
+         if(resident.active()){
+            s->cv.wait_for(lock,8s,[&]{return s->closing||s->pending!=Job::None||!s->current(resident.epoch);});
+            if(s->closing)return;
+            if(s->pending==Job::None){lock.unlock();resident.close();continue;}
+         }else
+#endif
+         s->cv.wait(lock,[&]{return s->closing||s->pending!=Job::None;});
          if(s->closing)return;
          job=s->pending;s->pending=Job::None;e=s->epoch;c=s->config;clip=s->saved;}
+#ifdef SOUND_WITH_SAME_MORPH
+        if(resident.active()&&(job!=Job::Morph||c.morph_effect=="blend"||e!=resident.epoch+1))resident.close();
+#endif
         if(!s->current(e))continue;
         SessionEnd end{*s,e};
         try{
@@ -737,7 +858,7 @@ void worker(State* s){
                 {std::lock_guard lock(s->mutex);if(!s->current(e))continue;++s->started;s->progress=0;s->message="Generating";}
                 std::string error;
 #ifdef SOUND_WITH_SAME_MORPH
-                if(job==Job::Morph)clip=morph(*s,c,e,error);
+                if(job==Job::Morph)clip=morph(*s,c,e,error,resident);
                 else
 #endif
                 if(job==Job::Transform||job==Job::Extend){
@@ -821,6 +942,7 @@ std::string status_description(void* p){
         status+="\nStage: "+std::string(s.stage)+" | Last generation: "+std::to_string(s.generation_ms)+" ms";
         status+="\nCurrent buffer: "+std::to_string(s.buffer_frames*1000/rate)+" ms | Next clip: "+std::to_string(s.next_frames*1000/rate)+" ms";
         status+="\nPlayed: "+std::to_string(s.session_frames/rate)+" s | Underruns: "+std::to_string(s.underruns);
+        if(s.resident_active)status+="\nSAME-S warm | Requests: "+std::to_string(s.resident_requests.load())+" | Graph pairs: "+std::to_string(s.resident_graph_builds.load());
         if(s.adaptive_session)status+="\nReserve: "+std::to_string(s.reserve_frames*1000/rate)+" ms | "+std::to_string(s.queued_clips)+"/"+std::to_string(s.target_clips)+" clips"+(s.prefilling?" | Prefilling":"");}
     return status;
 }
@@ -963,6 +1085,13 @@ void buffer_status(void* p,calldata_t* d){
     calldata_set_int(d,"reserve_ms",s.reserve_frames*1000/rate);
     calldata_set_int(d,"prefill_ms",s.prefill_frames*1000/rate);
 }
+#ifdef SOUND_WITH_SAME_MORPH
+void resident_status(void* p,calldata_t* d){
+    auto& s=*static_cast<State*>(p);
+    calldata_set_int(d,"starts",s.resident_starts);calldata_set_int(d,"requests",s.resident_requests);
+    calldata_set_int(d,"graph_builds",s.resident_graph_builds);calldata_set_int(d,"active",s.resident_active?1:0);
+}
+#endif
 void* create(obs_data_t* d,obs_source_t* source){
     try{
         auto s=std::make_unique<State>(source);update(s.get(),d);
@@ -976,6 +1105,10 @@ void* create(obs_data_t* d,obs_source_t* source){
           "void sound_diffusion_status_v3(out int started, out int completed, out int played, out int failed, out int progress, out string message, out int captured, out int automated, out int sound_cues, out int sight_cues, out bool continuous, out bool finishing, out bool generating, out bool next_ready, out int generation_ms, out int buffer_ms, out int played_ms, out int underruns, out int next_ms, out string stage)",status_v3,s.get());
         proc_handler_add(obs_source_get_proc_handler(source),
           "void sound_diffusion_buffer_v1(out bool adaptive, out bool prefilling, out int queued_clips, out int target_clips, out int reserve_ms, out int prefill_ms)",buffer_status,s.get());
+#ifdef SOUND_WITH_SAME_MORPH
+        proc_handler_add(obs_source_get_proc_handler(source),
+          "void sound_same_resident_v1(out int starts, out int requests, out int graph_builds, out int active)",resident_status,s.get());
+#endif
         return s.release();
     }catch(...){return nullptr;}
 }

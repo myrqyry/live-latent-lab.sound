@@ -39,6 +39,15 @@ int main(int argc,char**argv){
     auto* d=obs_data_create();obs_data_set_string(d,"models_dir",argv[3]);obs_data_set_string(d,"morph_a",argv[4]);obs_data_set_string(d,"morph_b",argv[5]);obs_data_set_double(d,"morph_mix",.5);
     auto* s=obs_source_create("sound_audio_diffusion_source","Morph fixture",d,nullptr);
     if(!s)return 6;
+    const bool resident=std::getenv("SOUND_SAME_RESIDENT_OBS")!=nullptr;
+    auto resident_status=[&](const char* key){
+        calldata_t v{};const bool ok=proc_handler_call(obs_source_get_proc_handler(s),"sound_same_resident_v1",&v);
+        const auto result=ok?calldata_int(&v,key):-1;calldata_free(&v);return result;
+    };
+    if(resident&&resident_status("starts")<0){
+        puts("SAME_RESIDENT_OBS unavailable");
+        obs_source_release(s);obs_data_release(d);obs_wait_for_destroy_queue();obs_shutdown();return 8;
+    }
     Capture c;obs_source_add_audio_capture_callback(s,capture,&c);obs_set_output_source(1,s);obs_source_set_audio_active(s,true);
     std::this_thread::sleep_for(350ms);
     bool available=click(s,"morph");
@@ -75,6 +84,32 @@ int main(int argc,char**argv){
             printf("SAME_TEXTURE_OBS mode=%s pass=%d\n",mode,pass);textures&=pass;
         }
         retry=retry&&textures;
+        if(resident){
+            const bool reused=resident_status("starts")==1&&resident_status("requests")==3&&resident_status("graph_builds")==1;
+            const bool warm=resident_status("active")==1;
+            click(s,"stop");
+            for(int i=0;i<100&&resident_status("active")!=0;++i)std::this_thread::sleep_for(20ms);
+            const bool closed=resident_status("active")==0;
+            const bool restarted=click(s,"morph")&&wait(s,"played",++played)&&resident_status("starts")==2&&resident_status("requests")==4;
+            // Let the normal idle expiry run, without a Stop or destruction.
+            for(int i=0;i<550&&resident_status("active")!=0;++i)std::this_thread::sleep_for(20ms);
+            const bool idle=resident_status("active")==0;
+            printf("SAME_RESIDENT_OBS reused=%d warm=%d closed=%d restarted=%d idle=%d\n",reused,warm,closed,restarted,idle);
+            const auto before_cancel=c.frames.load();
+            obs_data_set_string(d,"device","cpu");obs_source_update(s,d);click(s,"morph");
+            bool started=false;
+            for(int i=0;i<200&&!started;++i){
+                started=resident_status("active")==1&&resident_status("starts")==3;
+                if(!started)std::this_thread::sleep_for(5ms);
+            }
+            click(s,"stop");
+            for(int i=0;i<100&&resident_status("active")!=0;++i)std::this_thread::sleep_for(20ms);
+            const bool resident_cancel=started&&resident_status("active")==0&&c.frames==before_cancel&&counter(s,"failed")==1;
+            obs_data_set_string(d,"device","auto");obs_source_update(s,d);
+            const bool recovered=click(s,"morph")&&wait(s,"played",++played)&&resident_status("starts")==4&&resident_status("requests")==5;
+            printf("SAME_RESIDENT_OBS_CANCEL cancelled=%d recovered=%d\n",resident_cancel,recovered);
+            retry=retry&&reused&&warm&&closed&&restarted&&idle&&resident_cancel&&recovered;
+        }
     }
     bool ok=available&&generated&&audio&&replay&&missing&&recovered&&cancelled&&retry;
     printf("SA3_MORPH_OBS available=%d generated=%d audio=%d replay=%d missing=%d recovered=%d pass=%d\n",available,generated,audio,replay,missing,recovered,ok);

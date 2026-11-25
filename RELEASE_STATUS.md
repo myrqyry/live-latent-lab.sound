@@ -440,3 +440,28 @@ checkpoint. Separate pre-existing YAMNet delegate and TTS provider
 changes were inspected and preserved outside this commit; their actual
 device qualification and production configuration still require
 separate reconciliation.
+
+## Resident SAME-S texture worker (2026-11-24)
+
+Staged module SHA256: 10e7c301ce6261cd14347bdf5b3100473b8668bf72546c5dac43e5d834d68343.
+Helper SHA256: 78bcc539f55989a605cb704768ea1c367dbcba5f1d3d880264f1cafd13a212cc.
+Single-input textures use one retained model/graph-pair context across
+requests, bounded reusable host buffers and private local socket PCM
+transport. One warm context across sources; another source uses the
+one-shot fallback. Idle context may overlap other source GPU allocation.
+Actual OBS texture/morph runner passed reuse across three modes, Stop,
+restart, eight-second idle release, CPU request cancellation and CUDA
+recovery. Standalone CPU/CUDA tests passed changed input, identical
+repeat output, geometry replacement, invalid mode/nonfinite sample
+rejection and clean EOF. Warm 2-second CUDA compute took 13–14 ms in the
+initial run. Final CUDA short-block test completed 60 changing 16384-frame
+requests with one graph pair for that geometry: median wall 8.6 ms,
+95th percentile 14.3 ms, max 16.5 ms. Observed warm worker GPU allocation
+368 MiB. These are compute/transport results, not end-to-end live latency.
+Manual original SA3 generation/replay/cancel/missing/recovery and disabled
+checks passed at both sample rates; Qt dock, six-effect registry, and
+quarantine passed. No new weights or runtime. Streaming capture, decoder
+context/overlap handling, seam quality, cross-source contention test and
+full expanded Sound acceptance remain open. Existing separate YAMNet/TTS
+work is excluded from this commit; the staged module was built in the
+working tree containing the pre-existing YAMNet change.
