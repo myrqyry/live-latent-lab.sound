@@ -121,12 +121,14 @@ int main(int argc,char** argv){
     auto* settings=obs_data_create();
     obs_data_set_string(settings,"mediapipe_library",argv[3]);
     obs_data_set_string(settings,"yamnet_model",argv[4]);
+    const std::string device=std::getenv("SOUND_YAMNET_DEVICE")?std::getenv("SOUND_YAMNET_DEVICE"):"cpu";
+    obs_data_set_string(settings,"yamnet_device",device.c_str());
     auto* filter=obs_source_create("yamnet_classifier_source","YAMNet-worker",settings,nullptr);
     if(!source||!filter)return 6;
     obs_properties_t* properties=obs_get_source_properties("yamnet_classifier_source");
     const bool props=properties &&
         obs_properties_get(properties,"mediapipe_library") &&
-        obs_properties_get(properties,"yamnet_model");
+        obs_properties_get(properties,"yamnet_model")&&obs_properties_get(properties,"yamnet_device");
     if(properties)obs_properties_destroy(properties);
     obs_source_filter_add(source,filter);
     obs_set_output_source(1,source);
@@ -145,7 +147,23 @@ int main(int argc,char** argv){
     }
     std::printf("SOUND_YAMNET_WORKER_READY=%d status=%s\n",
                 int(ready.status=="ready"),ready.status.c_str());
-    if(ready.status!="ready")return 7;
+    calldata_t backend{};
+    bool backend_ok=proc_handler_call(obs_source_get_proc_handler(filter),"sound_yamnet_device_v1",&backend);
+    const char* requested=calldata_string(&backend,"requested");const char* selected=calldata_string(&backend,"selected");
+    backend_ok=backend_ok&&requested&&device==requested&&selected&&std::string(selected)=="cpu";
+    printf("SOUND_YAMNET_DEVICE requested=%s selected=%s pass=%d\n",requested?requested:"",selected?selected:"",backend_ok);
+    calldata_free(&backend);
+    if(std::getenv("SOUND_YAMNET_EXPECT_GPU_FAILURE")){
+        Stats dry;
+        stream(source,35,true,hz,&dry);
+        bool ok=device=="gpu"&&ready.status=="error"&&!ready.available&&ready.windows==0&&dry.frames>=hz/5&&
+            dry.l2.load()>0.001&&dry.r2.load()>0.001;
+        printf("SOUND_YAMNET_EXPLICIT_GPU_FAILURE dry_frames=%llu pass=%d\n",(unsigned long long)dry.frames.load(),ok);
+        obs_source_filter_remove(source,filter);obs_source_release(filter);obs_data_release(settings);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(source);obs_source_release(source);obs_wait_for_destroy_queue();obs_shutdown();
+        return ok?0:1;
+    }
+    if(ready.status!="ready"||!backend_ok)return 7;
     Stats silence_audio;
     stream(source,115,false,hz,&silence_audio);
     Result silence=await(filter,1);

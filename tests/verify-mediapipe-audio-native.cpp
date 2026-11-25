@@ -7,10 +7,11 @@
 #include <vector>
 
 int main(int argc,char** argv) {
-    if(argc!=3) {
-        std::cerr<<"usage: native-test LIB MODEL\n";
+    if(argc!=3&&argc!=4) {
+        std::cerr<<"usage: native-test LIB MODEL [auto|cpu|gpu]\n";
         return 2;
     }
+    const std::string device=argc==4?argv[3]:"cpu";
     stts::mp_audio_123::Classifier classifier;
     std::string error;
     // Wrong paths must fail closed; neither fabricated categories nor a
@@ -28,10 +29,12 @@ int main(int argc,char** argv) {
 
     error.clear();
     const auto start=std::chrono::steady_clock::now();
-    if(!classifier.open(argv[1],argv[2],error)) {
+    if(!classifier.open(argv[1],argv[2],error,1024,device)) {
         std::cerr<<"Failed to open YAMNet: "<<error<<"\n";
         return 3;
     }
+    std::cout<<"YAMNET_DELEGATE="<<classifier.delegate()<<"\n";
+    assert(device=="auto"||classifier.delegate()==device);
     std::cout<<"YAMNET_INIT_MS="<<std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now()-start).count()<<"\n";
     auto infer=[&](const char* name,const std::vector<float>& pcm) {
@@ -61,7 +64,7 @@ int main(int argc,char** argv) {
     classifier.close();
     assert(!classifier.ready());
     error.clear();
-    assert(classifier.open(argv[1],argv[2],error));
+    assert(classifier.open(argv[1],argv[2],error,1024,device));
     assert(classifier.ready());
     classifier.close();
     std::cout<<"MEDIAPIPE_YAMNET_NATIVE_SEMANTIC_PASS=YES\n";

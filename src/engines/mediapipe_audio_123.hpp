@@ -95,8 +95,11 @@ public:
     ~Classifier() { close(); }
 
     bool open(const std::string& library_path, const std::string& model_path,
-              std::string& error, int max_results=5) {
+              std::string& error, int max_results=5,const std::string& device="cpu") {
         close();
+        if(device!="auto"&&device!="gpu"&&device!="cpu"){
+            error="Unknown YAMNet compute delegate";return false;
+        }
         if(max_results<1||max_results>1024){error="Invalid maximum category count";return false;}
         max_results_=max_results;
         if(library_path.empty()||model_path.empty()) {
@@ -126,21 +129,33 @@ public:
             error="MediaPipe 1.2.3 Audio Classifier C symbols not found";
             close();return false;
         }
-        Options config{};
-        config.base_options.model_asset_path=model_path.c_str();
-        config.base_options.delegate=1; // CPU
-        config.base_options.host_system=1; // Linux
-        config.classifier_options.max_results=max_results_;
-        char* message=nullptr;
-        const int status=create_(&config,&classifier_,&message);
-        if(status!=0 || !classifier_) {
-            error=message?message:"MediaPipe classifier creation failed (status "+
-                std::to_string(status)+")";
+        auto try_delegate=[&](int requested,const char* name){
+            Options config{};
+            config.base_options.model_asset_path=model_path.c_str();
+            config.base_options.delegate=requested;
+            config.base_options.host_system=1;
+            config.classifier_options.max_results=max_results_;
+            char* message=nullptr;
+            const int status=create_(&config,&classifier_,&message);
+            const bool ok=status==0&&classifier_;
+            if(!ok){
+                error=message?message:"MediaPipe classifier creation failed (status "+
+                    std::to_string(status)+")";
+            }
             if(message)free_error_(message);
-            close();return false;
-        }
-        if(message)free_error_(message);
-        return true;
+            if(ok){delegate_=name;error.clear();return true;}
+            if(classifier_){
+                char* close_message=nullptr;
+                close_(classifier_,&close_message);
+                if(close_message)free_error_(close_message);
+                classifier_=nullptr;
+            }
+            return false;
+        };
+        if(device!="cpu"&&try_delegate(2,"gpu"))return true;
+        if(device=="gpu"){close();return false;}
+        if(try_delegate(1,"cpu"))return true;
+        close();return false;
     }
 
     bool classify(const float* samples, size_t count, double sample_rate,
@@ -187,19 +202,21 @@ public:
         return true;
     }
     bool ready() const {return classifier_!=nullptr;}
+    const std::string& delegate()const{return delegate_;}
     void close() {
         if(classifier_ && close_) {
             char* message=nullptr;
             close_(classifier_,&message);
             if(message && free_error_)free_error_(message);
         }
-        classifier_=nullptr;
+        classifier_=nullptr;delegate_.clear();
         if(library_)dlclose(library_);
         library_=nullptr;
         create_=nullptr;classify_=nullptr;close_result_=nullptr;
         close_=nullptr;free_error_=nullptr;
     }
 private:
+    std::string delegate_;
     int max_results_=5;
     void* library_=nullptr;
     void* classifier_=nullptr;

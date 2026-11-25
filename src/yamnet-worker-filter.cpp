@@ -28,7 +28,7 @@ struct YamnetWorker {
         : sample_rate(rate),channels(channel_count),ring(size_t(rate)*3) {}
     const uint32_t sample_rate,channels;
     stts::RingBuffer ring;
-    std::string library,model;
+    std::string library,model,device="cpu",delegate;
     std::atomic<bool> stopping{false},overloaded{false},started{false};
     std::atomic<int64_t> dropped{0},callback_calls{0};
     std::thread worker;
@@ -50,7 +50,7 @@ void fail(YamnetWorker* s,const std::string& message) {
 void run_worker(YamnetWorker* s) {
     stts::mp_audio_123::Classifier classifier;
     std::string error;
-    if(!classifier.open(s->library,s->model,error,1024)) {
+    if(!classifier.open(s->library,s->model,error,1024,s->device)) {
         fail(s,"Cannot open native classifier: "+error);return;
     }
     const resample_info input_info={s->sample_rate,AUDIO_FORMAT_FLOAT_PLANAR,SPEAKERS_MONO};
@@ -62,11 +62,11 @@ void run_worker(YamnetWorker* s) {
     size_t used=0;
     {
         std::lock_guard<std::mutex> lock(s->snapshot_mutex);
-        s->status="ready";
+        s->status="ready";s->delegate=classifier.delegate();
     }
     s->started.store(true,std::memory_order_release);
     blog(LOG_INFO,"[Sound/YAMNet] SOUND_YAMNET_WORKER_20261113_P641 native "
-                  "classifier ready (%u Hz to 16000 Hz)",s->sample_rate);
+                  "classifier ready (%u Hz to 16000 Hz), requested=%s delegate=%s",s->sample_rate,s->device.c_str(),s->delegate.c_str());
     while(!s->stopping.load(std::memory_order_acquire) &&
           !s->overloaded.load(std::memory_order_acquire)){
         const size_t count=s->ring.read(incoming.data(),incoming.size());
@@ -187,9 +187,17 @@ void category_score(void* ptr,calldata_t* call){
     calldata_set_float(call,"score",score);
     calldata_set_bool(call,"available",available);
 }
+void device_status(void* ptr,calldata_t* d){
+    auto* s=static_cast<YamnetWorker*>(ptr);if(!s)return;
+    std::lock_guard lock(s->snapshot_mutex);
+    calldata_set_string(d,"requested",s->device.c_str());
+    calldata_set_string(d,"selected",s->delegate.c_str());
+    calldata_set_string(d,"status",s->status.c_str());
+}
 void defaults(obs_data_t* s){
     obs_data_set_default_string(s,"mediapipe_library","");
     obs_data_set_default_string(s,"yamnet_model","");
+    obs_data_set_default_string(s,"yamnet_device","cpu");
 }
 obs_properties_t* properties(void*){
     auto* props=obs_properties_create();
@@ -198,11 +206,15 @@ obs_properties_t* properties(void*){
        "Shared library (*.so)",nullptr);
     obs_properties_add_path(props,"yamnet_model","Existing YAMNet (.tflite)",
        OBS_PATH_FILE,"Model (*.tflite)",nullptr);
+    auto* device=obs_properties_add_list(props,"yamnet_device","Compute delegate",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(device,"CPU (recommended)","cpu");
+    obs_property_list_add_string(device,"Auto (GPU then CPU)","auto");
+    obs_property_list_add_string(device,"GPU (experimental; no fallback)","gpu");
     obs_properties_add_text(props,"status_note",
-       "Experimental; recreate filter to change model/runtime. Audio passes "
+       "Experimental; recreate filter to change model/runtime/delegate. Audio passes "
        "through unmodified. Read-only sound_yamnet_read_v1 procedure exposes "
        "label, score, window count, dropped samples, timing and status. "
-       "No caption overlay yet.",OBS_TEXT_INFO);
+       "Selected delegate: sound_yamnet_device_v1. No caption overlay yet.",OBS_TEXT_INFO);
     return props;
 }
 const char* get_name(void*){return "LLL.sound Native YAMNet (experimental)";}
@@ -222,6 +234,8 @@ void* create(obs_data_t* settings,obs_source_t* source){
     const char* model=obs_data_get_string(settings,"yamnet_model");
     if(lib)s->library=lib;
     if(model)s->model=model;
+    const std::string device=obs_data_get_string(settings,"yamnet_device");
+    s->device=device.empty()?"cpu":device;
     auto* handler=obs_source_get_proc_handler(source);
     if(!handler)return nullptr;
     try{s->worker=std::thread(worker_entry,s.get());}
@@ -230,6 +244,7 @@ void* create(obs_data_t* settings,obs_source_t* source){
        "void sound_yamnet_read_v1(out string label, out float score, "
        "out int windows, out int dropped_samples, out int inference_ms, "
        "out int callback_calls, out string status, out bool available)",snapshot,s.get());
+    proc_handler_add(handler,"void sound_yamnet_device_v1(out string requested, out string selected, out string status)",device_status,s.get());
     proc_handler_add(handler,"void sound_yamnet_list_v1(in ptr inventory)",list_categories,s.get());
     proc_handler_add(handler,"void sound_yamnet_score_v1(in string category, out float score, out bool available)",category_score,s.get());
     sound_signals::register_broker(source);

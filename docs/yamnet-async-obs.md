@@ -101,3 +101,32 @@ The live multi-stem separation work remains a separate accepted goal;
 YAMNet is not a substitute. Do not install or push this candidate as
 if the complete Sound audio feature were ready. Keep existing scene
 collections, plugins, model weights and installed Sound quarantined.
+
+
+## Delegate selection (2026-11-24)
+
+The filter now exposes **Compute delegate** with CPU (default), Auto
+(GPU then CPU) and explicit experimental GPU (no fallback). Model,
+runtime and delegate are chosen at creation; recreate the filter to
+change them. CPU is the recommended mode on the qualified Linux setup.
+The read-only `sound_yamnet_device_v1` procedure reports requested,
+selected and status separately from the existing result ABI.
+A failed explicit GPU request publishes an error, not a CPU result.
+
+The local MediaPipe Tasks 1.2.3 and valid YAMNet model were checked
+directly and through actual OBS at both 44.1/48 kHz. CPU classification
+took about 2–3 ms per one-second input. The available GPU delegate failed
+graph initialization; Auto successfully selected CPU. No claim of GPU
+acceleration is made for this environment. An incomplete cached model
+was rejected by the native runtime; the qualified local 4,126,810-byte
+model has SHA256
+`4d8b4a53282dc83ef04e3e7dbc4fbc98082e34e44ed798e16c3a0cdd4c584faf`.
+No model files or user scene settings are overwritten.
+
+For reproducible current acceptance use `tests/verify-public-linux.sh`
+with SOUND_MEDIAPIPE_LIB and SOUND_YAMNET_MODEL, or build the
+`tests/verify-yamnet-obs-audio.cpp` probe against libobs and run with
+MODULE DATA LIB MODEL. Set SOUND_YAMNET_DEVICE=auto to test fallback
+on this environment, or SOUND_YAMNET_DEVICE=gpu and
+SOUND_YAMNET_EXPECT_GPU_FAILURE=1 to verify dry error handling on a
+known-unsupported GPU configuration.
