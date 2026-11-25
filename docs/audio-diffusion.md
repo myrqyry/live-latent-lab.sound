@@ -86,6 +86,54 @@ continuous playback at both rates, including a competing 60-second
 32-step generation at 44.1 kHz. The latter is a specific same-plugin
 contention test, not a comprehensive GPU-load qualification.
 
+### Neural latent morph
+
+Use the optional `-DSOUND_SAME_SOURCE_DIR=/path/to/pinned/sa3.cpp`
+with the existing qualified CUDA/private GGML runtime. This builds a small
+native helper, `sound-sa3-morph`, next to libsa3 in sa3-runtime. The build
+checks the sa3.cpp and GGML revisions and tracked cleanliness. The helper
+checks the installed Small-Music SAME-S F16 model size and SHA256, uses
+only the autoencoder (no T5Gemma or DiT), and reuses existing model weights.
+It loads no new inference runtime and requires no Python. Upstream SAME
+implementation comes from the MIT-licensed pinned sa3.cpp headers.
+Model license remains separate. No ONNX model was imported.
+
+In Audio Diffusion source properties, open **Neural latent morph (SAME-S)**.
+Choose two stereo PCM16 WAVs at 44.1 kHz of identical length (8192 samples
+through 12 seconds). Choose Latent blend 0–1 or enable the ramp from A
+toward the selected blend. Click Morph and play. The helper encodes
+both signals into SAME's 256-dimensional latent sequence, interpolates
+those features and decodes the result. The output has the original
+duration, bounded amplitude and exact stereo format. Fixed blend 0 or 1
+still passes through neural reconstruction; it is not bit-perfect bypass.
+The ramp changes the blend over latent frames, not PCM gain.
+The current family/step/negative prompt settings do not affect morphing.
+Auto prefers CUDA; CPU can be selected explicitly. No sample format
+conversion, automatic truncation of different input durations, live
+source morph, beat alignment, or per-frame slider scrubbing is provided.
+
+The OBS worker launches a fixed local executable with argv (no shell),
+using a private temporary output directory, and shares the existing
+inference gate with diffusion. It waits for the result off the audio/UI
+threads; cancellation terminates and reaps only its own helper process.
+A 45-second deadline bounds the helper. Successful results use the
+existing playout and replay cache. Existing inputs remain unchanged.
+A helper crash or validation failure cannot directly abort OBS.
+This is batch generation, not a low-latency inline audio effect.
+
+The executable can also be used directly:
+`sound-sa3-morph MODEL A.wav B.wav 0.5 output.wav auto fixed`
+or use `ramp` and an explicit `cpu` or `gpu:CUDA0` device. The standalone
+command refuses to overwrite an output file.
+
+Run `tests/verify-sa3-morph.sh` with SOUND_SA3_STAGE,
+SOUND_SA3_MODELS, SOUND_SAME_INPUT_A and SOUND_SAME_INPUT_B (two
+different two-second WAVs). It measures actual endpoint reconstruction,
+GPU/CPU waveform agreement, distinction from PCM crossfade, ramp output,
+safe invalid-input behavior, real OBS playback/replay and cancellation
+recovery. Subjective quality and live neural granular processing are
+separate qualification steps.
+
 ### Playback and audio-to-audio
 
 - Generate and play: prompt, optional negative prompt, 1–60 s, 1–32 steps,

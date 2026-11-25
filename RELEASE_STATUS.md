@@ -391,3 +391,31 @@ arbitrary GPU contention, sustained slower-than-real-time generation,
 or perceptual seams; full expanded Sound acceptance and indefinite soak
 remain outstanding. The adaptive setting applies at the next start and
 adds prompt-to-playback latency. No change to steps or quality settings.
+
+## Native SAME-S latent morph (2026-11-24)
+
+Tested staged module SHA256: e2dd86cd5966d45a1294e4f4bc0fe1e3df0c55a600b16eee51d551e6997fb02e.
+Native isolated helper SHA256: 546850f3f12d71ff11dfdf57677bf33e9fad6b556e18314e1ede01b6f01e429c.
+Opt-in SOUND_SAME_SOURCE_DIR builds from the existing clean pinned
+sa3.cpp/GGML checkout, reuses the private CUDA GGML runtime, and
+verifies the existing Small-Music SAME-S F16 weight checksum at each
+invocation. No new model downloads or ONNX dependencies. The helper
+supports fixed and ramped latent blends of equal-length stereo
+44.1 kHz PCM16 WAVs, 8192 samples through 12 seconds. CPU and CUDA
+outputs on two distinct 2-second fixtures correlated 0.999888;
+endpoint waveform correlations were 0.994738 and 0.941242.
+Latent midpoint differed from the PCM crossfade of decoded endpoints
+by 0.056186 RMS; the ramp differed from fixed by 0.092163 RMS.
+The 12-second CUDA fixture took 167 ms to encode both inputs and
+41 ms to decode, excluding model verification and loading.
+The 2-second qualified helper run took 80 ms / 8 ms on CUDA and
+351 ms / 177 ms on CPU. Actual OBS morph, replay, missing WAV rejection,
+cancellation during the CPU worker and retry passed at 48 kHz.
+Standalone helper rejects existing output and invalid model.
+CMake packaging, relative runtime lookup, six-effect registry,
+original manual generation/cancellation/recovery at both sample rates,
+dock regression, and default quarantine passed. The repeatable morph
+acceptance runner passed. The full expanded Sound suite, adaptive
+continuous soak with simultaneous morph, manual GUI interaction,
+subjective morph quality and live inline latent processing are not
+qualified. No changes to existing SA3 model weights or scene settings.

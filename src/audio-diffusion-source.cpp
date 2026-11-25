@@ -21,6 +21,15 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef SOUND_WITH_SAME_MORPH
+#include <spawn.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <cerrno>
+extern char** environ;
+#endif
 
 namespace {
 using namespace std::chrono_literals;
@@ -32,6 +41,7 @@ struct Config {
     std::string models,prompt,negative,device,variant="small-music",input_file,input_source,alternate_prompt,
         lora_a,lora_b,sound_channel,sight_channel;
     float lora_a_strength=1.f,lora_b_strength=1.f;
+    std::string morph_a,morph_b;float morph_mix=.5f;bool morph_ramp=false;
     bool automate_b=false,capture_muted=false,adaptive_buffer=false;
     double capture_seconds=6;
     float transform_noise=.5f;
@@ -44,7 +54,7 @@ struct Clip {
     size_t frames=0;
     uint32_t sample_rate=rate;
 };
-enum class Job { None, Generate, Replay, Continuous, Transform, Extend };
+enum class Job { None, Generate, Replay, Continuous, Transform, Extend, Morph };
 struct State {
     explicit State(obs_source_t* s):source(s){}
     obs_source_t* source;
@@ -654,6 +664,63 @@ void continuous(State& s,Config c,uint64_t epoch){
         return;
     }
 }
+#ifdef SOUND_WITH_SAME_MORPH
+std::shared_ptr<Clip> morph(State& s,const Config& c,uint64_t epoch,std::string& error){
+    GenerationStatus generation(s,epoch,false);
+    if(!generation.token.current())return {};
+    // Existing PCM reader bounds size and validates RIFF before spawning.
+    auto a=read_wav(c.morph_a,error);if(!a)return {};
+    auto b=read_wav(c.morph_b,error);if(!b)return {};
+    if(a->sample_rate!=rate||b->sample_rate!=rate||a->frames!=b->frames||
+       a->frames<8192||a->frames>12*rate){error="Morph needs equal 44.1 kHz WAVs, 0.19–12 seconds";return {};}
+    std::unique_lock<std::timed_mutex> gate(inference_gate,std::defer_lock);
+    while(generation.token.current()&&!gate.try_lock_for(50ms)){}
+    if(!generation.token.current()||!gate.owns_lock())return {};
+    auto helper=std::filesystem::path(obs_get_module_binary_path(obs_current_module())).parent_path()/"sa3-runtime/sound-sa3-morph";
+    const auto model=std::filesystem::path(c.models)/"stable-audio-3-small-music-same-s-v1.0-F16.gguf";
+    std::array<char,32> pattern{};std::strcpy(pattern.data(),"/tmp/sound-sa3-morph.XXXXXX");
+    const auto* dir=mkdtemp(pattern.data());
+    if(!dir){error="Cannot create private morph workspace";return {};}
+    struct Cleanup{std::filesystem::path dir;~Cleanup(){std::error_code ec;std::filesystem::remove_all(dir,ec);}} cleanup{dir};
+    const auto output=cleanup.dir/"result.wav",log=cleanup.dir/"worker.log";
+    std::array<std::string,8> args={helper.string(),model.string(),c.morph_a,c.morph_b,
+        std::to_string(c.morph_mix),output.string(),c.device=="cpu"?"cpu":"auto",c.morph_ramp?"ramp":"fixed"};
+    std::array<char*,9> argv{};
+    for(size_t i=0;i<args.size();++i)argv[i]=args[i].data();
+    posix_spawn_file_actions_t actions;
+    if(posix_spawn_file_actions_init(&actions)){error="Cannot initialize morph worker";return {};}
+    struct Actions{posix_spawn_file_actions_t* p;~Actions(){posix_spawn_file_actions_destroy(p);}} guard{&actions};
+    if(posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0)||
+       posix_spawn_file_actions_addopen(&actions,STDOUT_FILENO,log.c_str(),O_WRONLY|O_CREAT|O_EXCL,0600)||
+       posix_spawn_file_actions_adddup2(&actions,STDOUT_FILENO,STDERR_FILENO)){
+        error="Cannot redirect morph worker";return {};
+    }
+    {std::lock_guard lock(s.mutex);if(!s.current(epoch))return {};s.stage="morphing";s.message="Encoding / mixing / decoding";}
+    pid_t pid=0;
+    const int spawned=posix_spawn(&pid,helper.c_str(),&actions,nullptr,argv.data(),environ);
+    if(spawned){error="Cannot start native SAME-S worker";return {};}
+    int status=0;
+    const auto deadline=std::chrono::steady_clock::now()+45s;
+    while(true){
+        auto r=waitpid(pid,&status,WNOHANG);
+        if(r==pid)break;
+        if(r<0&&errno!=EINTR){error="Cannot wait for morph worker";return {};}
+        if(!generation.token.current()||std::chrono::steady_clock::now()>=deadline){
+            // This PID is our unreaped child, not an arbitrary user process.
+            kill(pid,SIGKILL);while(waitpid(pid,&status,0)<0&&errno==EINTR){}
+            error="Morph cancelled or timed out";return {};
+        }
+        std::unique_lock lock(s.mutex);s.cv.wait_for(lock,20ms,[&]{return !s.current(epoch);});
+    }
+    if(!s.current(epoch))return {};
+    if(!WIFEXITED(status)||WEXITSTATUS(status)!=0){error="Native morph failed; check equal stereo 44.1 kHz WAVs and verified SAME-S model";return {};}
+    auto clip=read_wav(output.string(),error);
+    if(!clip||clip->sample_rate!=rate||clip->frames!=a->frames){error="Invalid native morph output";return {};}
+    generation.succeeded=true;
+    blog(LOG_INFO,"[Sound/Morph] Native SAME-S morph completed (%zu frames)",clip->frames);
+    return clip;
+}
+#endif
 void worker(State* s){
     while(true){
         Config c;Job job;uint64_t e;std::shared_ptr<const Clip> clip;
@@ -664,9 +731,13 @@ void worker(State* s){
         SessionEnd end{*s,e};
         try{
             if(job==Job::Continuous){continuous(*s,c,e);continue;}
-            if(job==Job::Generate||job==Job::Transform||job==Job::Extend){
+            if(job==Job::Generate||job==Job::Transform||job==Job::Extend||job==Job::Morph){
                 {std::lock_guard lock(s->mutex);if(!s->current(e))continue;++s->started;s->progress=0;s->message="Generating";}
                 std::string error;
+#ifdef SOUND_WITH_SAME_MORPH
+                if(job==Job::Morph)clip=morph(*s,c,e,error);
+                else
+#endif
                 if(job==Job::Transform||job==Job::Extend){
                     if(!c.input_source.empty())clip=capture_input(*s,c,e,error);
                     else if(!c.input_file.empty())clip=read_wav(c.input_file,error);
@@ -704,6 +775,9 @@ void update(void* p,obs_data_t* d){
     c.models=obs_data_get_string(d,"models_dir");c.prompt=obs_data_get_string(d,"prompt");
     c.negative=obs_data_get_string(d,"negative_prompt");c.device=obs_data_get_string(d,"device");
     c.variant=std::string(obs_data_get_string(d,"variant"))=="small-sfx"?"small-sfx":"small-music";
+    c.morph_a=obs_data_get_string(d,"morph_a");c.morph_b=obs_data_get_string(d,"morph_b");
+    auto mix=obs_data_get_double(d,"morph_mix");c.morph_mix=std::isfinite(mix)?float(std::clamp(mix,0.,1.)):.5f;
+    c.morph_ramp=obs_data_get_bool(d,"morph_ramp");
     c.input_file=obs_data_get_string(d,"input_file");c.input_source=obs_data_get_string(d,"input_source");
     c.alternate_prompt=obs_data_get_string(d,"alternate_prompt");
     c.lora_a=obs_data_get_string(d,"lora_a");c.lora_b=obs_data_get_string(d,"lora_b");
@@ -754,6 +828,9 @@ bool make(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Generat
 bool start_continuous(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Continuous);}
 bool transform(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Transform);}
 bool extend(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Extend);}
+#ifdef SOUND_WITH_SAME_MORPH
+bool morph_button(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Morph);}
+#endif
 bool replay(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Replay);}
 bool finish_segment(obs_properties_t*,obs_property_t*,void* p){
     if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);
@@ -765,6 +842,7 @@ bool stop(obs_properties_t*,obs_property_t*,void* p){
 }
 void defaults(obs_data_t* d){
     obs_data_set_default_double(d,"capture_seconds",6);
+    obs_data_set_default_double(d,"morph_mix",.5);
     obs_data_set_default_bool(d,"adaptive_buffer",false);
     obs_data_set_default_double(d,"lora_a_strength",1);obs_data_set_default_double(d,"lora_b_strength",1);
     obs_data_set_default_string(d,"variant","small-music");obs_data_set_default_double(d,"transform_noise",.5);
@@ -802,6 +880,15 @@ obs_properties_t* props(void* p){
     obs_properties_add_float_slider(d,"transform_noise","Transform strength",0,1,.05);
     obs_properties_add_button2(d,"transform","Transform input / last clip",transform,p);
     obs_properties_add_button2(d,"extend","Extend input / last clip",extend,p);
+#ifdef SOUND_WITH_SAME_MORPH
+    auto* morph_props=obs_properties_create();
+    obs_properties_add_path(morph_props,"morph_a","Audio A (stereo 44.1 kHz WAV)",OBS_PATH_FILE,"WAV (*.wav)",nullptr);
+    obs_properties_add_path(morph_props,"morph_b","Audio B (same length)",OBS_PATH_FILE,"WAV (*.wav)",nullptr);
+    obs_properties_add_float_slider(morph_props,"morph_mix","Latent blend",0,1,.01);
+    obs_properties_add_bool(morph_props,"morph_ramp","Ramp from A toward selected blend");
+    obs_properties_add_button2(morph_props,"morph","Morph and play",morph_button,p);
+    obs_properties_add_group(d,"latent_morph","Neural latent morph (SAME-S)",OBS_GROUP_NORMAL,morph_props);
+#endif
     obs_properties_add_button2(d,"stop","Stop / cancel",stop,p);
     auto* advanced=obs_properties_create();
     obs_properties_add_text(advanced,"alternate_prompt","Fade toward prompt (optional)",OBS_TEXT_MULTILINE);
