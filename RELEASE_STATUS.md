@@ -624,3 +624,24 @@ acceptance suite has not been rerun; the staged SA3 morph helper and
 Nemotron runtime differ from the currently installed files. No claim
 of full combined qualification or installation; preserve existing
 runtime files and require appropriate verification before deployment.
+
+## Native RVC private-worker filter (2026-11-25)
+
+Native audio.cpp RVC replaces the quarantined ONNX adapter in the
+explicit rvc gate, retaining source ID stts_rvc_filter. Pinned narrow
+CUDA runtime e485ca410b4ea7f503db58b4ef6bbbf5b43b7b60c145bc4f8d0c10e180b7f977,
+64 MiB, no NCCL, FlashAttention retained. F16 GGUF on disk and F32
+runtime weights. Private socketpair resident process; no listener.
+Real C ABI cold 4957.3 ms, warm 306.6/310.0 ms. Rejected invalid
+pitch, then reused the session. Actual 44.1/48 kHz OBS conversion,
+16 completed hops at each rate, last 305.7/300.5 ms, stereo dry and
+mono wet, zero invalid samples, no pipeline fault. One resident
+session, 1.5s fixed delay, bounded capture, SOLA stitching, delayed
+dry fallback. Missing-runtime and old ONNX selection dry tests
+passed; default empty quarantine and combined seven-effect registry
+passed. Current combined stage includes separate mic removal
+(5df496d); installed module predates it, so stage not installed.
+Default native voice only, no custom model/retrieval UI yet;
+subjective audition, long soak, contention, A/V compensation,
+in-filter worker-crash recovery, and full expanded suite remain
+unqualified. See docs/native-rvc.md and docs/native-rvc-qualification.md.

@@ -24,6 +24,7 @@ All entries use the `LLL.sound` prefix in OBS.
 | TTS | Select Kokoro ONNX/native CUDA, Piper, Chatterbox Nano/native Turbo CPU, TikTok or Edge | Expanded |
 | [Audio Diffusion](docs/audio-diffusion.md) | Local Stable Audio 3 music/SFX, continuous playback, capture and transformation, prompt/LoRA automation, optional resident SAME-S morph/texture and overlapping live wet output | Explicit opt-in |
 | [Neural Timbre (DDSP)](docs/ddsp.md) | CPU-native monophonic timbre transfer, 11 instruments, live morph and independent harmonic/noise synthesis | Explicit opt-in |
+| [Voice Conversion (RVC CUDA)](docs/native-rvc.md) | Native GGUF voice conversion, pitch shift, SOLA and delayed wet/dry | Explicit opt-in, staged |
 
 ### Speech and shared signals
 

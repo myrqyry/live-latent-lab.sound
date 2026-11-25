@@ -19,7 +19,7 @@ extern void register_sound_ddsp();
 extern void register_sound_tts();
 #endif
 #if defined(SOUND_WITH_RVC)
-extern struct obs_source_info stts_rvc_filter;
+extern void register_sound_rvc();
 #endif
 #if defined(SOUND_WITH_MEANVC2_BRIDGE)
 extern struct obs_source_info meanvc2_bridge_source;
@@ -93,7 +93,7 @@ bool obs_module_load(void)
     init_optimizer_tools_menu();
 #endif
 #if defined(SOUND_WITH_RVC)
-    obs_register_source(&stts_rvc_filter);
+    register_sound_rvc();
 #endif
 #if defined(SOUND_WITH_DEMUCS_FILTER)
     obs_register_source(&demucs_filter);
