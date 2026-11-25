@@ -19,6 +19,7 @@ MAX_SECONDS = 90
 # Per-engine native controls. Ranges are qualified application bounds,
 # not a claim that every extreme value produces pleasing speech.
 OPTIONS = {
+    'kokoro_native': {'speed': (1.0, .5, 2.0)},
     'kokoro': {
         'speed': (1.0, .5, 2.0), 'language': ('auto', 'en-us', 'en-gb'),
         'is_phonemes': False, 'trim': True, 'sentence_pause': (.25, 0., 2.),
@@ -171,19 +172,24 @@ def load_kokoro_voice(kokoro, model_path, voices_path, device="auto"):
 
 
 class Engine:
-    def __init__(self, mode, assets, device="auto"):
+    def __init__(self, mode, assets, device="auto", native_library=None, native_model=None):
         self.mode, self.assets = mode, assets
         self.device = device
+        self.native_library, self.native_model = native_library, native_model
         self.models = {}
         self.retention = Retention()
 
     def supports(self, model):
+        if model == 'kokoro_native':
+            return self.mode == 'reader' and bool(self.native_library and self.native_model)
         return model in (('kokoro','piper') if self.mode == 'reader' else ('chatterbox',))
 
     def sweep(self):
         # Called only between HTTP requests, never during inference.
         for model in list(set(self.models) | set(self.retention.records)):
             if self.retention.evictable(model) and model in self.models:
+                if model == "kokoro_native":
+                    self.models[model].close()
                 del self.models[model]
                 gc.collect()
                 if model == 'chatterbox':
@@ -202,8 +208,20 @@ class Engine:
 
 
     def synthesize(self, model, voice, text, options=None):
-        import numpy as np
         options = speech_options(model, {} if options is None else options)
+        if model == 'kokoro_native':
+            from native_kokoro import Worker, validate
+            if not self.supports(model):
+                raise ValueError('Native Kokoro not configured')
+            validate(voice, text, options['speed'])
+            if model not in self.models:
+                self.models[model] = Worker(self.native_library, self.native_model)
+            try:
+                return self.models[model].synthesize(voice, text, options['speed'])
+            except RuntimeError:
+                self.models.pop(model).close()
+                raise
+        import numpy as np
         if model == 'kokoro' and self.mode == 'reader':
             from kokoro_onnx import Kokoro
             if model not in self.models:
@@ -357,7 +375,11 @@ def main():
     parser.add_argument('--assets', type=Path, required=True)
     parser.add_argument('--socket', type=Path, required=True)
     parser.add_argument('--device', choices=['auto','cpu','cuda'], default='auto', help='Reader ONNX provider policy')
+    parser.add_argument("--native-kokoro-library", type=Path)
+    parser.add_argument("--native-kokoro-model", type=Path)
     args = parser.parse_args()
+    if bool(args.native_kokoro_library) != bool(args.native_kokoro_model):
+        parser.error("Native Kokoro requires both library and model")
     os.environ['HF_HUB_OFFLINE'] = '1'
     os.environ['TRANSFORMERS_OFFLINE'] = '1'
     os.umask(0o077)
@@ -368,7 +390,7 @@ def main():
         raise SystemExit('Socket already exists; refusing overwrite')
     args.assets.resolve(strict=True)
     with Server(str(args.socket), Handler) as server:
-        server.engine = Engine(args.mode, args.assets, args.device)
+        server.engine = Engine(args.mode, args.assets, args.device, args.native_kokoro_library, args.native_kokoro_model)
         os.chmod(args.socket, 0o600)
         print('SOUND_TTS_WORKER_READY', args.mode, flush=True)
         try:

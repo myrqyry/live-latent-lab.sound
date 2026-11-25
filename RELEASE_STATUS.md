@@ -503,3 +503,23 @@ Runtime offers CPU but no CUDA provider. Reader service drop-in points
 to the current repository; original unit/old checkout preserved.
 Full legacy expanded acceptance (including online speech, stem and all
 STT backends) was not rerun; the old wrapper still has obsolete counts.
+
+## Native Kokoro CUDA reader (2026-11-24)
+
+Pinned audio.cpp db1869d0d53c7839b79cf7c1a16d36cc20102307, custom
+Kokoro composite, CUDA 12.9 / SM75, no NCCL, ABI 0.2.
+Shared library SHA256 d2996ac2f14dabb7dde15a86de7e23f8fa8091a3e57dfe438ec0840aff756745.
+Staged Sound module SHA256 0ec9cfc0026e580c6fa2814df003be618f9571c2d469a18012c9744784fcda2d.
+Actual native CUDA short speech test: 1308–1817 ms cold including
+checksum and model initialization; 113–206 ms warm on two voice/speed
+requests of differing output lengths. A forced child death failed
+explicitly, then a new request recovered. Actual isolated OBS
+native speech: 109168 frames, 68560 nonzero, 0 invalid, speed and
+cancellation/recovery passed, 3 completed/0 failed. ONNX Kokoro and
+Piper regression and real socket lease eviction/invalid option
+rejection passed. Native policy, existing provider/option/retention
+unit tests, six-effect registry passed. Native has separate opt-in
+voice-matched English and speed controls; other ONNX controls stay
+on ONNX. No claim of subjective parity, immediate kernel cancellation,
+full expanded suite or three-way contention with the final narrow
+runtime (earlier upstream CUDA release contention passed).

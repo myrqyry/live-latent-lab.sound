@@ -80,15 +80,15 @@ int main(int argc,char** argv){
     obs_data_release(cfg);
     if(!source)return 9;
     if(options_test){
-        const char* engines[]={"kokoro","piper","chatterbox","edge","tiktok"};
-        const char* representative[]={"kokoro_speed","piper_length_scale","chatterbox_temperature","edge_rate","tiktok_controls_note"};
+        const char* engines[]={"kokoro","kokoro_native","piper","chatterbox","edge","tiktok"};
+        const char* representative[]={"kokoro_speed","kokoro_native_speed","piper_length_scale","chatterbox_temperature","edge_rate","tiktok_controls_note"};
         auto* settings=obs_source_get_settings(source);
         auto* props=obs_source_properties(source);
         bool picker=true;
-        for(int i=0;i<5;++i){
+        for(int i=0;i<6;++i){
             obs_data_set_string(settings,"backend",engines[i]);
             obs_property_modified(obs_properties_get(props,"backend"),settings);
-            for(int j=0;j<5;++j){
+            for(int j=0;j<6;++j){
                 auto* field=obs_properties_get(props,representative[j]);
                 picker=picker&&field&&obs_property_visible(field)==(i==j);
             }
@@ -305,6 +305,29 @@ int main(int argc,char** argv){
         auto before=audio.frames.load();
         std::this_thread::sleep_for(600ms);
         cancel=count(source,"completed")==2&&audio.frames.load()==before;
+    }
+    if(backend=="kokoro_native"&&first){
+        auto* d=obs_source_get_settings(source);
+        obs_data_set_double(d,"kokoro_native_speed",1.5);
+        obs_source_update(source,d);obs_data_release(d);
+        auto before=audio.frames.load();
+        button(source,"speak");
+        second=wait_count(source,2,25)&&audio.frames-before<frames&&audio.frames-before>10000;
+        d=obs_source_get_settings(source);
+        obs_data_set_double(d,"kokoro_native_speed",.8);
+        obs_data_set_string(d,"text","This is a longer local speech request to check that disabling a source prevents any stale audio from being played. The resident native codec must remain available for another request.");
+        obs_source_update(source,d);obs_data_release(d);
+        before=audio.frames.load();button(source,"speak");
+        bool started=false;
+        for(int i=0;i<200&&!started;++i){started=audio.frames>before+1000;std::this_thread::sleep_for(20ms);}
+        obs_source_set_enabled(source,false);std::this_thread::sleep_for(350ms);
+        before=audio.frames.load();std::this_thread::sleep_for(500ms);
+        cancel=started&&audio.frames==before&&count(source,"completed")==2;
+        obs_source_set_enabled(source,true);
+        d=obs_source_get_settings(source);obs_data_set_string(d,"text","Recovery works.");obs_source_update(source,d);obs_data_release(d);
+        button(source,"speak");bool recovered=wait_count(source,3,25);
+        printf("SOUND_NATIVE_TTS speed=%d cancel=%d recovered=%d\n",second,cancel,recovered);
+        cancel=cancel&&recovered;
     }
     const bool ok=picker&&text_picker&&first&&frames>20000&&nz>1000&&audio.bad.load()==0&&clock_sec>.4&&dedup&&second&&cancel;
     std::printf("SOUND_TTS_REAL_OBS backend=%s picker=%d text_picker=%d first=%d frames=%llu nonzero=%llu clock_seconds=%.3f bad=%llu dedup=%d second=%d cancel=%d completed=%lld failed=%lld pass=%d\n",
