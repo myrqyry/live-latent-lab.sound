@@ -78,6 +78,26 @@ CUDA selector. Inspect the actual runtime log and test your model/device.
 Model paths remain manual. A discovered model catalog, live UI telemetry,
 retention policy and improved voice activity detection are separate work.
 
+## Local reader TTS device selection
+
+The existing local reader worker accepts `--device auto|cpu|cuda`.
+Auto attempts CUDA only when the installed ONNX Runtime advertises
+CUDAExecutionProvider, verifies its presence in the created session
+and falls back to CPU on selection failure. CPU explicitly creates
+CPU-only sessions. Explicit CUDA requires a CUDA provider and fails
+if unavailable instead of reporting a CPU result as GPU execution.
+ONNX may still partition unsupported operations onto CPU; provider
+registration is not proof of per-operation acceleration. Both Piper
+and Kokoro log their session provider choices. Chatterbox retains its
+existing CUDA-specific worker and is not controlled by this reader
+policy. No new CUDA runtime is installed.
+
+Run `python3 tests/verify-tts-device.py` for policy coverage.
+Actual local Piper and Kokoro speech generation and Unix HTTP requests
+were tested using the existing reader runtime, which advertises only
+CPU (and Azure) providers. CPU is the qualified real device on this
+machine; CUDA branches have deterministic policy coverage only.
+
 ## Reproduce the full native acceptance check
 
 The native acceptance runner requires explicit external asset paths
