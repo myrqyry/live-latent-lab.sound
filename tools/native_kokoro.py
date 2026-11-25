@@ -48,15 +48,22 @@ def validate(voice, text, speed):
         raise ValueError('Invalid speed')
 
 class Worker:
+    entrypoint = Path(__file__)
+    model_id = "kokoro_native"
+    device = "cuda"
+
     def __init__(self, library, model):
         self.sock, child = socket.socketpair()
         self.sock.settimeout(40)
         self.process = None
         self.reported = False
+        env = os.environ.copy()
+        if self.device == "cpu":
+            env["CUDA_VISIBLE_DEVICES"] = ""
         try:
-            self.process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
+            self.process = subprocess.Popen([sys.executable, str(self.entrypoint.resolve()),
                 str(child.fileno()), str(library), str(model)], pass_fds=(child.fileno(),),
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
         except BaseException:
             self.sock.close()
             raise
@@ -76,30 +83,38 @@ class Worker:
 
     def synthesize(self, voice, text, speed):
         validate(voice, text, speed)
+        return self.request([voice, text, speed])
+
+    def request(self, args):
         try:
-            send(self.sock, json.dumps([voice, text, speed], ensure_ascii=False).encode())
+            send(self.sock, json.dumps(args, ensure_ascii=False).encode())
             result = packet(self.sock, MAX_WAV)
             if not result.startswith(b'RIFF'):
                 raise RuntimeError('Native synthesis failed')
             if not self.reported:
-                print('SOUND_TTS_PROVIDER model=kokoro_native selected=cuda', flush=True)
+                print('SOUND_TTS_PROVIDER model='+self.model_id+' selected='+self.device, flush=True)
                 self.reported = True
             return result
         except (OSError, EOFError, RuntimeError) as exc:
             self.close()
-            raise RuntimeError('Native Kokoro worker failed') from exc
+            raise RuntimeError('Native speech worker failed') from exc
 
 class Backend(C.Structure):
     _fields_ = [('backend', C.c_char_p), ('device', C.c_int), ('threads', C.c_int)]
 
 class Codec:
+    device = "cuda"
+    threads = 8
+    model_bytes = 189550976
+    model_sha = MODEL_SHA
+
     def __init__(self, library, model):
         model = Path(model)
-        if model.stat().st_size != 189550976:
-            raise RuntimeError('Unqualified Kokoro model size')
+        if model.stat().st_size != self.model_bytes:
+            raise RuntimeError('Unqualified native speech model size')
         with model.open('rb') as f:
-            if hashlib.file_digest(f, 'sha256').hexdigest() != MODEL_SHA:
-                raise RuntimeError('Unqualified Kokoro model checksum')
+            if hashlib.file_digest(f, 'sha256').hexdigest() != self.model_sha:
+                raise RuntimeError('Unqualified native speech model checksum')
         self.lib = C.CDLL(str(Path(library).resolve(strict=True)), mode=C.RTLD_LOCAL)
         ptr, string, integer = C.c_void_p, C.c_char_p, C.c_int
         pp = C.POINTER(ptr)
@@ -125,7 +140,7 @@ class Codec:
         try:
             self.check(self.registry_create(None, C.byref(self.registry)))
             self.check(self.model_load(self.registry, os.fsencode(model), None, None, C.byref(self.model)))
-            backend = Backend(b'cuda', 0, 8)
+            backend = Backend(self.device.encode('ascii'), 0, self.threads)
             self.check(self.session_create(self.model, b'tts', b'offline', C.byref(backend), None, C.byref(self.session)))
         except BaseException:
             self.close()
@@ -145,14 +160,19 @@ class Codec:
 
     def synthesize(self, voice, text, speed):
         validate(voice, text, speed)
+        language = b'en-gb' if voice.startswith('b') else b'en-us'
+        return self.run(voice, text, language, {'speed':speed})
+
+    def run(self, voice, text, language, options):
         request, result = self.request_create(), C.c_void_p()
         if not request:
             raise RuntimeError('Native request allocation failed')
         try:
-            language = b'en-gb' if voice.startswith('b') else b'en-us'
             self.check(self.request_set_text(request, text.encode(), language))
-            self.check(self.request_set_voice_id(request, voice.encode()))
-            self.check(self.request_set_option(request, b'speed', str(speed).encode()))
+            if voice is not None:
+                self.check(self.request_set_voice_id(request, voice.encode()))
+            for key, value in options.items():
+                self.check(self.request_set_option(request, key.encode(), str(value).encode()))
             self.check(self.session_run(self.session, request, C.byref(result)))
             samples, frames, rate, ch = C.POINTER(C.c_float)(), C.c_size_t(), C.c_int(), C.c_int()
             self.check(self.result_audio(result, C.byref(samples), C.byref(frames), C.byref(rate), C.byref(ch)))
@@ -180,9 +200,9 @@ class Codec:
                 self.result_free(result)
             self.request_free(request)
 
-def serve(fd, library, model):
+def serve(fd, library, model, codec_type=Codec):
     with socket.socket(fileno=fd) as sock:
-        codec = Codec(library, model)
+        codec = codec_type(library, model)
         try:
             while True:
                 try:

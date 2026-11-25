@@ -523,3 +523,37 @@ voice-matched English and speed controls; other ONNX controls stay
 on ONNX. No claim of subjective parity, immediate kernel cancellation,
 full expanded suite or three-way contention with the final narrow
 runtime (earlier upstream CUDA release contention passed).
+
+## Chatterbox native Turbo CPU and Nano model recovery (2026-11-25)
+
+Actual installed Nano previously had four missing required model blobs.
+Pinned revision 71ccd1d0081b430592cea481f4307e764e07bc64 restored to the
+external audio library; only broken content-addressed links changed,
+with rollback receipt. Built-in and synthetic-reference speech passed
+through the existing service socket. The original Nano service unit
+was preserved. The unused non-meanflow checkpoint remains absent.
+The upstream Turbo Q8 CUDA release benchmark succeeded (warm median
+1245 ms, 1664 MiB); two custom CUDA C ABI first-request probes were
+interrupted without results. The original boot journal was unavailable;
+no claim of exact failure cause. Both custom builds disabled CUDA
+FlashAttention despite direct T3/S3Gen attention calls. CUDA builds
+quarantined; no further Turbo CUDA inference run while OBS open.
+The CPU diagnostic succeeded, followed by a separate CPU-only
+audio.cpp build at db1869d0d53c7839b79cf7c1a16d36cc20102307.
+CPU-only shared library SHA256
+a0392fface60621ed63df109a4e3fa307d0d4c7eff673834c86d48d6630791f0;
+5.9 MiB, no CUDA/NCCL dependencies. Model SHA256
+acf02bed2b9ac94e271a01f556526818161a28009120f2337b9e8e10035c42b6.
+Separate built-in English voice CPU backend, no cloning or silent
+GPU-to-CPU substitution. Four-thread runtime, maximum 128-byte input
+chunks, sampling controls, existing private reader transport.
+The complete focused native Turbo runner passed real CPU speech,
+tagged speech, worker death/recovery, eviction, OBS playback/cancel
+and recovery, native CUDA Kokoro, ONNX Kokoro and Piper regression,
+real socket retention and unsupported-reference rejection. Registry
+six effects, policy/options/retention/device tests passed. Staged
+module SHA256 9085365bc2c0f955eff2e523432c95149bbf860af37d26c2ecb4533284c21fab.
+No claim of realtime CPU throughput, subjective speaker similarity,
+full expanded suite or long multi-chunk completion. CPU-only package
+and runtime retained, active plugin and reader configuration left
+untouched because OBS is running. See docs/native-turbo.md.

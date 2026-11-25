@@ -80,15 +80,15 @@ int main(int argc,char** argv){
     obs_data_release(cfg);
     if(!source)return 9;
     if(options_test){
-        const char* engines[]={"kokoro","kokoro_native","piper","chatterbox","edge","tiktok"};
-        const char* representative[]={"kokoro_speed","kokoro_native_speed","piper_length_scale","chatterbox_temperature","edge_rate","tiktok_controls_note"};
+        const char* engines[]={"kokoro","kokoro_native","piper","chatterbox","chatterbox_native","edge","tiktok"};
+        const char* representative[]={"kokoro_speed","kokoro_native_speed","piper_length_scale","chatterbox_temperature","chatterbox_native_temperature","edge_rate","tiktok_controls_note"};
         auto* settings=obs_source_get_settings(source);
         auto* props=obs_source_properties(source);
         bool picker=true;
-        for(int i=0;i<6;++i){
+        for(int i=0;i<7;++i){
             obs_data_set_string(settings,"backend",engines[i]);
             obs_property_modified(obs_properties_get(props,"backend"),settings);
-            for(int j=0;j<6;++j){
+            for(int j=0;j<7;++j){
                 auto* field=obs_properties_get(props,representative[j]);
                 picker=picker&&field&&obs_property_visible(field)==(i==j);
             }
@@ -277,6 +277,23 @@ int main(int argc,char** argv){
     bool picker=false;
     for(size_t i=0;voices&&i<obs_property_list_item_count(voices);++i)
         picker|=std::string(obs_property_list_item_string(voices,i))==argv[4];
+    if(backend=="chatterbox_native"){
+        auto* settings=obs_source_get_settings(source);
+        auto* selector=obs_properties_get(props,"backend");
+        auto visible=[&](const char* key){auto* f=obs_properties_get(props,key);return f&&obs_property_visible(f);};
+        bool controls=selector&&visible("chatterbox_native_temperature")&&visible("chatterbox_native_top_k")&&
+            visible("chatterbox_native_top_p")&&visible("chatterbox_native_repetition_penalty")&&!visible("chatterbox_audio_prompt_path");
+        if(selector){
+            obs_data_set_string(settings,"backend","chatterbox");
+            obs_property_modified(selector,settings);
+            controls=controls&&visible("chatterbox_audio_prompt_path")&&!visible("chatterbox_native_temperature");
+            obs_data_set_string(settings,"backend","chatterbox_native");
+            obs_property_modified(selector,settings);
+        }
+        obs_data_release(settings);
+        printf("SOUND_NATIVE_TURBO_PICKER=%d\n",controls);
+        picker=picker&&controls;
+    }
     bool text_picker=!text;
     for(size_t i=0;texts&&text&&i<obs_property_list_item_count(texts);++i)
         text_picker|=std::string(obs_property_list_item_string(texts,i))==obs_source_get_uuid(text);
@@ -327,6 +344,31 @@ int main(int argc,char** argv){
         d=obs_source_get_settings(source);obs_data_set_string(d,"text","Recovery works.");obs_source_update(source,d);obs_data_release(d);
         button(source,"speak");bool recovered=wait_count(source,3,25);
         printf("SOUND_NATIVE_TTS speed=%d cancel=%d recovered=%d\n",second,cancel,recovered);
+        cancel=cancel&&recovered;
+    }
+    if(backend=="chatterbox_native"&&first){
+        auto* d=obs_source_get_settings(source);
+        obs_data_set_double(d,"chatterbox_native_temperature",.65);
+        obs_data_set_int(d,"chatterbox_native_top_k",50);
+        obs_data_set_double(d,"chatterbox_native_top_p",.9);
+        obs_data_set_double(d,"chatterbox_native_repetition_penalty",1.3);
+        obs_data_set_string(d,"text","[laugh] That was unexpected. [sigh] Let us try again.");
+        obs_source_update(source,d);obs_data_release(d);
+        auto before=audio.frames.load();button(source,"speak");
+        second=wait_count(source,2,35)&&audio.frames-before>20000;
+        d=obs_source_get_settings(source);
+        obs_data_set_string(d,"text","This is a longer local speech request to check that disabling a source prevents stale audio. The native codec must remain available for another request.");
+        obs_source_update(source,d);obs_data_release(d);
+        before=audio.frames.load();button(source,"speak");
+        bool started=false;
+        for(int i=0;i<1200&&!started;++i){started=audio.frames>before+1000;std::this_thread::sleep_for(20ms);}
+        obs_source_set_enabled(source,false);std::this_thread::sleep_for(350ms);
+        before=audio.frames.load();std::this_thread::sleep_for(500ms);
+        cancel=started&&audio.frames==before&&count(source,"completed")==2;
+        obs_source_set_enabled(source,true);
+        d=obs_source_get_settings(source);obs_data_set_string(d,"text","Recovery works.");obs_source_update(source,d);obs_data_release(d);
+        button(source,"speak");bool recovered=wait_count(source,3,35);
+        printf("SOUND_NATIVE_TURBO controls=%d cancel=%d recovered=%d\n",second,cancel,recovered);
         cancel=cancel&&recovered;
     }
     const bool ok=picker&&text_picker&&first&&frames>20000&&nz>1000&&audio.bad.load()==0&&clock_sec>.4&&dedup&&second&&cancel;

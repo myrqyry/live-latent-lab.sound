@@ -23,15 +23,15 @@
 
 namespace {
 using namespace std::chrono_literals;
-enum class Engine { Kokoro, KokoroNative, Piper, Chatterbox, TikTok, Edge, Invalid };
-constexpr Engine backends[]={Engine::Kokoro,Engine::KokoroNative,Engine::Piper,Engine::Chatterbox,Engine::TikTok,Engine::Edge};
+enum class Engine { Kokoro, KokoroNative, Piper, Chatterbox, ChatterboxNative, TikTok, Edge, Invalid };
+constexpr Engine backends[]={Engine::Kokoro,Engine::KokoroNative,Engine::Piper,Engine::Chatterbox,Engine::ChatterboxNative,Engine::TikTok,Engine::Edge};
 const char* model(Engine e){
     switch(e){case Engine::Kokoro:return "kokoro";case Engine::KokoroNative:return "kokoro_native";case Engine::Piper:return "piper";
-        case Engine::Chatterbox:return "chatterbox";case Engine::TikTok:return "tiktok";case Engine::Edge:return "edge";default:return "invalid";}
+        case Engine::Chatterbox:return "chatterbox";case Engine::ChatterboxNative:return "chatterbox_native";case Engine::TikTok:return "tiktok";case Engine::Edge:return "edge";default:return "invalid";}
 }
 const char* default_voice(Engine e){
     switch(e){case Engine::Kokoro:case Engine::KokoroNative:return "af_heart";case Engine::Piper:return "en_US-amy-low";
-        case Engine::Chatterbox:return "default";case Engine::TikTok:return "en_us_001";case Engine::Edge:return "en-US-AriaNeural";default:return "";}
+        case Engine::Chatterbox:case Engine::ChatterboxNative:return "default";case Engine::TikTok:return "en_us_001";case Engine::Edge:return "en-US-AriaNeural";default:return "";}
 }
 Engine parse_engine(const char* id){
     for(auto e:backends)if(!strcmp(id,model(e)))return e;
@@ -39,13 +39,13 @@ Engine parse_engine(const char* id){
 }
 const char* voice_key(Engine e){
     switch(e){case Engine::Kokoro:return "voice_kokoro";case Engine::KokoroNative:return "voice_kokoro_native";case Engine::Piper:return "voice_piper";
-        case Engine::Chatterbox:return "voice_chatterbox";case Engine::TikTok:return "voice_tiktok";case Engine::Edge:return "voice_edge";default:return "voice_invalid";}
+        case Engine::Chatterbox:return "voice_chatterbox";case Engine::ChatterboxNative:return "voice_chatterbox_native";case Engine::TikTok:return "voice_tiktok";case Engine::Edge:return "voice_edge";default:return "voice_invalid";}
 }
 const char* engine_label(Engine e){
     switch(e){case Engine::Kokoro:return "Kokoro (local ONNX)";case Engine::KokoroNative:return "Kokoro (native GGUF CUDA)";case Engine::Piper:return "Piper (local ONNX)";
-        case Engine::Chatterbox:return "Chatterbox Nano (local CUDA)";case Engine::TikTok:return "TikTok (cloud)";case Engine::Edge:return "Edge TTS (cloud)";default:return "Unavailable";}
+        case Engine::Chatterbox:return "Chatterbox Nano (local CUDA)";case Engine::ChatterboxNative:return "Chatterbox Turbo (native GGUF CPU)";case Engine::TikTok:return "TikTok (cloud)";case Engine::Edge:return "Edge TTS (cloud)";default:return "Unavailable";}
 }
-bool local_model(Engine e){return e==Engine::Kokoro||e==Engine::KokoroNative||e==Engine::Piper||e==Engine::Chatterbox;}
+bool local_model(Engine e){return e==Engine::Kokoro||e==Engine::KokoroNative||e==Engine::Piper||e==Engine::Chatterbox||e==Engine::ChatterboxNative;}
 std::string local_socket(Engine e){
     const auto* dir=std::getenv("XDG_RUNTIME_DIR");
     if(!dir||!*dir)return {};
@@ -67,6 +67,11 @@ struct Option {
     const char* detail=nullptr;
 };
 constexpr Option options[]={
+    {Engine::ChatterboxNative,"chatterbox_native_temperature","temperature","Temperature",OptionKind::Float,.8,.1,1.5,.05},
+    {Engine::ChatterboxNative,"chatterbox_native_top_k","top_k","Top-K (0 = disabled)",OptionKind::Int,1000,0,6563,1},
+    {Engine::ChatterboxNative,"chatterbox_native_top_p","top_p","Top-P",OptionKind::Float,.95,.05,1,.01},
+    {Engine::ChatterboxNative,"chatterbox_native_repetition_penalty","repetition_penalty","Repetition penalty",OptionKind::Float,1.2,.5,2,.05},
+    {Engine::ChatterboxNative,"chatterbox_native_note",nullptr,"CPU-only native reader; slower than real time on the qualified machine. Built-in voice only. Use Nano for reference cloning. Supports [laugh] and [sigh].",OptionKind::Note},
     {Engine::KokoroNative,"kokoro_native_speed","speed","Speed",OptionKind::Float,1,.5,2,.05},
     {Engine::KokoroNative,"kokoro_native_note",nullptr,"Requires the configured native reader helper. Voice-matched pronunciation; phoneme input, batch trim and pause controls require ONNX.",OptionKind::Note},
     {Engine::Kokoro,"kokoro_speed","speed","Speed",OptionKind::Float,1,.5,2,.05},
@@ -188,7 +193,7 @@ bool known_voice(Engine e,const std::string& voice){
     if(e==Engine::Kokoro||e==Engine::KokoroNative){for(auto v:stts::KokoroVoices)if(voice==v.id)return true;return false;}
     if(e==Engine::TikTok){for(auto v:stts::TikTokVoices)if(voice==v.id)return true;return false;}
     if(e==Engine::Edge){for(auto v:stts::EdgeVoices)if(voice==v.id)return true;return false;}
-    return (e==Engine::Piper||e==Engine::Chatterbox)&&voice==default_voice(e);
+    return (e==Engine::Piper||e==Engine::Chatterbox||e==Engine::ChatterboxNative)&&voice==default_voice(e);
 }
 struct Transfer {
     State* state;
@@ -327,7 +332,7 @@ void run(State* s){
             voice=s->config.voice;engine=s->config.selected;ttl=s->config.ttl;options_json=s->config.synthesis_options;g=s->generation.load();
         }
         try {
-            auto chunks=stts::split_speech(text,engine==Engine::TikTok?stts::TikTokChunkBytes:stts::MaxChunkBytes);
+            auto chunks=stts::split_speech(text,engine==Engine::TikTok?stts::TikTokChunkBytes:engine==Engine::ChatterboxNative?size_t(128):stts::MaxChunkBytes);
             bool ok=!chunks.empty();
             size_t played=0,total_frames=0;
             for(const auto& chunk:chunks){
@@ -381,19 +386,19 @@ Engine wanted_model(const State& s){
     return !s.stopping.load()&&s.active.load()&&s.enabled.load()&&local_model(s.config.selected)?s.config.selected:Engine::Invalid;
 }
 void maintain_leases(State* s){
-    constexpr Engine local[]={Engine::Kokoro,Engine::KokoroNative,Engine::Piper,Engine::Chatterbox};
-    bool touched[4]={};
+    constexpr Engine local[]={Engine::Kokoro,Engine::KokoroNative,Engine::Piper,Engine::Chatterbox,Engine::ChatterboxNative};
+    bool touched[sizeof(local)/sizeof(local[0])]={};
     while(true){
         Engine desired;int ttl;bool stopping;
         {
             std::lock_guard lock(s->mutex);
             desired=wanted_model(*s);ttl=s->config.ttl;stopping=s->stopping.load();
         }
-        for(size_t i=0;i<4;++i){
+        for(size_t i=0;i<sizeof(local)/sizeof(local[0]);++i){
             if(local[i]!=desired&&touched[i]&&lease_request(*s,local[i],false,0))touched[i]=false;
         }
         if(stopping)break; // failed release expires via the bounded server lease
-        for(size_t i=0;i<4;++i)if(local[i]==desired){
+        for(size_t i=0;i<sizeof(local)/sizeof(local[0]);++i)if(local[i]==desired){
             touched[i]=true; // even a timed-out request might have reached server
             lease_request(*s,local[i],true,ttl);
         }
@@ -563,7 +568,7 @@ void add_voices(obs_properties_t* p,Engine e,const char* key){
     if(e==Engine::Kokoro||e==Engine::KokoroNative){for(auto v:stts::KokoroVoices)obs_property_list_add_string(voice,v.label,v.id);}
     else if(e==Engine::TikTok){for(auto v:stts::TikTokVoices)obs_property_list_add_string(voice,v.label,v.id);}
     else if(e==Engine::Edge){for(auto v:stts::EdgeVoices)obs_property_list_add_string(voice,v.label,v.id);}
-    else obs_property_list_add_string(voice,e==Engine::Piper?"Amy (English US)":"Cached Nano built-in voice",default_voice(e));
+    else obs_property_list_add_string(voice,e==Engine::Piper?"Amy (English US)":e==Engine::ChatterboxNative?"Embedded Turbo voice":"Cached Nano built-in voice",default_voice(e));
 }
 void show_backend(obs_properties_t* p,Engine selected){
     for(auto e:backends)obs_property_set_visible(obs_properties_get(p,voice_key(e)),e==selected);
