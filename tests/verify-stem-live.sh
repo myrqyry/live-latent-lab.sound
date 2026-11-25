@@ -224,6 +224,8 @@ if [[ "$tts" == true ]]; then
 fi
 
 if [[ "$stt" == true ]]; then
+    "$cxx" -std=c++17 -O2 -I"$inc" "$root/tests/verify-stt-unified-ui.cpp" -Wl,--no-as-needed -lobs-frontend-api "${libs[@]}" -Wl,--as-needed -o "$work/stt-ui"
+    QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 30 "$work/stt-ui" "$module" "$work/stage/data"
     "$cxx" -std=c++17 -O2 -I"$root/src" "$root/tests/verify-stt-config.cpp" -o "$work/stt-config"
     "$work/stt-config"
     "$cxx" -std=c++17 -O2 -pthread -I"$root/src" "$root/tests/verify-stt-wake.cpp" -o "$work/stt-wake"

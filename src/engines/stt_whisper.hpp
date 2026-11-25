@@ -4,10 +4,11 @@
 #include <string>
 #include <vector>
 namespace stts {
-// Explicit qualified CPU runtime, loaded only while a filter uses it.
+// Native Whisper runtime selected per filter; prefer supported GPU, preserve CPU fallback.
 class SttWhisper {
     void* lib_=nullptr;
     whisper_context* ctx_=nullptr;
+    std::string device_="none";
     template<class T> bool symbol(T& target,const char* name){
         target=reinterpret_cast<T>(dlsym(lib_,name));return target!=nullptr;
     }
@@ -28,13 +29,14 @@ public:
     ~SttWhisper(){close();}
     void close(){
         if(ctx_)whisper_free_(ctx_);
-        ctx_=nullptr;
+        ctx_=nullptr;device_="none";
         if(lib_)dlclose(lib_);
         lib_=nullptr;
     }
-    bool open(const std::string& lib,const std::string& model,const std::string& lang,bool translate){
+    const std::string& device()const{return device_;}
+    bool open(const std::string& lib,const std::string& model,const std::string& lang,bool translate,const std::string& request="auto"){
         close();
-        if(model.empty())return false;
+        if(model.empty()||(request!="auto"&&request!="cuda"&&request!="cpu"))return false;
         lib_=dlopen(lib.c_str(),RTLD_NOW|RTLD_LOCAL);
         if(!lib_)return false;
 #define STT_RESOLVE(n) if(!symbol(n##_,#n)){close();return false;}
@@ -49,11 +51,26 @@ public:
         STT_RESOLVE(whisper_lang_id)
 #undef STT_RESOLVE
         if(lang!="auto"&&whisper_lang_id_(lang.c_str())<0){close();return false;}
-        auto p=whisper_context_default_params_();p.use_gpu=false;
+        // Probe the GGML device registry in this library's dependency scope.
+        // Requiring CUDA must not silently load a CPU-only whisper.cpp build.
+        auto load_backends=reinterpret_cast<void(*)()>(dlsym(lib_,"ggml_backend_load_all"));
+        auto get_device=reinterpret_cast<void*(*)(int)>(dlsym(lib_,"ggml_backend_dev_by_type"));
+        auto get_name=reinterpret_cast<const char*(*)(void*)>(dlsym(lib_,"ggml_backend_dev_name"));
+        if(load_backends)load_backends();
+        void* gpu=get_device?get_device(1):nullptr; // GGML_BACKEND_DEVICE_TYPE_GPU
+        const char* gpu_name=(gpu&&get_name)?get_name(gpu):nullptr;
+        const bool is_cuda=gpu_name&&std::string(gpu_name).rfind("CUDA",0)==0;
+        if(request=="cuda"&&!is_cuda){close();return false;}
+        auto p=whisper_context_default_params_();
+        p.use_gpu=request!="cpu"&&gpu;
         ctx_=whisper_init_from_file_with_params_(model.c_str(),p);
+        if(!ctx_&&request=="auto"&&p.use_gpu){
+            p.use_gpu=false;ctx_=whisper_init_from_file_with_params_(model.c_str(),p);
+        }
         if(!ctx_||(!whisper_is_multilingual_(ctx_)&&(translate||(lang!="auto"&&lang!="en")))){
             close();return false;
         }
+        device_=p.use_gpu&&gpu_name?gpu_name:"CPU";
         return true;
     }
     bool transcribe(const std::vector<float>& pcm,int threads,const std::string& lang,bool translate,

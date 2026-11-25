@@ -97,9 +97,13 @@ int main(int argc,char** argv){
     auto* s=obs_source_create("sound_stt_fixture","STT input",nullptr,nullptr);
     if(!target||!s)return 7;
     auto* cfg=obs_data_create();obs_data_set_string(cfg,"model_path",argv[3]);
+    if(const char* device=std::getenv("SOUND_TEST_WHISPER_DEVICE"))
+        obs_data_set_string(cfg,"whisper_device",device);
     if(parakeet){
         obs_data_set_string(cfg,"backend","parakeet");
         obs_data_set_string(cfg,"parakeet_model_path",argv[3]);obs_data_set_string(cfg,"parakeet_library",argv[6]);
+        if(const char* device=std::getenv("SOUND_TEST_PARAKEET_DEVICE"))
+            obs_data_set_string(cfg,"parakeet_device",device);
         obs_data_set_string(cfg,"model_path",argv[7]);
     }
     obs_data_set_string(cfg,"caption_target",obs_source_get_uuid(target));obs_data_set_int(cfg,"max_phrase_ms",12000);

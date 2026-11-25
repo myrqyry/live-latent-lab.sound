@@ -28,6 +28,7 @@ class SttParakeet {
     Close close_=nullptr;
     FreeError free_error_=nullptr;
     std::string error_;
+    std::string delegate_;
     bool check(int status,char* message){
         if(status)error_=message?message:"MediaPipe status "+std::to_string(status);
         if(message&&free_error_)free_error_(message);
@@ -38,13 +39,18 @@ public:
     SttParakeet(const SttParakeet&)=delete;
     ~SttParakeet(){close();}
     const std::string& error()const{return error_;}
+    const std::string& delegate()const{return delegate_;}
     void close(){
         if(handle_){char* err=nullptr;const auto rc=close_(handle_,&err);check(rc,err);handle_=nullptr;}
         if(lib_)dlclose(lib_);
         lib_=nullptr;create_=nullptr;transcribe_=nullptr;close_result_=nullptr;close_=nullptr;free_error_=nullptr;
+        delegate_.clear();
     }
-    bool open(const std::string& lib,const std::string& model){
+    bool open(const std::string& lib,const std::string& model,const std::string& device="auto"){
         close();error_.clear();
+        if(device!="auto"&&device!="gpu"&&device!="cpu"){
+            error_="Unsupported Parakeet compute device";return false;
+        }
         if(!std::filesystem::is_regular_file(model)||std::filesystem::path(model).extension()!=".litertlm"){
             error_="Select a local .litertlm model";return false;
         }
@@ -56,14 +62,27 @@ public:
         close_=reinterpret_cast<Close>(dlsym(lib_,"MpAudioTranscriberClose"));
         free_error_=reinterpret_cast<FreeError>(dlsym(lib_,"MpErrorFree"));
         if(!create_||!transcribe_||!close_result_||!close_||!free_error_){error_="Missing MediaPipe 1.2.3 AudioTranscriber API";close();return false;}
-        Options options{};
-        options.base_options.model_asset_path=model.c_str();
-        options.base_options.delegate=1; // CPU
-        options.base_options.host_system=1;
-        char* err=nullptr;
-        auto status=create_(&options,&handle_,&err);
-        if(!check(status,err)||!handle_){close();return false;}
-        return true;
+        auto try_delegate=[&](int requested,const char* label){
+            Options options{};
+            options.base_options.model_asset_path=model.c_str();
+            options.base_options.delegate=requested;
+            options.base_options.host_system=1;
+            char* err=nullptr;
+            auto status=create_(&options,&handle_,&err);
+            const bool ok=check(status,err)&&handle_;
+            if(ok){delegate_=label;error_.clear();return true;}
+            if(handle_){
+                char* close_error=nullptr;
+                auto close_status=close_(handle_,&close_error);
+                check(close_status,close_error);
+                handle_=nullptr;
+            }
+            return false;
+        };
+        if(device!="cpu"&&try_delegate(2,"gpu"))return true;
+        if(device=="gpu"){close();return false;}
+        if(try_delegate(1,"cpu"))return true;
+        close();return false;
     }
     bool transcribe(const std::vector<float>& pcm,std::string& text){
         text.clear();error_.clear();

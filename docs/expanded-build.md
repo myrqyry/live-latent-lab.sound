@@ -51,6 +51,33 @@ still be packaged with its required license notices for staging; no model
 weights are included. Test the actual selected backend and captions in OBS
 before replacing a working runtime.
 
+## Unified STT filter
+
+Use the existing **LLL.sound STT** filter. Choose the recognition engine,
+then its model and compute device. Caption destination, energy gate, phrase
+timing, caption hold and muted-audio policy occupy the same positions for
+all three engines. Engine-specific options follow the shared controls.
+The model and device widgets use the existing per-engine saved keys so a
+switch restores that engine's previous selection rather than overwriting it.
+
+A worker-owned recognition session exposes common open, close, device,
+reset, finalize and cancellation operations. Only Nemotron advertises
+native incremental transcription; Whisper and Parakeet publish completed
+phrases. Cancellation checks discard stale results from non-interruptible
+native calls; they do not promise immediate native cancellation. The
+existing capture, caption and versioned transcript-signal contracts remain
+unchanged. Settings belonging to an inactive engine do not reload the
+active model. Disabling the filter still unloads the model.
+
+Auto device selection is runtime-dependent, not a guarantee that a GPU
+backend exists. Explicit GPU requests do not intentionally retry on CPU.
+A CUDA-enabled Nemotron runtime has been verified separately; Whisper's
+packaged CPU runtime remains CPU-only. The MediaPipe delegate is not a
+CUDA selector. Inspect the actual runtime log and test your model/device.
+
+Model paths remain manual. A discovered model catalog, live UI telemetry,
+retention policy and improved voice activity detection are separate work.
+
 ## Reproduce the full native acceptance check
 
 The native acceptance runner requires explicit external asset paths

@@ -245,3 +245,25 @@ expanded profile acceptance and clean-machine packaging remain separate
 qualification tasks. This test modified only the ignored isolated
 `build-public-expanded/hot-test-stage` candidate, **not the normal
 installed OBS plugin**, and did not publish or push a release.
+
+## Unified STT session and property layout (2026-11-24)
+
+Expanded local candidate SHA256: a4f419e78b0038fd987f3f6804336e8124962b29b12f829187666132b3f58bbd.
+The same filter ID and stored model/device keys are retained. A common
+worker-owned backend handles loading, native streaming or phrase finalization,
+reset and cancellation checks. Active-engine-only reload policy and common
+model/device/caption property order are covered by regression tests that
+failed before the implementation and passed afterward.
+
+On the exact staged binary, actual 48 kHz OBS recognition, unchanged audio,
+caption routing, invalidation, missing-model recovery and switching passed
+for Nemotron CUDA -> Whisper -> Nemotron and Parakeet CPU -> Whisper ->
+Parakeet. Nemotron published 13 partial updates; its initial ready time was
+461 ms. Parakeet initial ready time was 15046 ms, above the 10-second target
+but within the 20-second functional deadline. Capture, wake and config
+policy tests passed. These results do not establish Whisper CUDA or
+Parakeet GPU support. Earlier pending STT device-selection work is included
+in this checkpoint; unrelated YAMNet and TTS worker edits remain separate.
+Full expanded acceptance, 44.1 kHz retest and fresh-machine installation are
+not qualified by this checkpoint. Model catalog, live telemetry UI, optional
+retention and improved VAD are still open.

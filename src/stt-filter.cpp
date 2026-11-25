@@ -16,9 +16,7 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "engines/stt_whisper.hpp"
-#include "engines/stt_parakeet.hpp"
-#include "engines/stt_nemotron.hpp"
+#include "engines/stt_backend.hpp"
 #include "framework/stt_capture.hpp"
 #include "framework/stt_config.hpp"
 #include "framework/stt_wake.hpp"
@@ -64,7 +62,11 @@ Config config(obs_data_t* d){
     if(c.nemotron_device!="cpu"&&c.nemotron_device!="cuda")c.nemotron_device="auto";
     c.parakeet_model=obs_data_get_string(d,"parakeet_model_path");
     c.parakeet_library=obs_data_get_string(d,"parakeet_library");
+    c.parakeet_device=obs_data_get_string(d,"parakeet_device");
+    if(c.parakeet_device!="cpu"&&c.parakeet_device!="gpu")c.parakeet_device="auto";
     c.model=obs_data_get_string(d,"model_path");c.target=obs_data_get_string(d,"caption_target");
+    c.whisper_device=obs_data_get_string(d,"whisper_device");
+    if(c.whisper_device!="cpu"&&c.whisper_device!="cuda")c.whisper_device="auto";
     c.language=obs_data_get_string(d,"language");c.prompt=obs_data_get_string(d,"initial_prompt");
     if(c.prompt.size()>1024)c.prompt.clear();
     auto get=[&](const char* k,int a,int b){return int(std::clamp<int64_t>(obs_data_get_int(d,k),a,b));};
@@ -175,14 +177,8 @@ bool aborted(void* p){
     return a.s->stopping.load()||a.s->epoch.load()!=a.epoch;
 }
 void run(State& s){
-    const auto runtime=(std::filesystem::path(obs_get_module_binary_path(obs_current_module())).parent_path()/
-                        "stt-runtime/libwhisper.so.1").string();
-    stts::SttWhisper engine;
-    stts::SttParakeet parakeet;
-    stts::SttNemotron nemotron;
-    const auto default_nemotron=(std::filesystem::path(runtime).parent_path()/"libsound-nemotron-runtime.so").string();
-    bool streaming=false;
-    size_t fed=0;
+    const auto runtime=std::filesystem::path(obs_get_module_binary_path(obs_current_module())).parent_path()/"stt-runtime";
+    stts::SttBackend engine;
     std::unique_ptr<audio_resampler_t,decltype(&audio_resampler_destroy)> resampler(nullptr,audio_resampler_destroy);
     Config c;
     uint64_t rev=0,hot_rev=0,stream_epoch=0,expected_ts=0;
@@ -199,7 +195,7 @@ void run(State& s){
         written=false;
     };
     auto reset_stream=[&]{
-        nemotron.reset();streaming=false;fed=0;
+        engine.reset();
         std::lock_guard lock(s.result);s.partial_text.clear();s.partial_epoch=0;
     };
     auto reset=[&]{
@@ -209,25 +205,12 @@ void run(State& s){
             output={hz,AUDIO_FORMAT_FLOAT_PLANAR,SPEAKERS_MONO};
         resampler.reset(audio_resampler_create(&output,&input));
     };
-    // Advance the persistent Nemotron stream with only previously unsent
-    // audio. v1 remains a completed-phrase contract; v2 exposes revisions.
-    auto advance_stream=[&](uint64_t e,bool finalize,std::string& t)->bool{
-        if(s.epoch!=e||s.stopping)return false;
-        if(!streaming){if(!nemotron.begin())return false;streaming=true;fed=0;}
-        constexpr size_t chunk=8960;
-        while(phrase.size()-fed>=chunk||(finalize&&fed<phrase.size())){
-            if(s.epoch!=e||s.stopping)return false;
-            const auto count=std::min(chunk,phrase.size()-fed);
-            if(!nemotron.feed(phrase.data()+fed,count,t))return false;
-            fed+=count;
-        }
-        return !finalize||nemotron.finish(t);
-    };
     auto publish_partial=[&](uint64_t e){
-        if(phrase.size()-fed<8960||speech_frames<10)return;
+        if(!engine.partial_ready(phrase.size())||speech_frames<10)return;
         const auto begin=std::chrono::steady_clock::now();
         std::string t;
-        if(!advance_stream(e,false,t)){
+        Abort a{&s,e};
+        if(!engine.advance(phrase,false,aborted,&a,t)){
             if(s.epoch==e&&!s.stopping){clear_caption();reset_stream();set_status(s,"inference_error");ready=false;s.accept=false;}
             return;
         }
@@ -247,16 +230,14 @@ void run(State& s){
     };
     auto publish=[&](uint64_t e){
         if(speech_frames<10||phrase.empty()||s.epoch!=e){phrase.clear();speech_frames=quiet_frames=0;reset_stream();return;}
-        if(c.backend!="nemotron")while(phrase.size()<size_t(hz))phrase.push_back(0.f);
         Abort a{&s,e};
         const auto begin=std::chrono::steady_clock::now();
         std::string t;
-        const bool ok=c.backend=="nemotron"?advance_stream(e,true,t):c.backend=="parakeet"?parakeet.transcribe(phrase,t):
-            engine.transcribe(phrase,c.threads,c.language,c.translate,c.prompt,aborted,&a,t);
+        const bool ok=engine.finalize(phrase,c,aborted,&a,t);
         phrase.clear();speech_frames=quiet_frames=0;
         bool had_partial=false;
         {std::lock_guard lock(s.result);had_partial=!s.partial_text.empty();}
-        nemotron.reset();streaming=false;fed=0;
+        engine.reset();
         if(aborted(&a))return;
         if(!ok){clear_caption();set_status(s,"inference_error");return;}
         if(t.empty()){if(had_partial)clear_caption();reset_stream();return;}
@@ -275,7 +256,7 @@ void run(State& s){
         bool on=s.enabled.load()&&s.attached.load();
         auto requested=s.revision.load();
         if(requested!=rev||on!=enabled){
-            s.accept=false;clear_caption();engine.close();parakeet.close();nemotron.close();ready=false;reset();
+            s.accept=false;clear_caption();engine.close();ready=false;reset();
             {
                 std::lock_guard lock(s.control);
                 c=s.cfg;rev=s.revision.load();hot_rev=s.hot_revision.load();
@@ -284,24 +265,13 @@ void run(State& s){
             set_status(s,on?"loading":"off");
             if(on){
                 const auto load_start=std::chrono::steady_clock::now();
-                ready=resampler&&(c.backend=="whisper"?engine.open(runtime,c.model,c.language,c.translate):
-                    c.backend=="parakeet"?parakeet.open(c.parakeet_library,c.parakeet_model):
-                    c.backend=="nemotron"?nemotron.open(c.nemotron_library.empty()?default_nemotron:c.nemotron_library,c.nemotron_model,c.nemotron_threads,c.nemotron_language,c.nemotron_right,c.nemotron_device)&&nemotron.begin():false);
-                // CUDA can initialize but fail during stream setup on some devices.
-                // Automatic selection retries the known-good CPU path once.
-                if(!ready&&c.backend=="nemotron"&&c.nemotron_device=="auto"){
-                    nemotron.close();
-                    ready=nemotron.open(c.nemotron_library.empty()?default_nemotron:c.nemotron_library,c.nemotron_model,c.nemotron_threads,c.nemotron_language,c.nemotron_right,"cpu")&&nemotron.begin();
-                }
-                if(c.backend=="nemotron"){
-                    if(ready)nemotron.reset();else nemotron.close();
-                }
+                ready=resampler&&engine.open(c,runtime);
                 const auto load_ms=std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now()-load_start).count();
                 blog(LOG_INFO,"[Sound/STT] SOUND_STT_MODEL_LOAD backend=%s elapsed_ms=%lld ready=%d",
                     c.backend.c_str(),static_cast<long long>(load_ms),ready);
                 set_status(s,ready?"ready":"model_error");
-                if(ready)blog(LOG_INFO,"[Sound/STT] SOUND_STT_NATIVE_20261118_S813 %s model ready at %u Hz (device=%s)",c.backend.c_str(),s.rate,c.backend=="nemotron"?nemotron.device_backend().c_str():"cpu");
+                if(ready)blog(LOG_INFO,"[Sound/STT] SOUND_STT_NATIVE_20261118_S813 %s model ready at %u Hz (device=%s)",c.backend.c_str(),s.rate,engine.device().c_str());
                 else blog(LOG_WARNING,"[Sound/STT] Could not load local model/runtime or language unsupported");
             }
             s.accept=ready&&!s.stopping&&s.revision==rev&&s.enabled&&s.attached;
@@ -389,7 +359,7 @@ void run(State& s){
             if(voice){++speech_frames;quiet_frames=0;}else ++quiet_frames;
             if(quiet_frames*20>=c.silence||phrase.size()>=size_t(c.max_phrase)*hz/1000)
                 publish(stream_epoch);
-            else if(c.backend=="nemotron")publish_partial(stream_epoch);
+            else if(engine.streaming())publish_partial(stream_epoch);
         }
     }
     s.accept=false;caption(s,"","",0,true);
@@ -458,6 +428,7 @@ obs_audio_data* audio(void* ptr,obs_audio_data* packet){
 void defaults(obs_data_t* d){
     obs_data_set_default_string(d,"backend","whisper");
     obs_data_set_default_string(d,"parakeet_model_path","");
+    obs_data_set_default_string(d,"parakeet_device","auto");
     obs_data_set_default_string(d,"nemotron_model_path","");
     obs_data_set_default_string(d,"nemotron_library","");
     obs_data_set_default_string(d,"nemotron_language","en-US");
@@ -473,6 +444,7 @@ void defaults(obs_data_t* d){
     obs_data_set_default_string(d,"parakeet_library",std::filesystem::is_regular_file(sibling,ec)?sibling.c_str():"");
 
     obs_data_set_default_string(d,"model_path","");
+    obs_data_set_default_string(d,"whisper_device","auto");
     obs_data_set_default_string(d,"caption_target","");
     obs_data_set_default_string(d,"language","en");
     obs_data_set_default_string(d,"initial_prompt","");
@@ -490,9 +462,9 @@ bool add_target(void* p,obs_source_t* source){
 void backend_visibility(obs_properties_t* p,const std::string& backend){
     for(auto key:{"nemotron_model_path","nemotron_library","nemotron_language","nemotron_device","nemotron_threads","nemotron_right_context","nemotron_note"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="nemotron");
-    for(auto key:{"model_path","language","translate","threads","initial_prompt"})
+    for(auto key:{"model_path","whisper_device","language","translate","threads","initial_prompt"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="whisper");
-    for(auto key:{"parakeet_model_path","parakeet_library","parakeet_note"})
+    for(auto key:{"parakeet_model_path","parakeet_library","parakeet_device","parakeet_note"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="parakeet");
 }
 bool backend_changed(obs_properties_t* p,obs_property_t*,obs_data_t* d){
@@ -501,28 +473,25 @@ bool backend_changed(obs_properties_t* p,obs_property_t*,obs_data_t* d){
 obs_properties_t* properties(void* ptr){
     auto* p=obs_properties_create();
     auto* backend=obs_properties_add_list(p,"backend","Speech recognition engine",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
-    obs_property_list_add_string(backend,"Whisper (CPU)","whisper");
-    obs_property_list_add_string(backend,"Parakeet TDT (MediaPipe CPU)","parakeet");
+    obs_property_list_add_string(backend,"Whisper (GPU / CPU)","whisper");
+    obs_property_list_add_string(backend,"Parakeet TDT (MediaPipe GPU / CPU)","parakeet");
     obs_property_list_add_string(backend,"Nemotron 3.5 ASR (streaming GPU / CPU)","nemotron");
     obs_property_set_modified_callback(backend,backend_changed);
-    obs_properties_add_path(p,"nemotron_model_path","Nemotron GGUF model",OBS_PATH_FILE,"GGUF models (*.gguf)",nullptr);
-    obs_properties_add_path(p,"nemotron_library","Native Nemotron runtime (optional override)",OBS_PATH_FILE,"Shared libraries (*.so)",nullptr);
-    obs_properties_add_text(p,"nemotron_language","Language locale (en-US, es-ES, auto, ...)",OBS_TEXT_DEFAULT);
-    auto* device=obs_properties_add_list(p,"nemotron_device","Nemotron compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_properties_add_path(p,"nemotron_model_path","Model",OBS_PATH_FILE,"GGUF models (*.gguf)",nullptr);
+    auto* device=obs_properties_add_list(p,"nemotron_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(device,"Auto (GPU when available, CPU fallback)","auto");
     obs_property_list_add_string(device,"CUDA (require NVIDIA GPU)","cuda");
     obs_property_list_add_string(device,"CPU only","cpu");
-    obs_properties_add_int(p,"nemotron_threads","Nemotron CPU threads",1,std::max(1u,std::thread::hardware_concurrency()),1);
-    auto* context=obs_properties_add_list(p,"nemotron_right_context","Encoder right context",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
-    obs_property_list_add_int(context,"0 frames (lowest lookahead)",0);
-    obs_property_list_add_int(context,"3 frames (240 ms)",3);
-    obs_property_list_add_int(context,"6 frames (480 ms)",6);
-    obs_property_list_add_int(context,"13 frames (1040 ms)",13);
-    obs_properties_add_text(p,"nemotron_note","Native streaming with automatic GPU selection when compiled. The OBS log records the actual device; CPU fallback remains available. Finalize on silence or maximum phrase.",OBS_TEXT_INFO);
-    obs_properties_add_path(p,"parakeet_model_path","Parakeet model",OBS_PATH_FILE,"LiteRT-LM model (*.litertlm)",nullptr);
-    obs_properties_add_path(p,"parakeet_library","MediaPipe Tasks 1.2.3 native library",OBS_PATH_FILE,"Shared library (*.so)",nullptr);
-    obs_properties_add_text(p,"parakeet_note","Automatic language detection. CPU inference, completed phrases; no language override, translation or vocabulary prompt for this backend.",OBS_TEXT_INFO);
-    obs_properties_add_path(p,"model_path","Whisper GGML model",OBS_PATH_FILE,"Whisper models (*.bin)",nullptr);
+    obs_properties_add_path(p,"parakeet_model_path","Model",OBS_PATH_FILE,"LiteRT-LM model (*.litertlm)",nullptr);
+    auto* para_device=obs_properties_add_list(p,"parakeet_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(para_device,"Auto (GPU where supported, CPU fallback)","auto");
+    obs_property_list_add_string(para_device,"GPU (require MediaPipe GPU delegate)","gpu");
+    obs_property_list_add_string(para_device,"CPU only","cpu");
+    obs_properties_add_path(p,"model_path","Model",OBS_PATH_FILE,"Whisper models (*.bin)",nullptr);
+    auto* whisper_device=obs_properties_add_list(p,"whisper_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(whisper_device,"Auto (GPU when available, CPU fallback)","auto");
+    obs_property_list_add_string(whisper_device,"CUDA (require NVIDIA GPU)","cuda");
+    obs_property_list_add_string(whisper_device,"CPU only","cpu");
     auto* target=obs_properties_add_list(p,"caption_target","Caption text source",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(target,"None (read-only transcript signal)","");obs_enum_sources(add_target,target);
     std::string selected="whisper";
@@ -533,16 +502,27 @@ obs_properties_t* properties(void* ptr){
         bool found=false;for(size_t i=0;i<obs_property_list_item_count(target);++i)found|=saved==obs_property_list_item_string(target,i);
         if(!saved.empty()&&!found){auto n=obs_property_list_add_string(target,"Saved target (unavailable)",saved.c_str());obs_property_list_item_disable(target,n,true);}
     }
-    obs_properties_add_text(p,"language","Language code (en, auto, es, ...)",OBS_TEXT_DEFAULT);
-    obs_properties_add_bool(p,"translate","Translate to English (multilingual model)");
-    obs_properties_add_int(p,"threads","CPU threads",1,16,1);
-    obs_properties_add_text(p,"initial_prompt","Vocabulary prompt (optional)",OBS_TEXT_DEFAULT);
     obs_properties_add_int_slider(p,"voice_threshold_db","Energy gate (dBFS)",-65,-20,1);
     obs_properties_add_int(p,"silence_ms","End-of-phrase silence (ms)",200,2000,20);
     obs_properties_add_int(p,"max_phrase_ms","Maximum phrase (ms)",1500,15000,100);
     obs_properties_add_int(p,"caption_hold_ms","Caption hold (ms)",1000,30000,100);
     obs_properties_add_bool(p,"process_muted","Transcribe muted audio");
-    obs_properties_add_text(p,"note","Local inference, with Nemotron GPU acceleration when the runtime supports it. Nemotron supports partial captions; other engines publish completed phrases. Audio is unchanged. Choose a dedicated OBS text source (not file-backed). Gate, timing, prompt and caption target update live; model/runtime settings reload; disable filter to unload.",OBS_TEXT_INFO);
+    obs_properties_add_path(p,"nemotron_library","Native Nemotron runtime (optional override)",OBS_PATH_FILE,"Shared libraries (*.so)",nullptr);
+    obs_properties_add_text(p,"nemotron_language","Language locale (en-US, es-ES, auto, ...)",OBS_TEXT_DEFAULT);
+    obs_properties_add_int(p,"nemotron_threads","Nemotron CPU threads",1,std::max(1u,std::thread::hardware_concurrency()),1);
+    auto* context=obs_properties_add_list(p,"nemotron_right_context","Encoder right context",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
+    obs_property_list_add_int(context,"0 frames (lowest lookahead)",0);
+    obs_property_list_add_int(context,"3 frames (240 ms)",3);
+    obs_property_list_add_int(context,"6 frames (480 ms)",6);
+    obs_property_list_add_int(context,"13 frames (1040 ms)",13);
+    obs_properties_add_text(p,"nemotron_note","Native streaming with automatic GPU selection when compiled. The OBS log records the actual device; CPU fallback remains available. Finalize on silence or maximum phrase.",OBS_TEXT_INFO);
+    obs_properties_add_path(p,"parakeet_library","MediaPipe Tasks 1.2.3 native library",OBS_PATH_FILE,"Shared library (*.so)",nullptr);
+    obs_properties_add_text(p,"parakeet_note","Automatic language detection. MediaPipe attempts GPU where available; CPU remains the fallback. Completed phrases only; no language override, translation or vocabulary prompt.",OBS_TEXT_INFO);
+    obs_properties_add_text(p,"language","Language code (en, auto, es, ...)",OBS_TEXT_DEFAULT);
+    obs_properties_add_bool(p,"translate","Translate to English (multilingual model)");
+    obs_properties_add_int(p,"threads","CPU threads",1,16,1);
+    obs_properties_add_text(p,"initial_prompt","Vocabulary prompt (optional)",OBS_TEXT_DEFAULT);
+    obs_properties_add_text(p,"note","Local inference. Auto selects GPU when the selected runtime supports it; explicit GPU never requests CPU fallback. Nemotron supports partial captions; other engines publish completed phrases. Audio is unchanged. Choose a dedicated OBS text source (not file-backed). Gate, timing, prompt and caption target update live; model/runtime settings reload; disable filter to unload.",OBS_TEXT_INFO);
     backend_visibility(p,selected);
     return p;
 }
