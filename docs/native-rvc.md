@@ -33,7 +33,7 @@ private helper in Sound, with the pinned upstream header:
 
 ```sh
 c++ -std=c++17 -O2 -I src -I /path/to/audio.cpp/include \
-  tools/rvc-native-worker.cpp -ldl -lcrypto -o rvc-native-worker-v2
+  tools/rvc-native-worker.cpp -ldl -lcrypto -o rvc-native-worker-v3
 cmake -S . -B build-sound-rvc -DSOUND_EXPERIMENTAL=ON \
   -DSOUND_EFFECTS=rvc -DOBS_PLUGIN_DESTINATION=bin/64bit \
   -DOBS_DATA_DESTINATION=data
@@ -41,7 +41,7 @@ cmake --build build-sound-rvc -j3
 ```
 
 Default local paths are under
-`~/.local/share/live-latent-lab-sound/rvc/`: rvc-native-worker-v2,
+`~/.local/share/live-latent-lab-sound/rvc/`: rvc-native-worker-v3,
 libaudiocpp.so.0.1.0, and rvc-f16.gguf. Keep upstream licenses and
 record runtime/library hashes. The helper verifies the pinned model
 byte count and SHA-256, checks C ABI major version, and explicitly
@@ -56,20 +56,26 @@ voices you are entitled to use.
 ## Behavior and limitations
 
 Uses F32 runtime weights. Leave the optional voice checkpoint empty
-to use the packaged default, or select a local compatible RVC .pth/.pt
-checkpoint. Choose its matching FAISS .index for optional retrieval.
+to use the selected packaged voice (default, manthos, chocola, fraise), or select a local compatible RVC .pth/.pt
+checkpoint. Choose its matching FAISS .index for optional retrieval. Packaged voices
+use their embedded index when no custom checkpoint is selected.
 The picker starts in the local runtime's voice-library directory
 (which can be a symlink to an existing model collection).
 No file copies or automatic checkpoint conversion are needed.
 Save checkpoint/index paths and reload the scene to apply them.
-Pitch shift (-24 to +24 semitones), retrieval blend (0–1 with an
-index selected), and wet/dry mix are live. The selected index is
+Pitch shift (-24 to +24 semitones), retrieval blend (0–1 with a compatible
+index), RMS envelope mix, unvoiced protection, median filtering and
+wet/dry mix are live. Speaker ID is checkpoint-dependent and applies
+on scene reload. Use zero unless the checkpoint has a speaker table
+with additional IDs. Lower unvoiced protection values preserve more
+source content during retrieval; values >=0.5 disable protection. The selected index is
 loaded during warmup; incompatible or missing assets fail closed.
 The helper bounds checkpoint/index size to 512 MiB/1 GiB.
 Only trusted checkpoints should be used.
 A single private worker owns the RVC CUDA session; additional
 instances fail closed. The binary protocol carries 16000 mono
-float samples per request, an output rate, pitch, retrieval blend and sequence (RVC2 framing).
+float samples per request, an output rate, pitch, retrieval blend, RMS mix, unvoiced protection,
+median filter switch and sequence (RVC3 framing).
 The child is spawned with an inherited socketpair, no listener.
 The worker is cancelled by closing/reaping its own child process;
 the audio callback never waits on the worker.
@@ -166,3 +172,27 @@ has been exercised; no claim of universal compatibility or subjective
 voice quality, automatic index pairing, live voice switching, or
 seamless recovery. OBS is open; the module remains staged. The v1
 helper is retained separately.
+
+
+## Model settings coverage (2026-11-25)
+
+V3 adds packaged voice selection, speaker ID, RMS envelope mix (0–1,
+default 0.25), unvoiced protection (0–1, default 0.33) and a median
+filter toggle (radius 3/0, matching the actual upstream boolean
+behavior). All four packaged voices passed private CUDA requests
+including their embedded indexes; the custom checkpoint/index passed
+the full native OBS test at both rates, 16 hops each, final processing
+332.5/312.9 ms. Invalid nonfinite RMS, out-of-range protection and
+invalid median values were rejected; later requests succeeded.
+Nondefault RMS/protection/filter values reached the C ABI. Multi-speaker
+IDs other than zero and subjective quality remain unqualified.
+
+The fixed live contract deliberately retains RMVPE (only supported
+pitch method), host output rate, F32 storage, one resident voice cache
+slot and default one-second model padding. Offline pitch CSV and
+long-file splitting are not live window controls: a CSV would restart
+its timeline every hop. Alternative precisions, padding changes and
+multiple cached voices require separate throughput/VRAM qualification.
+The initial bundled index load can be slower than a warm request;
+select a nonzero blend before loading if it is needed from startup.
+The older v1/v2 helpers remain intact.

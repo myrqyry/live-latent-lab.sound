@@ -7,7 +7,7 @@ with wave.open(str(fixture),'rb') as w:
     src=array.array('h',w.readframes(16000))
 assert len(src)==16000
 pcm=array.array('f',(x/32768 for x in src))
-MAGIC=0x52564332
+MAGIC=0x52564333
 def receive(s,n):
     b=bytearray()
     while len(b)<n:
@@ -19,12 +19,12 @@ def run(device):
     parent,child=socket.socketpair()
     parent.settimeout(45)
     voice=os.environ.get("SOUND_RVC_VOICE",""); index=os.environ.get("SOUND_RVC_INDEX","")
-    p=subprocess.Popen([str(helper),str(lib),str(model),device,voice,index],stdin=child,stdout=subprocess.DEVNULL)
+    p=subprocess.Popen([str(helper),str(lib),str(model),device,voice,index,os.environ.get("SOUND_RVC_PACKAGED","default"),"0"],stdin=child,stdout=subprocess.DEVNULL)
     child.close()
     try:
-        def req(seq,shift,rate=48000,valid=True,blend=0.):
+        def req(seq,shift,rate=48000,valid=True,blend=0.,rms=.25,protect=.33,median=1):
             start=time.monotonic()
-            parent.sendall(struct.pack('<IIIIif',MAGIC,seq,16000,rate,shift,blend)+pcm.tobytes())
+            parent.sendall(struct.pack('<IIIIifffI',MAGIC,seq,16000,rate,shift,blend,rms,protect,median)+pcm.tobytes())
             magic,reply,status,count=struct.unpack('<IIII',receive(parent,16))
             assert magic==MAGIC and seq==reply
             if not valid:
@@ -42,12 +42,17 @@ def run(device):
         assert a!=b
         req(4,0,44100)
         req(5,0,valid=False,blend=float('nan'))
-        if index:
+        if index or (not voice and os.environ.get("SOUND_RVC_PACKAGED_RETRIEVAL")):
             c=req(6,0,blend=.3)
             assert a!=c
             req(7,0,blend=.6)
-        else:
+        elif voice:
             req(6,0,valid=False,blend=.3)
+        req(8,0,valid=False,rms=float('nan'))
+        req(9,0,valid=False,protect=-.1)
+        req(10,0,valid=False,median=2)
+        req(11,0,rms=1.,protect=.5,median=0)
+        req(12,0,rms=0.,protect=0.,median=1)
         assert p.poll() is None
         print('RVC_PRIVATE_PASS='+device,flush=True)
     finally:

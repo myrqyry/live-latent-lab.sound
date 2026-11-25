@@ -59,7 +59,7 @@ int main(int argc,char** argv){
     auto* filter=obs_source_create("stts_rvc_filter","timbre",d,nullptr);
     if(!source||!filter)return 6;
     auto* props=obs_source_properties(filter);
-    bool picker=obs_properties_get(props,"pitch")&&obs_properties_get(props,"mix")&&obs_properties_get(props,"model")&&obs_properties_get(props,"voice_checkpoint")&&obs_properties_get(props,"retrieval_index")&&obs_properties_get(props,"retrieval");
+    bool picker=obs_properties_get(props,"pitch")&&obs_properties_get(props,"mix")&&obs_properties_get(props,"model")&&obs_properties_get(props,"voice_checkpoint")&&obs_properties_get(props,"retrieval_index")&&obs_properties_get(props,"retrieval")&&obs_properties_get(props,"packaged_voice")&&obs_properties_get(props,"speaker_id")&&obs_properties_get(props,"rms_mix")&&obs_properties_get(props,"unvoiced_protection")&&obs_properties_get(props,"pitch_median");
     obs_properties_destroy(props);
     obs_source_filter_add(source,filter);obs_set_output_source(1,source);
     obs_source_set_audio_mixers(source,1);obs_source_inc_active(source);obs_source_set_audio_active(source,true);
@@ -89,6 +89,7 @@ int main(int argc,char** argv){
     };
     Stats wet(rate*8),dry(rate*4);
     stream(wet,true,600);
+    obs_data_set_double(d,"rms_mix",.8);obs_data_set_double(d,"unvoiced_protection",.1);obs_data_set_bool(d,"pitch_median",false);
     obs_data_set_double(d,"mix",0);obs_source_update(filter,d);
     stream(dry,true,300);
     auto last=snapshot(filter);
