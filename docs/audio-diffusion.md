@@ -7,7 +7,7 @@ qualified in [sa3-native-qualification.md](sa3-native-qualification.md).
 ## Build and use
 
 Select `diffusion` in SOUND_EFFECTS with SOUND_EXPERIMENTAL=ON. For the
-expanded local build the exact set is `mic;stem_live;yamnet;tts;stt;diffusion`.
+expanded local build the exact set is `stem_live;yamnet;tts;stt;diffusion`.
 Pass SOUND_SA3_RUNTIME_DIR pointing to the qualified libsa3 staging directory
 including the matched V1 header, private GGML shared objects and licenses.
 CMake rejects missing required files and mismatched ABI headers. The runtime

@@ -17,13 +17,9 @@ inc="$(pkg-config --variable=includedir libobs)/obs"
 read -ra libs <<< "$(pkg-config --libs libobs)"
 cxx="${CXX:-c++}"
 "$cxx" -std=gnu++17 -O2 -I"$inc" tests/verify-module-load.cpp -Wl,--no-as-needed -lobs-frontend-api "${libs[@]}" -Wl,--as-needed -o "$work/registry"
-"$cxx" -std=gnu++17 -O2 -pthread -I"$inc" tests/verify-mic-obs-audio.cpp "${libs[@]}" -o "$work/mic"
 "$cxx" -std=gnu++17 -O2 -pthread -I"$inc" tests/verify-yamnet-obs-audio.cpp "${libs[@]}" -o "$work/yamnet"
-"$cxx" -std=c++17 -O2 -I src tests/verify-mic-dsp-engine.cpp -o "$work/core"
-"$work/core"
 export QT_QPA_PLATFORM=offscreen
-xvfb-run -a timeout 25 "$work/registry" "$module" "$work/stage/data" 'mic;yamnet'
-xvfb-run -a timeout 25 "$work/mic" "$module" "$work/stage/data"
+xvfb-run -a timeout 25 "$work/registry" "$module" "$work/stage/data" 'yamnet'
 for rate in 48000 44100; do
     SOUND_YAMNET_TEST_RATE="$rate" xvfb-run -a timeout 35 "$work/yamnet" "$module" "$work/stage/data" "$SOUND_MEDIAPIPE_LIB" "$SOUND_YAMNET_MODEL"
 done

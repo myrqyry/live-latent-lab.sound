@@ -18,7 +18,7 @@ Date: 2026-11-12. This is an evidence-led integration note, not a claim that liv
 
 - `tests/verify-demucs-no-fake-stems.sh` passed, including no-callback-on-invalid-batch checks.
 - The actual `src/demucs-source.cpp` passed C++ syntax-only compilation against local libobs 32.0.1 and existing ONNX Runtime headers. The multichannel filter's source changes were not linked into a running OBS module. This is **not** live OBS audio capture with a Demucs model.
-- Existing mic-only OBS DSP and default zero-registration quarantine must remain passing.
+- Existing HyperDSP microphone verification and Sound default zero-registration quarantine must remain passing.
 - Advanced `DemucsCppEngine` syntax validation in an ad-hoc build was blocked by the old demucs.onnx subproject expecting an internal ONNX Runtime header that is not present at the cached include path. No claim is made that the advanced engine builds on the current dependency graph.
 - **No HF model downloaded, no GPU inference tested, no OBS plugin replaced, no running OBS session or profile changed.** The system drive is nearly full; never use a guessed download/model installation path.
 

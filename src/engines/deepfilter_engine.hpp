@@ -95,7 +95,7 @@ public:
 
         // DeepFilterNet usually expects a specific frame size (e.g. 480 or 960 samples).
         // OBS might send varying chunk sizes. We should ideally buffer here,
-        // but for now let's assume the filter caller handles buffering (which mic-filter.cpp does).
+        // but for now let's assume the filter caller handles buffering.
 
         try {
             // Prepare Input Tensors

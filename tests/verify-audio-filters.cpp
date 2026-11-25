@@ -1,7 +1,6 @@
 // Uses real libobs audio initialization and the real filter callbacks,
 // compiled from plugin sources. No fake inference engines, no model files.
-// Verifies dry path for unconfigured AI filters and channel independence
-// for the microphone DSP filter.
+// Verifies dry path for unconfigured AI filters.
 #include <obs.h>
 #include <obs-module.h>
 #include <array>
@@ -12,7 +11,6 @@
 
 extern struct obs_source_info stts_rvc_filter;
 extern "C" struct obs_source_info deepfilter_filter;
-extern "C" struct obs_source_info mic_filter;
 
 constexpr size_t N = 512;
 using Samples = std::array<float, N>;
@@ -48,7 +46,7 @@ int main()
         reference_right[i] = -.22f * std::cos(float(i) * .17f);
     }
 
-    bool df_dry = false, stts_dry = false, mic_stereo = false;
+    bool df_dry = false, stts_dry = false;
     {
         auto *settings = obs_data_create();
         Samples l = reference_left, r = reference_right;
@@ -63,20 +61,10 @@ int main()
                    l == reference_left && r == reference_right;
         obs_data_release(settings);
     }
-    {
-        auto *settings = obs_data_create();
-        if (mic_filter.get_defaults) mic_filter.get_defaults(settings);
-        obs_data_set_int(settings, "mic_type", 3); // Ribbon
-        Samples l = reference_left, r{};
-        Samples expected_right = r;
-        mic_stereo = process(mic_filter, settings, l, r) &&
-                     r == expected_right && l != reference_left;
-        obs_data_release(settings);
-    }
     obs_shutdown();
-    std::printf("SOUND_AUDIO_CALLBACK df_missing_model_dry=%d stts_missing_model_dry=%d independent_stereo_dsp=%d\n",
-                df_dry, stts_dry, mic_stereo);
-    bool pass = df_dry && stts_dry && mic_stereo;
+    std::printf("SOUND_AUDIO_CALLBACK df_missing_model_dry=%d stts_missing_model_dry=%d\n",
+                df_dry, stts_dry);
+    bool pass = df_dry && stts_dry;
     std::printf("SOUND_AUDIO_CALLBACK_PASS=%d\n", pass);
     return pass ? 0 : 1;
 }

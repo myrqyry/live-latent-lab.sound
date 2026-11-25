@@ -603,3 +603,24 @@ This supersedes the preceding deferred installation status.
 No full expanded acceptance rerun, subjective audition, or
 CUDA Turbo qualification. Local installation is not a release
 or redistribution approval.
+
+## Microphone DSP extraction (2026-11-25)
+
+Deterministic microphone modeling is now owned by HyperDSP. Sound no
+longer accepts the mic build gate or registers mic_modeler_filter.
+Mic-only sources, engines, tests and installation scripts were removed;
+the public baseline is YAMNet only, and expanded preset has four
+neural entries. The six-effect combined candidate retains stem_live,
+yamnet, tts, stt, diffusion (including dock), and ddsp.
+
+The previous installed seven-effect binary failed the new six-entry
+registration expectation. The new staged candidate SHA256 ca6ffc0a52d823d1cbec6c36a975111c0eb2d47b63b66a87c8e25ea8f34fe481
+passed exact six-entry registration, zero-effect quarantine, rejection
+of the removed mic gate, real YAMNet audio at 44.1/48 kHz with the
+complete local model, DDSP native and OBS tests at both rates and
+missing-model recovery. HyperDSP microphone audio passed with the new
+Sound module in either load order. The full STT/TTS/stem/diffusion
+acceptance suite has not been rerun; the staged SA3 morph helper and
+Nemotron runtime differ from the currently installed files. No claim
+of full combined qualification or installation; preserve existing
+runtime files and require appropriate verification before deployment.

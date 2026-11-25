@@ -121,7 +121,7 @@
     },
     {
       "name": "public-linux",
-      "displayName": "Public Linux candidate (Mic DSP + YAMNet)",
+      "displayName": "Public Linux candidate (YAMNet)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-public",
       "condition": {
@@ -133,7 +133,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "FETCH_OBS": false,
         "SOUND_EXPERIMENTAL": true,
-        "SOUND_EFFECTS": "mic;yamnet",
+        "SOUND_EFFECTS": "yamnet",
         "SOUND_TOOLS_MENU": false,
         "OBS_PLUGIN_DESTINATION": "bin/64bit",
         "OBS_DATA_DESTINATION": "data"
@@ -148,7 +148,7 @@
       "binaryDir": "${sourceDir}/build-public-expanded",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "SOUND_EFFECTS": "mic;stem_live;yamnet;tts;stt",
+        "SOUND_EFFECTS": "stem_live;yamnet;tts;stt",
         "SOUND_STT_WHISPER_INCLUDE": "$env{SOUND_STT_WHISPER_INCLUDE}",
         "SOUND_STT_RUNTIME_DIR": "$env{SOUND_STT_RUNTIME_DIR}",
         "SOUND_STT_NEMOTRON_RUNTIME_DIR": "$env{SOUND_STT_NEMOTRON_RUNTIME_DIR}"

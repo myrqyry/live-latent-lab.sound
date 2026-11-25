@@ -38,14 +38,18 @@ QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
 
 # The gating contract must actively reject accidental effect enablement.
 if cmake -S "$root" -B "$work/rejected" -G Ninja \
-    -DFETCH_OBS=OFF -DSOUND_EFFECTS=mic -DSOUND_EXPERIMENTAL=OFF \
+    -DFETCH_OBS=OFF -DSOUND_EFFECTS=yamnet -DSOUND_EXPERIMENTAL=OFF \
     >"$work/unsafe-config.log" 2>&1; then
-    echo "QUARANTINE_FAIL: unsafe mic build was accepted" >&2
+    echo "QUARANTINE_FAIL: unsafe neural build was accepted" >&2
     exit 1
 fi
 if ! grep -q "Quarantine:" "$work/unsafe-config.log"; then
-    echo "QUARANTINE_FAIL: rejected mic build for an unexpected reason" >&2
+    echo "QUARANTINE_FAIL: rejected neural build for an unexpected reason" >&2
     tail -35 "$work/unsafe-config.log" >&2
     exit 1
 fi
+if cmake -S "$root" -B "$work/removed" -G Ninja -DFETCH_OBS=OFF -DSOUND_EFFECTS=mic -DSOUND_EXPERIMENTAL=ON >"$work/removed.log" 2>&1; then
+    echo "QUARANTINE_FAIL: removed mic effect accepted" >&2; exit 1
+fi
+grep -F "Unknown Sound effect 'mic'" "$work/removed.log"
 echo "SOUND_QUARANTINE_PASS=1"

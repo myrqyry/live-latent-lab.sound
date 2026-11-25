@@ -8,8 +8,7 @@ repository, not the historical development repository. There are currently
 **no GitHub releases or redistribution-cleared installers**; building locally
 does not grant permission to redistribute third-party runtimes or models.
 
-**Start here:** The `public-linux` preset below builds the smaller Mic DSP +
-YAMNet candidate. For STT, TTS and buffered stems, follow the
+**Start here:** The `public-linux` preset below builds the smaller YAMNet candidate. For STT, TTS and buffered stems, follow the
 [expanded Linux instructions](docs/expanded-build.md). See the
 [release status](RELEASE_STATUS.md) for observed tests and unresolved issues.
 
@@ -19,7 +18,6 @@ All entries use the `LLL.sound` prefix in OBS.
 
 | Filter or source | Function | Build profile |
 | --- | --- | --- |
-| Microphone DSP | Microphone character, filtering and audio shaping | Both |
 | Native YAMNet (experimental) | Audio classification; dry stereo passthrough | Both |
 | Buffered stem (experimental) | CUDA HTDemucs separation of one stereo stem, fixed 12-second delay | Expanded |
 | STT | Select Whisper, Parakeet or streaming Nemotron; optional [Zipformer CPU](docs/zipformer-stt.md); rolling captions | Expanded |
@@ -53,8 +51,8 @@ Sending recognized speech to cloud TTS requires explicit opt-in.
 YAMNet requires a separately supplied compatible MediaPipe 1.2.3 runtime
 and classification model.
 
-The baseline profile includes only Mic DSP and YAMNet. The expanded
-profile registers the five baseline/expanded entries above. Audio Diffusion
+The baseline profile includes only YAMNet. Deterministic microphone modeling now lives in [HyperDSP](https://github.com/myrqyry/hyperdsp). The expanded
+profile registers the four baseline/expanded entries above. Audio Diffusion
 requires a separately qualified SA3 runtime and the explicit diffusion gate.
 DDSP requires its separately qualified LiteRT runtime/models and ddsp gate.
 Other historical effects stay quarantined.
@@ -76,7 +74,7 @@ bin/64bit and locale assets under data. Do not overwrite a working plugin
 until it has been backed up. The public candidate does not register
 obsolete development-only speech sources.
 
-For the five-entry expanded preset, use the
+For the four-entry expanded preset, use the
 [expanded build instructions](docs/expanded-build.md). To add the
 two optional neural effects, see [Audio Diffusion](docs/audio-diffusion.md)
 and [Neural Timbre](docs/ddsp.md) for their required runtimes,
@@ -91,7 +89,7 @@ SOUND_YAMNET_MODEL=/path/to/yamnet.tflite \
 ./tests/verify-quarantine.sh
 ```
 
-The test builds a new module and exercises actual OBS registration, DSP,
+The test builds a new module and exercises actual OBS registration,
 classification, missing/invalid model handling, stale expiry and 44.1/48 kHz
 stereo passthrough in isolated libobs. It requires xvfb-run. Neither test
 edits normal OBS scenes or installs to the user profile.
@@ -107,7 +105,7 @@ missing-model recovery. The complete expanded STT/stem/TTS/SA3 suite
 has not been rerun on this build. Earlier Parakeet testing had an
 intermittent 44.1 kHz lifecycle failure. See
 [release status](RELEASE_STATUS.md) for evidence and limitations.
-The smaller and expanded presets remain unchanged; diffusion and
+The previous seven-effect installation described above predates removal of microphone DSP. Current mic-free presets exclude it; diffusion and
 DDSP require explicit opt-in gates. No release binaries or model
 weights are published here.
 

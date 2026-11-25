@@ -23,16 +23,11 @@ native_options_required=false
 stt_required=false
 nemotron_assets=()
 case "$effects" in
-    'mic;stem_live;yamnet') count=3 ;;
-    'mic;stem_live;yamnet;tts'|'mic;stem_live;yamnet;tts;stt')
-        # Keep the previously qualified seven-source receipt installable.
-        # A new eight-source receipt must also qualify runtime switching.
-        count=7
-        if strings "$source" | grep -Fx -e 'SOUND_TTS_UNIFIED_20261118_U481' -e '[Sound/TTS] SOUND_TTS_UNIFIED_20261118_U481' >/dev/null; then
-            count=8
-            grep -Fxq 'unified_tts=SOUND_TTS_UNIFIED_PASS=1' "$receipt" ||
-              { echo 'Missing unified TTS qualification' >&2;exit 2; }
-        fi
+    'stem_live;yamnet') count=2 ;;
+    'stem_live;yamnet;tts'|'stem_live;yamnet;tts;stt')
+        count=3
+        grep -Fxq 'unified_tts=SOUND_TTS_UNIFIED_PASS=1' "$receipt" ||
+          { echo 'Missing unified TTS qualification' >&2;exit 2; }
         if strings "$source" | grep -Fx -e 'SOUND_TTS_EDGE_20261118_E521' -e '[Sound/TTS] SOUND_TTS_EDGE_20261118_E521' >/dev/null; then
             grep -Fxq 'edge_tts=SOUND_COMBINED_EDGE_PASS=1' "$receipt" ||
               { echo 'Missing real Edge qualification' >&2;exit 2; }
@@ -55,7 +50,7 @@ case "$effects" in
               { echo 'Missing native speech options qualification' >&2;exit 2; }
             native_options_required=true
         fi
-        if [[ "$effects" == 'mic;stem_live;yamnet;tts;stt' ]]; then
+        if [[ "$effects" == 'stem_live;yamnet;tts;stt' ]]; then
             stt_required=true
             if strings "$source" | grep -Fx -e 'SOUND_SIGNAL_INTEROP_20261120_I421' -e '[Sound/Signals] SOUND_SIGNAL_INTEROP_20261120_I421' >/dev/null; then
                 grep -Fxq 'signals=SOUND_COMBINED_SIGNAL_INTEROP_PASS=1' "$receipt" ||
@@ -65,7 +60,7 @@ case "$effects" in
                 grep -Fxq 'sttts=SOUND_COMBINED_STTTS_PASS=1' "$receipt" ||
                   { echo 'Missing speech-to-speech relay qualification' >&2;exit 2; }
             fi
-            count=9
+            count=4
             grep -Fxq 'stt=SOUND_COMBINED_STT_PASS=1' "$receipt" ||
               { echo 'Missing STT qualification' >&2;exit 2; }
             strings "$source" | grep -Fx 'SOUND_STT_FILTER_20261118_S813' >/dev/null ||
@@ -100,7 +95,7 @@ case "$effects" in
               { echo 'Missing or changed qualified STT model' >&2;exit 2; }
         fi
         grep -Fxq 'tts=SOUND_COMBINED_TTS_PASS=1' "$receipt" ||
-          { echo 'Missing four-source TTS qualification' >&2;exit 2; }
+          { echo 'Missing unified TTS qualification' >&2;exit 2; }
         worker="$(cd "$(dirname "$0")/.." && pwd)/tools/tts_worker.py"
         grep -Fxq "tts_worker_sha256=$(sha256sum "$worker" | cut -d' ' -f1)" "$receipt" ||
           { echo 'Changed TTS worker' >&2;exit 2; }
@@ -110,7 +105,7 @@ esac
 for line in "effects=$effects" \
  "obs_check=SOUND_REGISTRY_MATCH=1 EXPECTED=[$effects] ACTUAL_COUNT=$count" \
  'real_capture=SOUND_STEM_LIVE_REAL_GPU_OBS_PASS=1' \
- 'yamnet=SOUND_COMBINED_YAMNET_PASS=1' 'mic=SOUND_MIC_AND_STEM_ISOLATED_PASS=1'; do
+ 'yamnet=SOUND_COMBINED_YAMNET_PASS=1' 'stem=SOUND_STEM_ISOLATED_PASS=1'; do
   grep -Fxq "$line" "$receipt" ||
     { echo "Incomplete combined qualification: $line" >&2;exit 2; }
 done

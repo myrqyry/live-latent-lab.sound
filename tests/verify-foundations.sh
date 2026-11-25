@@ -29,14 +29,9 @@ fi
     "$root/tests/verify-ring-buffer.cpp" -o "$temp/ring"
 "$temp/ring"
 
-"$cxx" -std=c++17 -O2 -pthread -I"$root/src" -I"$ort/include" \
-    "$root/tests/verify-mic-engine.cpp" \
-    -L"$ort/lib" -lonnxruntime -Wl,-rpath,"$ort/lib" -o "$temp/mic"
-"$temp/mic"
-
 "$cxx" -std=gnu++17 -O1 -pthread -I"$inc" -I"$root/src" -I"$ort/include" \
     "$root/tests/verify-audio-filters.cpp" \
-    "$root/src/mic-filter.cpp" "$root/src/stts-filter.cpp" \
+    "$root/src/stts-filter.cpp" \
     "$root/src/deepfilter-filter.cpp" \
     -L"$ort/lib" -lonnxruntime $libs -Wl,-rpath,"$ort/lib" \
     -o "$temp/audio"

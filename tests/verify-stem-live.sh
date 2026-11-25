@@ -7,14 +7,14 @@ run_real=false
 combined=false
 tts=false
 stt=false
-effects="mic;stem_live"
-count=2
+effects="stem_live"
+count=1
 case "${1:-}" in
   "") ;;
   --with-model) run_real=true ;;
-  --combined) run_real=true; combined=true; effects="mic;stem_live;yamnet"; count=3 ;;
-  --combined-tts) run_real=true; combined=true; tts=true; effects="mic;stem_live;yamnet;tts"; count=8 ;;
-  --combined-stt) run_real=true; combined=true; tts=true; stt=true; effects="mic;stem_live;yamnet;tts;stt"; count=9 ;;
+  --combined) run_real=true; combined=true; effects="stem_live;yamnet"; count=2 ;;
+  --combined-tts) run_real=true; combined=true; tts=true; effects="stem_live;yamnet;tts"; count=3 ;;
+  --combined-stt) run_real=true; combined=true; tts=true; stt=true; effects="stem_live;yamnet;tts;stt"; count=4 ;;
   *) echo "Usage: $0 [--with-model|--combined|--combined-tts|--combined-stt]" >&2; exit 2 ;;
 esac
 work="$(mktemp -d /tmp/lll-sound-stem-live-XXXXXX)"
@@ -23,7 +23,7 @@ worker_pid=""
 cleanup(){
   local status=$?
   if ((status)); then
-    for log in configure build registry mic yamnet-48000 yamnet-44100 offline model real-audio tts-piper tts-kokoro tts-chatterbox tts-tiktok tts-unified tts-retention tts-long tts-options tts-options-workers stt-48000 stt-44100 parakeet-48000 parakeet-44100 parakeet-native nemotron-native nemotron-48000 nemotron-44100 sttts signal-interop; do
+    for log in configure build registry yamnet-48000 yamnet-44100 offline model real-audio tts-piper tts-kokoro tts-chatterbox tts-tiktok tts-unified tts-retention tts-long tts-options tts-options-workers stt-48000 stt-44100 parakeet-48000 parakeet-44100 parakeet-native nemotron-native nemotron-48000 nemotron-44100 sttts signal-interop; do
       if [[ -f "$work/$log.log" ]]; then
         printf '\n=== %s ===\n' "$log" >&2
         grep -E 'SOUND_STT_(LIFECYCLE|REAL|PARAKEET_SWITCH|NEMOTRON_LIVE|NEMOTRON_SWITCH)|SOUND_STTTS_REAL|SOUND_SIGNAL_REAL' "$work/$log.log" >&2 || true
@@ -82,7 +82,7 @@ cmake --install "$work/build" >"$work/install.log" 2>&1
 module="$work/stage/bin/64bit/live-latent-lab-sound.so"
 test -s "$module"
 if env -u LD_LIBRARY_PATH ldd "$module" | grep -Ei 'not found|libonnxruntime|libtorch|libpython|libwhisper|libggml|libQt6'; then
-    echo "Unexpected dependency in mic+stem OBS module" >&2;exit 1
+    echo "Unexpected dependency in stem OBS module" >&2;exit 1
 fi
 nonce="$(cat "$work/build/sound-stem-build-nonce.txt")"
 [[ "$nonce" =~ ^[a-f0-9]{16}$ ]]
@@ -94,12 +94,7 @@ QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
     >"$work/registry.log" 2>&1
 grep -F "SOUND_REGISTRY_MATCH=1 EXPECTED=[$effects] ACTUAL_COUNT=$count" "$work/registry.log"
 grep -F "SOUND_STEM_LIVE_CANDIDATE_$nonce" "$work/registry.log"
-"$cxx" -std=gnu++17 -O2 -pthread -I"$inc" \
-    "$root/tests/verify-mic-obs-audio.cpp" "${libs[@]}" -o "$work/mic-audio"
-QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
-    timeout 20 "$work/mic-audio" "$module" "$work/stage/data" >"$work/mic.log" 2>&1
-grep -F "MIC_OBS_ACTUAL_AUDIO" "$work/mic.log" | grep -F "pass=1"
-echo "SOUND_MIC_AND_STEM_ISOLATED_PASS=1"
+echo "SOUND_STEM_ISOLATED_PASS=1"
 if [[ "$combined" == true ]]; then
     lib="${SOUND_MEDIAPIPE_LIB:?Set SOUND_MEDIAPIPE_LIB}"
     model="${SOUND_YAMNET_MODEL:?Set SOUND_YAMNET_MODEL}"

@@ -27,9 +27,6 @@ extern struct obs_source_info meanvc2_bridge_source;
 #if defined(SOUND_WITH_DEMUCS_FILTER)
 extern struct obs_source_info demucs_filter;
 #endif
-#if defined(SOUND_WITH_MIC)
-extern struct obs_source_info mic_filter;
-#endif
 #if defined(SOUND_WITH_STEM_LIVE)
 extern struct obs_source_info stem_live_filter;
 #endif
@@ -74,7 +71,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 bool obs_module_load(void)
 {
-    // Mic-only candidates have unique configure-time markers; the default
+    // Selected candidates have unique configure-time markers; the default
     // quarantined shell retains its original log marker. Verify actual OBS
     // startup logs before claiming that a newly built module is installed.
 #if defined(SOUND_STEM_BUILD_MARKER)
@@ -82,8 +79,6 @@ bool obs_module_load(void)
 #elif defined(SOUND_YAMNET_BUILD_MARKER)
     obs_log(LOG_INFO, "%s module loaded: experimental async native YAMNet only",
             SOUND_YAMNET_BUILD_MARKER);
-#elif defined(SOUND_MIC_ONLY_MARKER)
-    obs_log(LOG_INFO, "%s module loaded: verified mic DSP only", SOUND_MIC_ONLY_MARKER);
 #else
     obs_log(LOG_INFO, "SOUND_QUARANTINE_GATE_20261013 module loaded");
 #endif
@@ -102,9 +97,6 @@ bool obs_module_load(void)
 #endif
 #if defined(SOUND_WITH_DEMUCS_FILTER)
     obs_register_source(&demucs_filter);
-#endif
-#if defined(SOUND_WITH_MIC)
-    obs_register_source(&mic_filter);
 #endif
 #if defined(SOUND_WITH_STEM_LIVE)
     obs_register_source(&stem_live_filter);

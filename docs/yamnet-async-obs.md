@@ -62,7 +62,7 @@ Observed outputs on yuzu-mint:
 - Only the selected YAMNet source is registered in the candidate.
 
 Existing regressions also passed: verify-quarantine.sh (zero
-default effects), verify-mic-dsp.sh, verify-stem-live.sh
+default effects), verify-stem-live.sh
 (contract and mocked sidecar only), and
 verify-mediapipe-audio-native.sh (direct local YAMNet inference).
 

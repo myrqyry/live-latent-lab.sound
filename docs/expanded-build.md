@@ -1,12 +1,12 @@
 # Expanded Linux candidate
 
 The expanded profile selects
-mic;stem_live;yamnet;tts;stt. The smaller public-linux preset has no speech
+stem_live;yamnet;tts;stt. The smaller public-linux preset has no speech
 runtime or GPU dependency and remains available. The expanded profile exposes one TTS source, with seven speech backends
 selectable inside it (including optional native Kokoro CUDA and native
 Turbo CPU). There are no separate per-backend registrations.
 Audio Diffusion and DDSP are additional explicit opt-in effects,
-not part of the five-entry preset.
+not part of the four-entry preset.
 
 Build prerequisites: C++17, CMake 3.28+, Ninja, libobs and frontend headers,
 pkg-config, libcurl, FFmpeg development libraries (libavformat, libavcodec, libavutil, libswresample), and separately acquired matched native speech runtimes.

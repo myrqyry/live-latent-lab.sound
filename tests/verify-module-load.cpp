@@ -12,7 +12,7 @@ static const Effect effects[] = {
     {"stts_rvc_filter", "rvc"},
     {"meanvc2_bridge_source", "meanvc2_bridge"},
     {"demucs_audio_filter", "demucs_filter"},
-    {"mic_modeler_filter", "mic"},
+    {"mic_modeler_filter", nullptr},
     {"stem_live_buffered_filter", "stem_live"},
     {"deepfilter_noise_suppression", "deepfilter"},
     {"matchering_filter", "matchering"},

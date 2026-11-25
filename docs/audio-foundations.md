@@ -1,3 +1,5 @@
+> Historical qualification before microphone DSP moved to HyperDSP. The current Sound foundation harness tests only neural filters.
+
 # Sound: verified audio foundation (2026-10-13)
 
 This is a deliberately narrow verification checkpoint for Live Latent Lab: Sound.

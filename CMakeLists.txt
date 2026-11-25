@@ -7,7 +7,7 @@ option(SOUND_EXPERIMENTAL "Permit explicitly selected unverified effects" OFF)
 option(SOUND_TOOLS_MENU "Include optional Qt Tools menu" OFF)
 option(SOUND_DIFFUSION_DOCK "Include native Qt Audio Diffusion dock" OFF)
 set(SOUND_SUPPORTED_EFFECTS
-    mic stem_live yamnet tts stt diffusion ddsp rvc deepfilter demucs_filter demucs_source whisper
+    stem_live yamnet tts stt diffusion ddsp rvc deepfilter demucs_filter demucs_source whisper
     chatterbox kokoro matchering musicgen mediapipe meanvc2_bridge)
 set(SOUND_SELECTED_EFFECTS "")
 foreach(effect IN LISTS SOUND_EFFECTS)
@@ -245,7 +245,6 @@ set(PLUGIN_SOURCES
     ${CMAKE_BINARY_DIR}/plugin-support.c
     src/plugin-main.cpp
 )
-set(SOUND_EFFECT_SOURCE_mic src/mic-filter.cpp)
 set(SOUND_EFFECT_SOURCE_yamnet src/yamnet-worker-filter.cpp)
 set(SOUND_EFFECT_SOURCE_tts src/tts-source.cpp)
 set(SOUND_EFFECT_SOURCE_stt src/stt-filter.cpp)
@@ -388,24 +387,13 @@ if(SOUND_TOOLS_MENU)
     target_compile_definitions(live-latent-lab-sound PRIVATE SOUND_WITH_TOOLS_MENU=1)
 endif()
 
-# A unique log token proves that an exact mic-only candidate (not a stale
-# OBS installation or a module compiled with other unverified effects) loaded.
+# Unique log tokens identify exact candidate builds.
 if(stem_live IN_LIST SOUND_SELECTED_EFFECTS AND NOT SOUND_TOOLS_MENU)
     string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef SOUND_STEM_BUILD_NONCE)
     target_compile_definitions(live-latent-lab-sound PRIVATE
         "SOUND_STEM_BUILD_MARKER=\"SOUND_STEM_LIVE_CANDIDATE_${SOUND_STEM_BUILD_NONCE}\"")
     file(WRITE "${CMAKE_BINARY_DIR}/sound-stem-build-nonce.txt" "${SOUND_STEM_BUILD_NONCE}\n")
 endif()
-if(SOUND_SELECTED_EFFECTS STREQUAL "mic" AND NOT SOUND_TOOLS_MENU)
-    string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef SOUND_MIC_BUILD_NONCE)
-    set(SOUND_MIC_ONLY_MARKER "SOUND_MIC_DSP_CANDIDATE_${SOUND_MIC_BUILD_NONCE}")
-    target_compile_definitions(live-latent-lab-sound PRIVATE
-        "SOUND_MIC_ONLY_MARKER=\"${SOUND_MIC_ONLY_MARKER}\"")
-    file(WRITE "${CMAKE_BINARY_DIR}/sound-mic-build-nonce.txt"
-        "${SOUND_MIC_BUILD_NONCE}\n")
-endif()
-
-
 if(SOUND_SELECTED_EFFECTS STREQUAL "yamnet" AND NOT SOUND_TOOLS_MENU)
     string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef SOUND_YAMNET_BUILD_NONCE)
     target_compile_definitions(live-latent-lab-sound PRIVATE
