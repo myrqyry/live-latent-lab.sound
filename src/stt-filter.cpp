@@ -73,6 +73,15 @@ Config config(obs_data_t* d){
     c.language=obs_data_get_string(d,"language");c.prompt=obs_data_get_string(d,"initial_prompt");
     if(c.prompt.size()>1024)c.prompt.clear();
     auto get=[&](const char* k,int a,int b){return int(std::clamp<int64_t>(obs_data_get_int(d,k),a,b));};
+    auto bounded=[&](const char* k,double a,double b,float fallback){double v=obs_data_get_double(d,k);return std::isfinite(v)?float(std::clamp(v,a,b)):fallback;};
+    auto& w=c.whisper_decode;
+    w.beam=obs_data_get_bool(d,"whisper_beam");w.best_of=get("whisper_best_of",1,8);w.beam_size=get("whisper_beam_size",1,8);
+    w.temperature=bounded("whisper_temperature",0,1,0);w.temperature_increment=bounded("whisper_temperature_inc",0,1,.2f);
+    w.entropy=bounded("whisper_entropy",0,5,2.4f);w.logprob=bounded("whisper_logprob",-5,0,-1);
+    w.no_speech=bounded("whisper_no_speech",0,1,.6f);
+    w.suppress_blank=obs_data_get_bool(d,"whisper_suppress_blank");w.suppress_nst=obs_data_get_bool(d,"whisper_suppress_nst");
+    c.zipformer_decode.beam=obs_data_get_bool(d,"zipformer_beam");c.zipformer_decode.paths=get("zipformer_paths",1,8);
+    c.zipformer_decode.blank_penalty=bounded("zipformer_blank_penalty",0,3,0);
     c.nemotron_threads=get("nemotron_threads",1,std::max(1u,std::thread::hardware_concurrency()));
     c.nemotron_right=int(obs_data_get_int(d,"nemotron_right_context"));
     c.threads=get("threads",1,16);c.threshold=get("voice_threshold_db",-65,-20);
@@ -431,6 +440,11 @@ obs_audio_data* audio(void* ptr,obs_audio_data* packet){
 }
 void defaults(obs_data_t* d){
     obs_data_set_default_string(d,"backend","whisper");
+    obs_data_set_default_bool(d,"whisper_beam",false);obs_data_set_default_int(d,"whisper_best_of",5);obs_data_set_default_int(d,"whisper_beam_size",5);
+    obs_data_set_default_double(d,"whisper_temperature",0);obs_data_set_default_double(d,"whisper_temperature_inc",.2);
+    obs_data_set_default_double(d,"whisper_entropy",2.4);obs_data_set_default_double(d,"whisper_logprob",-1);obs_data_set_default_double(d,"whisper_no_speech",.6);
+    obs_data_set_default_bool(d,"whisper_suppress_blank",true);obs_data_set_default_bool(d,"whisper_suppress_nst",false);
+    obs_data_set_default_bool(d,"zipformer_beam",false);obs_data_set_default_int(d,"zipformer_paths",4);obs_data_set_default_double(d,"zipformer_blank_penalty",0);
     obs_data_set_default_string(d,"parakeet_model_path","");
     obs_data_set_default_string(d,"zipformer_model_dir","");
     obs_data_set_default_int(d,"zipformer_threads",2);
@@ -469,12 +483,12 @@ bool add_target(void* p,obs_source_t* source){
 }
 void backend_visibility(obs_properties_t* p,const std::string& backend){
 #ifdef SOUND_WITH_ZIPFORMER
-    for(auto key:{"zipformer_model_dir","zipformer_device","zipformer_threads","zipformer_note"})
+    for(auto key:{"zipformer_model_dir","zipformer_device","zipformer_threads","zipformer_note","zipformer_decode"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="zipformer");
 #endif
     for(auto key:{"nemotron_model_path","nemotron_library","nemotron_language","nemotron_device","nemotron_threads","nemotron_right_context","nemotron_note"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="nemotron");
-    for(auto key:{"model_path","whisper_device","language","translate","threads","initial_prompt"})
+    for(auto key:{"model_path","whisper_device","language","translate","threads","initial_prompt","whisper_decode"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="whisper");
     for(auto key:{"parakeet_model_path","parakeet_library","parakeet_device","parakeet_note"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="parakeet");
@@ -541,8 +555,26 @@ obs_properties_t* properties(void* ptr){
     obs_properties_add_bool(p,"translate","Translate to English (multilingual model)");
     obs_properties_add_int(p,"threads","CPU threads",1,16,1);
     obs_properties_add_text(p,"initial_prompt","Vocabulary prompt (optional)",OBS_TEXT_DEFAULT);
+    auto* wd=obs_properties_create();
+    obs_properties_add_bool(wd,"whisper_beam","Beam search (instead of greedy)");
+    obs_properties_add_int(wd,"whisper_best_of","Greedy candidates (sampling)",1,8,1);
+    obs_properties_add_int(wd,"whisper_beam_size","Beam size",1,8,1);
+    obs_properties_add_float_slider(wd,"whisper_temperature","Initial temperature",0,1,.05);
+    obs_properties_add_float_slider(wd,"whisper_temperature_inc","Temperature fallback increment (0 = disabled)",0,1,.05);
+    obs_properties_add_float_slider(wd,"whisper_entropy","Entropy threshold",0,5,.1);
+    obs_properties_add_float_slider(wd,"whisper_logprob","Log probability threshold",-5,0,.1);
+    obs_properties_add_float_slider(wd,"whisper_no_speech","No-speech threshold",0,1,.05);
+    obs_properties_add_bool(wd,"whisper_suppress_blank","Suppress blank tokens");
+    obs_properties_add_bool(wd,"whisper_suppress_nst","Suppress non-speech tokens");
+    obs_properties_add_group(p,"whisper_decode","Advanced Whisper decoding (next phrase)",OBS_GROUP_NORMAL,wd);
 #ifdef SOUND_WITH_ZIPFORMER
     obs_properties_add_int(p,"zipformer_threads","Zipformer CPU threads",1,8,1);
+    auto* zd=obs_properties_create();
+    obs_properties_add_bool(zd,"zipformer_beam","Modified beam search");
+    obs_properties_add_int(zd,"zipformer_paths","Active beam paths",1,8,1);
+    obs_properties_add_float_slider(zd,"zipformer_blank_penalty","Blank penalty",0,3,.1);
+    obs_properties_add_text(zd,"zipformer_decode_note","Beam paths apply only in beam mode. Changes reload the recognizer.",OBS_TEXT_INFO);
+    obs_properties_add_group(p,"zipformer_decode","Advanced Zipformer decoding",OBS_GROUP_NORMAL,zd);
     obs_properties_add_text(p,"zipformer_note","Verified English 20M int8 model only. Native streaming CPU recognition; shared phrase segmentation.",OBS_TEXT_INFO);
 #endif
     obs_properties_add_text(p,"note","Local inference. Auto selects GPU when the selected runtime supports it; explicit GPU never requests CPU fallback. Nemotron and optional Zipformer support partial captions; Whisper and Parakeet publish completed phrases. Audio is unchanged. Choose a dedicated OBS text source (not file-backed). Gate, timing, prompt and caption target update live; model/runtime settings reload; disable filter to unload.",OBS_TEXT_INFO);

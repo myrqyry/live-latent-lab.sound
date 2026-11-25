@@ -53,7 +53,7 @@ public:
             nemotron_.reset();kind_=Kind::Nemotron;
 #ifdef SOUND_WITH_ZIPFORMER
         }else if(c.backend=="zipformer"){
-            if(!zipformer_.open(runtime/"zipformer/libsound-zipformer-sherpa.so",c.zipformer_model,c.zipformer_threads))return false;
+            if(!zipformer_.open(runtime/"zipformer/libsound-zipformer-sherpa.so",c.zipformer_model,c.zipformer_threads,c.zipformer_decode))return false;
             kind_=Kind::Zipformer;
 #endif
         }else return false;
@@ -110,7 +110,7 @@ public:
         if(streaming())return advance(pcm,true,abort,opaque,out);
         if(pcm.size()<16000)pcm.resize(16000,0.f);
         bool ok=false;
-        if(kind_==Kind::Whisper)ok=whisper_.transcribe(pcm,c.threads,c.language,c.translate,c.prompt,abort,opaque,out);
+        if(kind_==Kind::Whisper)ok=whisper_.transcribe(pcm,c.threads,c.language,c.translate,c.prompt,abort,opaque,out,c.whisper_decode);
         else if(kind_==Kind::Parakeet)ok=parakeet_.transcribe(pcm,out);
         return ok&&!abort(opaque);
     }

@@ -105,6 +105,7 @@ int main(int argc,char** argv){
         obs_data_release(d);printf("SOUND_ZIPFORMER_PICKER=%d\n",visible);
         if(!visible){obs_properties_destroy(props);obs_shutdown();return 1;}
     }
+    if(std::getenv("SOUND_TEST_ADVANCED")){auto* group=obs_properties_get(props,zipformer?"zipformer_decode":"whisper_decode");ui=ui&&group&&obs_property_visible(group);}
     obs_properties_destroy(props);
     obs_video_info v{};v.graphics_module="libobs-opengl";v.fps_num=30;v.fps_den=1;v.base_width=v.output_width=320;v.base_height=v.output_height=240;v.output_format=VIDEO_FORMAT_RGBA;v.colorspace=VIDEO_CS_DEFAULT;v.range=VIDEO_RANGE_DEFAULT;v.scale_type=OBS_SCALE_DISABLE;
     if(obs_reset_video(&v)!=OBS_VIDEO_SUCCESS)return 5;
@@ -119,6 +120,10 @@ int main(int argc,char** argv){
     if(const char* device=std::getenv("SOUND_TEST_WHISPER_DEVICE"))
         obs_data_set_string(cfg,"whisper_device",device);
     if(zipformer){obs_data_set_string(cfg,"backend","zipformer");obs_data_set_string(cfg,"zipformer_model_dir",argv[3]);obs_data_set_int(cfg,"caption_lines",3);}
+    if(std::getenv("SOUND_TEST_ADVANCED")){
+        if(zipformer){obs_data_set_bool(cfg,"zipformer_beam",true);obs_data_set_int(cfg,"zipformer_paths",4);obs_data_set_double(cfg,"zipformer_blank_penalty",.1);}
+        else{obs_data_set_bool(cfg,"whisper_beam",true);obs_data_set_int(cfg,"whisper_beam_size",3);obs_data_set_double(cfg,"whisper_no_speech",.55);obs_data_set_double(cfg,"whisper_temperature_inc",0);}
+    }
     if(parakeet){
         obs_data_set_string(cfg,"backend","parakeet");
         obs_data_set_string(cfg,"parakeet_model_path",argv[3]);obs_data_set_string(cfg,"parakeet_library",argv[6]);
@@ -177,6 +182,7 @@ int main(int argc,char** argv){
     obs_data_set_int(cfg,"silence_ms",700);
     obs_data_set_int(cfg,"caption_hold_ms",14000);
     obs_data_set_string(cfg,"initial_prompt","country");
+    if(!zipformer&&!parakeet&&std::getenv("SOUND_TEST_ADVANCED"))obs_data_set_double(cfg,"whisper_temperature",.1);
     obs_source_update(f,cfg);obs_data_release(cfg);
     const auto after_hot=read(f);
     const bool hot_stable=result.available&&after_hot.available&&after_hot.status=="ready"&&

@@ -68,6 +68,12 @@ int main() {
     cold=zip;cold.zipformer_threads=4;assert(stts::requires_model_reload(zip,cold));
     cold=zip;cold.zipformer_model="new-model";assert(stts::requires_model_reload(zip,cold));
     cold=zip;cold.model="unused";cold.caption_lines=4;assert(!stts::requires_model_reload(zip,cold));
+    live=original;live.whisper_decode.beam=true;live.whisper_decode.temperature=.2f;
+    assert(!stts::requires_model_reload(original,live));
+    cold=zip;cold.zipformer_decode.beam=true;assert(stts::requires_model_reload(zip,cold));
+    cold=zip;cold.zipformer_decode.paths=8;assert(stts::requires_model_reload(zip,cold));
+    cold=zip;cold.zipformer_decode.blank_penalty=.2f;assert(stts::requires_model_reload(zip,cold));
+    cold=original;cold.zipformer_decode.beam=true;assert(!stts::requires_model_reload(original,cold));
     assert(!stts::requires_model_reload(original, original));
     std::cout << "SOUND_STT_CONFIG_POLICY_PASS=1\n";
 }

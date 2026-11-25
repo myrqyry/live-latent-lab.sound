@@ -72,3 +72,14 @@ and zero-effect quarantine also passed. No arbitrary model loading,
 hotwords, token-time signal, censorship, native endpointer, cross-backend
 switching, simultaneous third-party ORT load or full expanded acceptance
 is qualified by this checkpoint.
+
+### Advanced decoding
+
+Modified beam search, active paths (1–8, default 4) and blank
+penalty (0–3, default 0) are available in the Zipformer advanced
+property group. Greedy remains the default; beam paths apply only
+to modified beam search. Changing these session options reloads
+the recognizer. Actual OBS tests with beam 4 and blank penalty .1
+passed both 44.1 and 48 kHz, including rolling partials and recovery.
+Hotwords require the matching BPE vocabulary, absent from the
+currently pinned package; no unsupported placeholder is shown.

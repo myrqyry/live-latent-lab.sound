@@ -26,6 +26,7 @@ int main(int argc,char** argv){
         }
         bool match=names.size()>=5&&names[0]=="Speech recognition engine"&&
             names[1]=="Model"&&names[2]=="Compute device"&&names[3]=="Caption text source";
+        for(auto key:{"whisper_decode","zipformer_decode"}){auto* group=obs_properties_get(p,key);if(group)match=match&&(obs_property_visible(group)==(name==std::string(key).substr(0,std::string(key).find("_"))));}
         printf("STT_UNIFIED_UI backend=%s pass=%d\n",backend,match);
         ok&=match;
     }

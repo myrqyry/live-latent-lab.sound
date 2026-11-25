@@ -1,5 +1,6 @@
 #pragma once
 #include <whisper.h>
+#include "framework/stt_config.hpp"
 #include <dlfcn.h>
 #include <string>
 #include <vector>
@@ -74,9 +75,13 @@ public:
         return true;
     }
     bool transcribe(const std::vector<float>& pcm,int threads,const std::string& lang,bool translate,
-                    const std::string& prompt,bool(*abort)(void*),void* opaque,std::string& out){
+                    const std::string& prompt,bool(*abort)(void*),void* opaque,std::string& out,const WhisperDecode& options={}){
         if(!ctx_||pcm.empty())return false;
-        auto p=whisper_full_default_params_(WHISPER_SAMPLING_GREEDY);
+        auto p=whisper_full_default_params_(options.beam?WHISPER_SAMPLING_BEAM_SEARCH:WHISPER_SAMPLING_GREEDY);
+        p.temperature=options.temperature;p.temperature_inc=options.temperature_increment;
+        p.entropy_thold=options.entropy;p.logprob_thold=options.logprob;p.no_speech_thold=options.no_speech;
+        p.suppress_blank=options.suppress_blank;p.suppress_nst=options.suppress_nst;
+        if(options.beam)p.beam_search.beam_size=options.beam_size;else p.greedy.best_of=options.best_of;
         p.n_threads=threads;p.language=lang.c_str();p.translate=translate;
         p.no_context=true;p.no_timestamps=true;p.print_progress=false;p.print_special=false;
         p.print_realtime=false;p.print_timestamps=false;

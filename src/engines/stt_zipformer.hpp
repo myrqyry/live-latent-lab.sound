@@ -1,5 +1,6 @@
 #pragma once
 #include <c-api.h>
+#include "framework/stt_config.hpp"
 #include <openssl/evp.h>
 #include <dlfcn.h>
 #include <filesystem>
@@ -69,7 +70,7 @@ public:
     SttZipformer& operator=(const SttZipformer&)=delete;
     void reset(){if(stream_){stream_destroy_(stream_);stream_=nullptr;}}
     void close(){reset();if(recognizer_){destroy_(recognizer_);recognizer_=nullptr;}if(lib_){dlclose(lib_);lib_=nullptr;}}
-    bool open(const std::filesystem::path& library,const std::filesystem::path& dir,int threads){
+    bool open(const std::filesystem::path& library,const std::filesystem::path& dir,int threads,const ZipformerDecode& options={}){
         close();
         const auto encoder=dir/"encoder-epoch-99-avg-1.int8.onnx",decoder=dir/"decoder-epoch-99-avg-1.int8.onnx",
             joiner=dir/"joiner-epoch-99-avg-1.int8.onnx",tokens=dir/"tokens.txt";
@@ -90,7 +91,7 @@ public:
         SherpaOnnxOnlineRecognizerConfig c{};
         c.feat_config={16000,80};c.model_config.transducer={encoder.c_str(),decoder.c_str(),joiner.c_str()};
         c.model_config.tokens=tokens.c_str();c.model_config.provider="cpu";c.model_config.num_threads=threads;
-        c.decoding_method="greedy_search";c.max_active_paths=4;
+        c.decoding_method=options.beam?"modified_beam_search":"greedy_search";c.max_active_paths=options.paths;c.blank_penalty=options.blank_penalty;
         recognizer_=create_(&c);
         if(!recognizer_){close();return false;}
         return true;
