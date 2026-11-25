@@ -323,3 +323,35 @@ long-duration soak, live YAMNet and Sight conditioning, trained adapter
 quality, and inline diffusion filter remain unqualified. Source capture
 keeps input dry and publishes separate generated audio. OBS was open:
 no installation replacement or remote publication.
+
+## SA3 session telemetry and graceful finish (2026-11-24)
+
+Installed preceding SA3 + Zipformer checkpoint 029a95d before continuation.
+Backup and installed hash recorded in the preceding stage's
+installation-record.txt. No scene settings were modified.
+
+Core session module SHA256: e08dbcee475a23772eaede35900152c1cf4a2b0ceffb862614936e89de313b9a.
+A real CUDA 48 kHz test completed ten continuation boundaries and then
+finished the current segment at 66000 ms. Last successful generation
+1565 ms; max captured timestamp gap 354167 ns, no invalid/out-of-range
+samples, no failed segments or underruns. The session status test
+verified lookahead readiness, generation activity, monotonic elapsed time,
+and graceful finish. All individual focused SA3 regression checks passed:
+operations, capture, prompt/LoRA lanes with test adapter, Sight fixture,
+24 s continuous sessions at both rates, and original manual generation,
+replay, cancellation, missing-model recovery and disabled-source checks
+at both rates. The aggregate shell runner returned an EOF error at its
+end because its source was edited to add a refresh test while it ran.
+The revised script passes bash -n; do not treat the aggregate exit as
+a successful complete invocation.
+
+Final UI-refresh-only rebuild SHA256: 4d328e3044ae898c2aede075b3be2f9489433c79e81391e3fb2c0744ddec6468.
+Retained libobs property list test reproduced unchanged status text
+before the correction and passed after the correction. The final module
+also passed six-effect registry, all four STT property layouts and default
+quarantine. The core real-model suite ran against the preceding core
+module, not this final UI-only rebuild. The status panel still requires
+manual refresh; finish is a segment boundary, not beat detection. A
+minute-scale soak is not indefinite stability. Full expanded acceptance,
+real Sight/YAMNet conditioning, trained LoRA quality and inline audio
+diffusion remain unqualified. No remote publication.

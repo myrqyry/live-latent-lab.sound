@@ -56,21 +56,69 @@ struct State {
     std::atomic<uint64_t> epoch{0},started{0},completed{0},played{0},failed{0};
     std::atomic<int> progress{0};
     std::atomic<uint64_t> captured{0},sound_cues{0},sight_cues{0},automated{0};
+    // Session telemetry is protected by mutex. The cooperative finish flag
+    // is also read by the native lookahead callback without taking a lock.
+    std::atomic<bool> finish_requested{false};
+    bool continuous_session=false,generating=false;
+    uint64_t generation_ms=0,buffer_frames=0,session_frames=0,next_frames=0,underruns=0;
+    const char* stage="idle";
     std::string message="Ready";
     bool current(uint64_t e) const {return !closing&&active&&enabled&&epoch==e;}
 };
 void message(State& s,uint64_t epoch,const std::string& value){
     std::lock_guard lock(s.mutex);if(s.current(epoch))s.message=value;
 }
-struct Cancel {State& state;uint64_t epoch;};
+struct Cancel {
+    State& state;uint64_t epoch;bool lookahead=false;
+    bool current() const{return state.current(epoch)&&(!lookahead||!state.finish_requested);}
+};
 int SA3_CALL cancelled(void* p){
-    auto& c=*static_cast<Cancel*>(p);return !c.state.current(c.epoch);
+    auto& c=*static_cast<Cancel*>(p);return !c.current();
 }
 void SA3_CALL progress(void* p,const sa3_progress_v1* v){
     auto& c=*static_cast<Cancel*>(p);
-    if(v&&c.state.current(c.epoch)&&std::isfinite(v->fraction))
-        c.state.progress=int(std::clamp(v->fraction,0.f,1.f)*100);
+    if(!v||!c.current())return;
+    std::lock_guard lock(c.state.mutex);
+    if(!c.current())return;
+    if(std::isfinite(v->fraction))c.state.progress=int(std::clamp(v->fraction,0.f,1.f)*100);
+    switch(v->stage){
+    case SA3_PROGRESS_LOADING_V1:c.state.stage="loading";break;
+    case SA3_PROGRESS_ENCODING_V1:c.state.stage="encoding";break;
+    case SA3_PROGRESS_SAMPLING_V1:c.state.stage="sampling";break;
+    case SA3_PROGRESS_DECODING_V1:c.state.stage="decoding";break;
+    case SA3_PROGRESS_DONE_V1:c.state.stage="finalizing";break;
+    default:c.state.stage="processing";break;
+    }
 }
+struct GenerationStatus {
+    Cancel token;
+    const std::chrono::steady_clock::time_point begin=std::chrono::steady_clock::now();
+    bool succeeded=false;
+    explicit GenerationStatus(State& s,uint64_t e,bool lookahead):token{s,e,lookahead}{
+        std::lock_guard lock(s.mutex);
+        if(token.current()){s.generating=true;s.stage="queued";s.progress=0;}
+    }
+    ~GenerationStatus(){
+        auto& s=token.state;
+        std::lock_guard lock(s.mutex);
+        if(s.current(token.epoch)){
+            s.generating=false;
+            if(succeeded)s.generation_ms=std::max<int64_t>(1,std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now()-begin).count());
+            s.stage=succeeded?"ready":"idle";
+        }
+    }
+};
+struct SessionEnd {
+    State& s;uint64_t epoch;
+    ~SessionEnd(){
+        std::lock_guard lock(s.mutex);
+        if(s.current(epoch)){
+            s.continuous_session=false;s.finish_requested=false;s.generating=false;
+            s.buffer_frames=s.next_frames=0;s.stage="idle";
+        }
+    }
+};
 struct Runtime {
     void* lib=nullptr;
     const sa3_api_v1* api=nullptr;
@@ -168,16 +216,18 @@ std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::stri
     if(continuous&&(!input||input->frames<rate/2)){error="Invalid continuation context";return {};}
     if(c.models.empty()||c.prompt.empty()){error="Choose a model directory and enter a prompt";return {};}
     if(c.prompt.size()>7500||c.negative.size()>8192||c.alternate_prompt.size()>8192){error="Prompt exceeds 8192 bytes";return {};}
-    if(!s.current(epoch))return {};
+    GenerationStatus generation(s,epoch,continuous);
+    if(!generation.token.current())return {};
     // Snapshot cues when scheduling the segment, before model load or GPU wait.
     const auto conditioned=condition_prompt(s,c);
     std::unique_lock<std::timed_mutex> gate(inference_gate,std::defer_lock);
-    while(s.current(epoch)&&!gate.try_lock_for(50ms)){}
-    if(!s.current(epoch)||!gate.owns_lock())return {};
+    while(generation.token.current()&&!gate.try_lock_for(50ms)){}
+    if(!generation.token.current()||!gate.owns_lock())return {};
+    {std::lock_guard lock(s.mutex);if(generation.token.current())s.stage="loading";}
     Runtime runtime;
-    if(!runtime.open(c,error)||!s.current(epoch))return {};
+    if(!runtime.open(c,error)||!generation.token.current())return {};
     const auto* api=runtime.api;
-    Cancel token{s,epoch};
+    auto& token=generation.token;
     sa3_request_v1 req{};req.size=sizeof req;api->request_init(&req);
     req.prompt=conditioned.c_str();req.negative_prompt=c.negative.c_str();
     req.duration_seconds=c.seconds;req.steps=c.steps;req.seed=c.seed;req.cfg_scale=1.f;
@@ -243,7 +293,7 @@ std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::stri
     sa3_error_v1 e{};e.size=sizeof e;api->error_init(&e);
     const auto code=api->generate(runtime.ctx,&req,&result,&e);
     if(code!=SA3_STATUS_OK_V1){error=e.message;return {};}
-    if(!s.current(epoch))return {};
+    if(!token.current())return {};
     if(!result.samples||result.n_channels!=2||result.sample_rate!=rate||
        result.layout!=SA3_AUDIO_PLANAR_V1||result.n_samples!=expected||
        result.n_samples>uint64_t(max_seconds)*rate){error="Unexpected PCM format or duration";return {};}
@@ -256,6 +306,7 @@ std::shared_ptr<Clip> generate(State& s,const Config& c,uint64_t epoch,std::stri
     // than hard-clipping the generated waveform.
     if(peak>.75f)for(auto& sample:clip->pcm)sample*=.75f/peak;
     if(req.lane_count)++s.automated;
+    generation.succeeded=true;
     // Runtime and its model context are destroyed before playback begins.
     return clip;
 }
@@ -339,7 +390,7 @@ std::shared_ptr<Clip> capture_input(State& s,const Config& c,uint64_t epoch,std:
     auto clip=std::make_shared<Clip>();clip->sample_rate=sample_rate;
     clip->frames=size_t(std::llround(c.capture_seconds*sample_rate));clip->pcm.resize(clip->frames*2);
     CaptureJob job{*clip,unsigned(channels),c.capture_muted};
-    message(s,epoch,"Capturing input");
+    {std::lock_guard lock(s.mutex);if(!s.current(epoch))return {};s.stage="capturing";s.message="Capturing input";}
     obs_source_add_audio_capture_callback(source,capture_audio,&job);
     struct Remove {obs_source_t* source;CaptureJob* job;~Remove(){obs_source_remove_audio_capture_callback(source,capture_audio,job);}} remove{source,&job};
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(int(c.capture_seconds*1000))+5s;
@@ -361,6 +412,7 @@ struct PlayClock {
 bool play_range(State& s,const Clip& clip,size_t count,PlayClock& clock,uint64_t epoch,size_t offset=0){
     constexpr size_t block=rate/50;
     if(offset>clip.frames||count>clip.frames-offset)return false;
+    {std::lock_guard lock(s.mutex);if(!s.current(epoch))return false;s.buffer_frames=clip.frames-offset;}
     for(size_t i=0;i<count;i+=block){
         auto elapsed=clock.elapsed();
         {std::unique_lock lock(s.mutex);s.cv.wait_until(lock,clock.start+elapsed,[&]{return !s.current(epoch);});}
@@ -371,6 +423,9 @@ bool play_range(State& s,const Clip& clip,size_t count,PlayClock& clock,uint64_t
         out.frames=uint32_t(std::min(block,count-i));out.format=AUDIO_FORMAT_FLOAT_PLANAR;
         out.speakers=SPEAKERS_STEREO;out.samples_per_sec=rate;out.timestamp=clock.clock+uint64_t(elapsed.count());
         obs_source_output_audio(s.source,&out);clock.emitted+=out.frames;
+        {std::lock_guard lock(s.mutex);if(s.current(epoch)){
+            s.session_frames+=out.frames;s.buffer_frames=clip.frames-offset-i-out.frames;
+        }}
     }
     std::unique_lock lock(s.mutex);
     s.cv.wait_until(lock,clock.start+clock.elapsed(),[&]{return !s.current(epoch);});
@@ -393,7 +448,7 @@ Next continuation(State& s,Config c,uint64_t epoch,std::shared_ptr<const Clip> c
         // With 4 seconds of context, cap each new segment at 56 seconds.
         c.seconds=std::clamp(c.seconds,6.,56.);
         if(c.seed>=0)c.seed=(c.seed+int64_t(segment%2147483647))%2147483647;
-        ++s.started;s.progress=0;
+        {std::lock_guard lock(s.mutex);if(!s.current(epoch)||s.finish_requested)return next;++s.started;s.progress=0;}
         auto full=generate(s,c,epoch,next.error,context.get(),true,true);
         if(!full)return next;
         auto output=tail(*full,full->frames-context->frames+held);
@@ -406,6 +461,7 @@ Next continuation(State& s,Config c,uint64_t epoch,std::shared_ptr<const Clip> c
             auto& x=output->pcm[ch*output->frames+i];x=old*(1-mix)+x*mix;
         }
         next.clip=std::move(output);
+        {std::lock_guard lock(s.mutex);if(s.current(epoch)&&!s.finish_requested)s.next_frames=next.clip->frames;}
         return next;
     }catch(const std::exception& e){next.error=e.what();return next;}
     catch(...){next.error="Continuation failed";return next;}
@@ -417,7 +473,7 @@ void continuous(State& s,Config c,uint64_t epoch){
         return;
     }
     c.seconds=std::clamp(c.seconds,6.,56.);
-    ++s.started;s.progress=0;message(s,epoch,"Generating first segment");
+    {std::lock_guard lock(s.mutex);if(!s.current(epoch))return;++s.started;s.progress=0;s.message="Generating first segment";}
     std::string error;auto clip=generate(s,c,epoch,error);
     if(!clip){
         std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.failed;s.message=error.empty()?"Initial generation failed":error;}
@@ -428,7 +484,8 @@ void continuous(State& s,Config c,uint64_t epoch){
         {
             std::lock_guard lock(s.mutex);
             if(!s.current(epoch))return;
-            s.saved=clip;++s.completed;s.message="Playing / generating next";
+            s.saved=clip;++s.completed;s.next_frames=0;
+            s.message=s.finish_requested?"Finishing current segment":"Playing / generating next";
             // Read live prompt and sampling controls at each segment boundary.
             // Model/device/variant are fixed until restart.
             c.prompt=s.config.prompt;c.negative=s.config.negative;c.seconds=s.config.seconds;
@@ -437,30 +494,55 @@ void continuous(State& s,Config c,uint64_t epoch){
             c.lora_a_strength=s.config.lora_a_strength;c.lora_b_strength=s.config.lora_b_strength;
             c.automate_b=s.config.automate_b;c.sound_channel=s.config.sound_channel;c.sight_channel=s.config.sight_channel;
         }
+        if(s.finish_requested){
+            const bool sent=play_range(s,*clip,clip->frames,clock,epoch);
+            std::lock_guard lock(s.mutex);
+            if(s.current(epoch)){
+                if(sent){++s.played;s.message="Finished segment";}
+                else{++s.failed;++s.underruns;s.message="Playback deadline missed";}
+            }
+            return;
+        }
         auto future=std::async(std::launch::async,continuation,std::ref(s),c,epoch,std::shared_ptr<const Clip>(clip),++segment);
         bool sent=play_range(s,*clip,clip->frames-held,clock,epoch);
         if(!sent){
-            std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.epoch;++s.failed;s.message="Playback deadline missed";s.cv.notify_all();}
+            std::lock_guard lock(s.mutex);if(s.current(epoch)){s.finish_requested=true;++s.failed;++s.underruns;s.message="Playback deadline missed";s.cv.notify_all();}
             return; // joins producer after releasing the mutex
         }
         if(!s.current(epoch))return;
-        if(future.wait_for(0ms)!=std::future_status::ready){
-            // Do not repeat music or synthesize silence to hide an underrun.
-            // Cancel generation, play the held tail on the existing timeline.
-            // Preserve the held tail before invalidating the producer.
-            play_range(s,*clip,held,clock,epoch,clip->frames-held);
-            std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.epoch;++s.failed;s.message="Continuation missed lookahead deadline; increase duration";s.cv.notify_all();}
-            return;
+        Next next;
+        const bool ready=future.wait_for(0ms)==std::future_status::ready;
+        if(ready)next=future.get();
+        enum class Boundary { Handoff, Finish, Miss, Failure };
+        Boundary decision;
+        {
+            std::lock_guard lock(s.mutex);
+            if(!s.current(epoch))return;
+            if(s.finish_requested)decision=Boundary::Finish;
+            else if(!ready)decision=Boundary::Miss;
+            else if(!next.clip)decision=Boundary::Failure;
+            else decision=Boundary::Handoff;
+            if(decision==Boundary::Handoff){
+                ++s.played;clip=std::move(next.clip);
+                s.next_frames=0;
+            }else{
+                s.finish_requested=true;s.next_frames=0;
+            }
         }
-        auto next=future.get();
-        if(!s.current(epoch))return;
-        if(!next.clip){
-            play_range(s,*clip,held,clock,epoch,clip->frames-held);
-            std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.failed;s.message=next.error.empty()?"Continuation failed":next.error;}
-            return;
+        if(decision==Boundary::Handoff)continue;
+        // Cancel pending lookahead, but play the original tail without a gap.
+        // The future joins before session cleanup; new commands still cancel
+        // this epoch immediately.
+        const bool tail_sent=play_range(s,*clip,held,clock,epoch,clip->frames-held);
+        {
+            std::lock_guard lock(s.mutex);
+            if(!s.current(epoch))return;
+            if(!tail_sent){++s.failed;++s.underruns;s.message="Playback deadline missed";}
+            else if(decision==Boundary::Finish){++s.played;s.message="Finished segment";}
+            else if(decision==Boundary::Miss){++s.failed;++s.underruns;s.message="Continuation missed lookahead deadline; increase duration";}
+            else{++s.failed;s.message=next.error.empty()?"Continuation failed":next.error;}
         }
-        {std::lock_guard lock(s.mutex);if(!s.current(epoch))return;++s.played;}
-        clip=std::move(next.clip);
+        return;
     }
 }
 void worker(State* s){
@@ -470,10 +552,11 @@ void worker(State* s){
          if(s->closing)return;
          job=s->pending;s->pending=Job::None;e=s->epoch;c=s->config;clip=s->saved;}
         if(!s->current(e))continue;
+        SessionEnd end{*s,e};
         try{
             if(job==Job::Continuous){continuous(*s,c,e);continue;}
             if(job==Job::Generate||job==Job::Transform||job==Job::Extend){
-                ++s->started;s->progress=0;message(*s,e,"Generating");
+                {std::lock_guard lock(s->mutex);if(!s->current(e))continue;++s->started;s->progress=0;s->message="Generating";}
                 std::string error;
                 if(job==Job::Transform||job==Job::Extend){
                     if(!c.input_source.empty())clip=capture_input(*s,c,e,error);
@@ -492,7 +575,7 @@ void worker(State* s){
             std::lock_guard lock(s->mutex);
             if(s->current(e)){
                 if(ok){++s->played;s->message="Ready to replay";}
-                else{++s->failed;s->message="Playback deadline missed";}
+                else{++s->failed;++s->underruns;s->message="Playback deadline missed";}
             }
         }catch(const std::exception& ex){
             std::lock_guard lock(s->mutex);if(s->current(e)){++s->failed;s->message=ex.what();}
@@ -501,7 +584,11 @@ void worker(State* s){
         }
     }
 }
-void invalidate(State& s){++s.epoch;s.pending=Job::None;s.progress=0;s.cv.notify_all();}
+void invalidate(State& s){
+    ++s.epoch;s.pending=Job::None;s.progress=0;
+    s.continuous_session=false;s.finish_requested=false;s.generating=false;
+    s.buffer_frames=s.next_frames=0;s.stage="idle";s.cv.notify_all();
+}
 void update(void* p,obs_data_t* d){
     auto& s=*static_cast<State*>(p);Config c;
     c.models=obs_data_get_string(d,"models_dir");c.prompt=obs_data_get_string(d,"prompt");
@@ -532,14 +619,35 @@ bool queue(void* p,Job job){
     std::lock_guard lock(s.mutex);
     if(!s.active||!s.enabled||s.closing){s.message="Activate the source first";return false;}
     if(job==Job::Replay&&!s.saved){s.message="Generate a clip first";return false;}
-    invalidate(s);s.pending=job;s.message="Queued";s.cv.notify_all();return false;
+    invalidate(s);s.pending=job;s.message="Queued";
+    s.continuous_session=job==Job::Continuous;
+    s.session_frames=s.generation_ms=s.underruns=0;s.cv.notify_all();return false;
 }
-bool refresh(obs_properties_t*,obs_property_t*,void*){return true;}
+std::string status_description(void* p){
+    std::string status="Generate while active. Q4_K_M / F16; local only. Continuous music uses 6–56 s segments. Selected source, WAV input or last generated clip for transform/extend (60 s result limit).";
+    if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);status+="\nStatus: "+s.message+" ("+std::to_string(s.progress.load())+"%)";
+        status+="\nStage: "+std::string(s.stage)+" | Last generation: "+std::to_string(s.generation_ms)+" ms";
+        status+="\nCurrent buffer: "+std::to_string(s.buffer_frames*1000/rate)+" ms | Next clip: "+std::to_string(s.next_frames*1000/rate)+" ms";
+        status+="\nPlayed: "+std::to_string(s.session_frames/rate)+" s | Underruns: "+std::to_string(s.underruns);}
+    return status;
+}
+bool refresh(obs_properties_t* props,obs_property_t*,void* p){
+    if(auto* note=obs_properties_get(props,"note")){
+        const auto description=status_description(p);
+        obs_property_set_description(note,description.c_str());
+    }
+    return true;
+}
 bool make(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Generate);}
 bool start_continuous(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Continuous);}
 bool transform(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Transform);}
 bool extend(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Extend);}
 bool replay(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Replay);}
+bool finish_segment(obs_properties_t*,obs_property_t*,void* p){
+    if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);
+        if(s.continuous_session){s.finish_requested=true;s.message="Finishing current segment";s.cv.notify_all();}
+    }return false;
+}
 bool stop(obs_properties_t*,obs_property_t*,void* p){
     if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);invalidate(s);s.message="Stopped";}return false;
 }
@@ -565,6 +673,7 @@ obs_properties_t* props(void* p){
     obs_properties_add_int(d,"seed","Seed (-1 = random)",-1,2147483647,1);
     obs_properties_add_button2(d,"generate","Generate and play",make,p);
     obs_properties_add_button2(d,"continuous","Start continuous music",start_continuous,p);
+    obs_properties_add_button2(d,"finish_segment","Finish current segment",finish_segment,p);
     obs_properties_add_button2(d,"replay","Replay last clip",replay,p);
     auto* input=obs_properties_add_list(d,"input_source","Capture audio source (optional)",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(input,"None (WAV / last clip)","");
@@ -605,8 +714,7 @@ obs_properties_t* props(void* p){
     },sight);
     obs_properties_add_group(d,"conditioning","Prompt automation and reactive conditioning",OBS_GROUP_NORMAL,advanced);
     obs_properties_add_button2(d,"refresh_status","Refresh status",refresh,p);
-    std::string status="Generate while active. Q4_K_M / F16; local only. Continuous music uses 6–56 s segments. Selected source, WAV input or last generated clip for transform/extend (60 s result limit).";
-    if(p){auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);status+="\nStatus: "+s.message+" ("+std::to_string(s.progress.load())+"%)";}
+    const auto status=status_description(p);
     obs_properties_add_text(d,"note",status.c_str(),OBS_TEXT_INFO);
     return d;
 }
@@ -621,6 +729,16 @@ void status_v2(void* p,calldata_t* d){
     calldata_set_int(d,"captured",s.captured);calldata_set_int(d,"automated",s.automated);
     calldata_set_int(d,"sound_cues",s.sound_cues);calldata_set_int(d,"sight_cues",s.sight_cues);
 }
+void status_v3(void* p,calldata_t* d){
+    status_v2(p,d);
+    auto& s=*static_cast<State*>(p);std::lock_guard lock(s.mutex);
+    calldata_set_bool(d,"continuous",s.continuous_session);calldata_set_bool(d,"finishing",s.finish_requested);
+    calldata_set_bool(d,"generating",s.generating);calldata_set_bool(d,"next_ready",s.next_frames!=0);
+    calldata_set_int(d,"generation_ms",s.generation_ms);calldata_set_int(d,"buffer_ms",s.buffer_frames*1000/rate);
+    calldata_set_int(d,"played_ms",s.session_frames/rate*1000+(s.session_frames%rate)*1000/rate);
+    calldata_set_int(d,"underruns",s.underruns);calldata_set_int(d,"next_ms",s.next_frames*1000/rate);
+    calldata_set_string(d,"stage",s.stage);
+}
 void* create(obs_data_t* d,obs_source_t* source){
     try{
         auto s=std::make_unique<State>(source);update(s.get(),d);
@@ -630,6 +748,8 @@ void* create(obs_data_t* d,obs_source_t* source){
           "void sound_diffusion_status_v1(out int started, out int completed, out int played, out int failed, out int progress, out string message)",status,s.get());
         proc_handler_add(obs_source_get_proc_handler(source),
           "void sound_diffusion_status_v2(out int started, out int completed, out int played, out int failed, out int progress, out string message, out int captured, out int automated, out int sound_cues, out int sight_cues)",status_v2,s.get());
+        proc_handler_add(obs_source_get_proc_handler(source),
+          "void sound_diffusion_status_v3(out int started, out int completed, out int played, out int failed, out int progress, out string message, out int captured, out int automated, out int sound_cues, out int sight_cues, out bool continuous, out bool finishing, out bool generating, out bool next_ready, out int generation_ms, out int buffer_ms, out int played_ms, out int underruns, out int next_ms, out string stage)",status_v3,s.get());
         return s.release();
     }catch(...){return nullptr;}
 }

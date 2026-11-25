@@ -34,10 +34,12 @@ test -n "$base"
 "$work/make-adapter" "$SOUND_SA3_MODELS/stable-audio-3-small-music-dit-0.5B-v1.0-Q4_K_M.gguf" "$work/test-only.gguf"
 ffmpeg -nostdin -v error -i "$SOUND_SA3_INPUT_WAV" -t 2 -ar 44100 -ac 2 -c:a pcm_s16le "$work/input.wav"
 inc="$(pkg-config --variable=includedir libobs)/obs"
-for test in verify-sa3-continuous verify-sa3-operations; do
+for test in verify-sa3-continuous verify-sa3-operations verify-sa3-status-refresh; do
     "${CXX:-c++}" -std=c++17 -O2 -pthread -I"$inc" "$root/tests/$test.cpp" $(pkg-config --libs libobs) -o "$work/$test"
 done
 export QT_QPA_PLATFORM=offscreen
+xvfb-run -a timeout 15 "$work/verify-sa3-status-refresh" "$module" "$data" >"$work/refresh.log" 2>&1 || { cat "$work/refresh.log"; exit 1; }
+grep -F 'SA3_STATUS_REFRESH clicked=1 changed=1 pass=1' "$work/refresh.log"
 xvfb-run -a timeout 110 "$work/verify-sa3-operations" "$module" "$data" "$SOUND_SA3_MODELS" "$work/input.wav" "$work/test-only.gguf" >"$work/ops.log" 2>&1 || { cat "$work/ops.log"; exit 1; }
 grep -F '[sa3] backend: CUDA0' "$work/ops.log"
 grep -F 'lora lanes: 1 lane(s)' "$work/ops.log"

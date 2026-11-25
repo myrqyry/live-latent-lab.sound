@@ -44,7 +44,11 @@ the actual selected compute device.
   zero-latency inline effect. Capturing a muted source requires opt-in.
   Transform strength is 0–1 and keeps input duration. Extend adds the
   selected duration, with a 60 s total result cap.
-- Stop cancels generation and playout. Replay cache is session-local;
+- Finish current segment stops continuous generation after the current
+  segment and its retained tail, without starting another clip. Pending
+  lookahead is cooperatively cancelled or discarded. This is a segment
+  boundary, not a beat-aware ending. Stop cancels immediately.
+  Replay cache is session-local;
   in continuous mode it holds the last generated segment, not the entire
   soundtrack.
 
@@ -86,8 +90,19 @@ duration. A uniform peak ceiling of 0.75 leaves resampling headroom;
 this is not a mathematical guarantee against intersample peaks for all
 possible waveforms. Playback submits sample-clocked 20 ms blocks.
 Version 1 status remains unchanged; version 2 adds captured, automated,
-sound_cues and sight_cues counters. Refresh status is manual, not a live
-dock. Runtime libraries use private GGML SONAMEs with local binding.
+sound_cues and sight_cues counters. The version 3 procedure
+`sound_diffusion_status_v3` includes those fields and adds continuous,
+finishing, generating, next_ready, stage, generation_ms (last successful
+request wall time including queue/model loading), buffer_ms (current clip
+remaining), next_ms (ready lookahead clip including its held splice),
+played_ms (frames submitted in the current command) and underruns
+(current command). Current and next clip durations overlap by the retained
+splice, so they should not be blindly summed. Session measurements reset
+when a new command is accepted; stop preserves the completed session's
+elapsed and timing measurements. The phase and lookahead state clear
+when the worker finishes. Counters in V1/V2 remain lifetime counters.
+Refresh status displays this information; it is manual, not a live dock.
+Runtime libraries use private GGML SONAMEs with local binding.
 
 ## Testing
 
@@ -108,8 +123,10 @@ SOUND_SA3_SOURCE, SOUND_SA3_MODELS and SOUND_SA3_INPUT_WAV. It checks
 both model manifests and the runtime checksum, constructs a temporary
 test-only adapter, runs real SFX, WAV/source transformation, extension,
 native adapter/prompt automation and Sight ABI fresh/stale fixtures,
-continuous playback at both rates, and the original manual regression
-suite. For actual STT conditioning, set SOUND_TEST_SA3_ADAPT=1 and
+continuous playback at both rates (including graceful finish and status
+readback), and the original manual regression suite. Set SOUND_SA3_SOAK=1
+when running the continuous harness directly for ten transitions instead
+of three; use a timeout of at least 100 seconds. For actual STT conditioning, set SOUND_TEST_SA3_ADAPT=1 and
 SOUND_TEST_SA3_MODELS with the existing real STT harness. It waits for a
 recognized final phrase before starting diffusion.
 
