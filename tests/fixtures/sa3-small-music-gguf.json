@@ -1,0 +1,37 @@
+[
+  {
+    "repo": "thepatch/stable-audio-3-small-music-GGUF",
+    "revision": "e06bd8e9a23de11207334cb57c0599c9c3e5bc42",
+    "name": "stable-audio-3-small-music-conditioner-v1.0-F32.gguf",
+    "size": 793184,
+    "sha256": "b9c24f2617a9b9a6ef28970b6d70cd6d97f39440c7c8f85720a6ecf8f0703862"
+  },
+  {
+    "repo": "thepatch/stable-audio-3-small-music-GGUF",
+    "revision": "e06bd8e9a23de11207334cb57c0599c9c3e5bc42",
+    "name": "stable-audio-3-small-music-dit-0.5B-v1.0-Q4_K_M.gguf",
+    "size": 326722240,
+    "sha256": "0efe300deccccfd4402988b910c8f3515e1b93f2013535480df9ce680fa615cf"
+  },
+  {
+    "repo": "thepatch/stable-audio-3-small-music-GGUF",
+    "revision": "e06bd8e9a23de11207334cb57c0599c9c3e5bc42",
+    "name": "stable-audio-3-small-music-same-s-v1.0-F16.gguf",
+    "size": 216721728,
+    "sha256": "ae34819e33cb188e54c4102125e0926d6739978772923b05e00ce9e74684e736"
+  },
+  {
+    "repo": "thepatch/t5gemma-b-b-ul2-GGUF",
+    "revision": "26caadf5cb1b6523370caff61f6a32337f46625e",
+    "name": "t5gemma-b-b-ul2-encoder-0.3B-v1.0-F16.gguf",
+    "size": 563243808,
+    "sha256": "26d7da5bdbe78b1bd11ac5e4b9b7a20ed43295bdd9eb3c1159b2cee004d9de43"
+  },
+  {
+    "repo": "thepatch/t5gemma-b-b-ul2-GGUF",
+    "revision": "26caadf5cb1b6523370caff61f6a32337f46625e",
+    "name": "t5gemma-b-b-ul2-v1.0-vocab.gguf",
+    "size": 13838496,
+    "sha256": "d58ef75568789d5d394a67231c853803bd24778d136aa0d1990210bcdd485d32"
+  }
+]
