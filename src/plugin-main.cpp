@@ -9,6 +9,10 @@ void unregister_diffusion_dock();
 #endif
 #endif
 
+#if defined(SOUND_WITH_DDSP)
+extern void register_sound_ddsp();
+#endif
+
 // Compiled-source and registration gates match exactly. No source is even
 // linked into the default module, so unchecked effects cannot appear in OBS.
 #if defined(SOUND_WITH_TTS)
@@ -82,6 +86,9 @@ bool obs_module_load(void)
     obs_log(LOG_INFO, "%s module loaded: verified mic DSP only", SOUND_MIC_ONLY_MARKER);
 #else
     obs_log(LOG_INFO, "SOUND_QUARANTINE_GATE_20261013 module loaded");
+#endif
+#if defined(SOUND_WITH_DDSP)
+    register_sound_ddsp();
 #endif
 #if defined(SOUND_WITH_MEANVC2_BRIDGE)
     obs_register_source(&meanvc2_bridge_source);

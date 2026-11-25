@@ -557,3 +557,29 @@ No claim of realtime CPU throughput, subjective speaker similarity,
 full expanded suite or long multi-chunk completion. CPU-only package
 and runtime retained, active plugin and reader configuration left
 untouched because OBS is running. See docs/native-turbo.md.
+
+## Native DDSP Neural Timbre filter (2026-11-25)
+
+Opt-in ddsp gate, Linux x86_64, native LiteRT 2.4.0 CPU C API and
+independent phase-continuous harmonic / filtered-noise synthesis.
+Official Magenta model pack plus pitch model: 12 verified files,
+83,535,361 bytes; all 11 recurrent instrument models tested. Native
+feature + two decoders mean 0.515 ms. Full seven-effect staged
+module SHA256 89f6e75003821ff31d43fa60c7cd93fc65cdc0398001dc24c1133b10944217fc.
+Real libobs at 44.1/48 kHz: 595 hops at each rate, final full worker
+hop 1.136/1.092 ms, pitch 219.885/219.890 Hz from 220 Hz input,
+distinct learned Violin/Flute morph and live Trumpet switch, octave
+shift, noise-only output, stereo dry preservation, zero invalid
+samples, zero settled silence output. Missing-model immediate dry
+passthrough and corrected path recovery (85 hops) passed. Full
+isolated process peak RSS approximately 218 MiB. Seven-effect
+registration and default quarantine passed. Fixed 200 ms delay after
+model load, initial silence at transition, mono wet/stereo delayed
+dry, fallback to aligned dry on failed worker/deadline. No subjective
+audition, seamless latency compensation, pause/resume discontinuity
+or long hardware-clock qualification; full expanded suite not rerun.
+Model files and runtime remain external to git, with per-asset
+SHA256/size manifest and model/runtime licenses. See docs/ddsp.md.
+OBS was open, so the new package was staged without replacing the
+loaded plugin. The previous CPU Turbo checkpoint is included in
+the combined build, but its reader configuration remains pending.

@@ -25,6 +25,7 @@ All entries use the `LLL.sound` prefix in OBS.
 | STT | Select Whisper, Parakeet or streaming Nemotron; optional [Zipformer CPU](docs/zipformer-stt.md); rolling captions | Expanded |
 | TTS | Select Kokoro ONNX/native CUDA, Piper, Chatterbox Nano/native Turbo CPU, TikTok or Edge | Expanded |
 | [Audio Diffusion](docs/audio-diffusion.md) | Local Stable Audio 3 music/SFX, continuous playback, capture and transformation, prompt/LoRA automation, optional resident SAME-S morph/texture and overlapping live wet output | Explicit opt-in |
+| [Neural Timbre (DDSP)](docs/ddsp.md) | CPU-native monophonic timbre transfer, 11 instruments, live morph and independent harmonic/noise synthesis | Explicit opt-in |
 
 ### Speech and shared signals
 
@@ -55,6 +56,7 @@ and classification model.
 The baseline profile includes only Mic DSP and YAMNet. The expanded
 profile registers the five baseline/expanded entries above. Audio Diffusion
 requires a separately qualified SA3 runtime and the explicit diffusion gate.
+DDSP requires its separately qualified LiteRT runtime/models and ddsp gate.
 Other historical effects stay quarantined.
 
 ## Build and stage
