@@ -82,6 +82,26 @@ class TestLiveStemProtocol(unittest.TestCase):
                 worker.join(timeout=2)
             finally:a.close();b.close()
 
+    def test_warmup_exercises_separation_in_ephemeral_directory(self):
+        sep=FakeSeparator()
+        with tempfile.TemporaryDirectory() as tmp:
+            elapsed=sidecar.warmup(sep,Path(tmp))
+            self.assertGreaterEqual(elapsed,0)
+            self.assertEqual(sep.called,1)
+            self.assertEqual(list(Path(tmp).iterdir()),[])
+
+    def test_shared_demucs_quality_settings(self):
+        self.assertEqual(sidecar.demucs_options(),{'segment_size':'Default','shifts':1,'overlap':.25,'segments_enabled':True})
+        self.assertEqual(sidecar.demucs_options(0,.1,4),{'segment_size':'4','shifts':0,'overlap':.1,'segments_enabled':True})
+        for values in [(3,.25,4),(1,.8,4),(1,float('nan'),4),(1,.25,8),(1,.25,0),(True,.25,4)]:
+            with self.subTest(values=values),self.assertRaises(ValueError):sidecar.demucs_options(*values)
+
+    def test_requested_device_policy(self):
+        sidecar.require_device('auto','cpu')
+        sidecar.require_device('cuda','cuda:0')
+        sidecar.require_device('cpu','cpu')
+        with self.assertRaises(RuntimeError):sidecar.require_device('cuda','cpu')
+
     def test_precision_is_explicit_and_rejects_unverified_integer_quantization(self):
         self.assertEqual(sidecar.precision_options('fp32'),
                          {'use_autocast': False, 'use_native_fp16': False})

@@ -26,7 +26,7 @@ a requested option. Preserve old defaults and explicit device policy.
 | Nemotron | GGUF/runtime, device, language locale, threads, right context, segmentation | Current private ABI exposes only these model/session options. Other decoder controls need extension and qualification of runtime, not speculative UI. |
 | Zipformer | Model directory, device (CPU-qualified), threads, segmentation, greedy/modified beam search, active paths and blank penalty | Decoder changes reload recognizer. Ordinary-text hotword biasing needs the exact matching BPE vocabulary; pinned model package contains tokens.txt but no bpe.vocab. |
 | YAMNet | Model/runtime, compute delegate | Full category vector deliberately preserved for inter-plugin consumers. Threshold/top-k/allowlist are output-selection controls; adding per-view filtering must not truncate the shared 521-category signal. |
-| HTDemucs | Stem selection, worker socket; worker model directory and precision CLI | Shared worker fixes model htdemucs, shifts=1, overlap=.25, default segment length, segments enabled. Device/model/quality controls should be shared-worker settings, not independent misleading per-filter knobs. Measure deadlines for each supported configuration. |
+| HTDemucs | Stem selection and worker socket; shared worker CLI: model directory, precision, device, shifts, overlap, segment length | Only HTDemucs four-stem model, split enabled, 8-second windows and 12-second delay. Worker-level graphical settings not implemented. CPU and all combinations/extremes are not live-qualified; missed deadlines mute instead of silently falling back. |
 
 ## Acceptance in this pass
 
@@ -50,8 +50,7 @@ recovery (three completed requests and zero failures per engine).
 ## Remaining accepted scope
 
 The settings audit does not close the request for full supported
-model controls. Whisper/Zipformer decoding is now qualified at both host rates. Next cover Zipformer hotwords once a matching BPE vocabulary is available, HTDemucs
-shared worker configuration, remaining native speech conditioning,
+model controls. Whisper/Zipformer decoding is now qualified at both host rates. Next cover Zipformer hotwords once a matching BPE vocabulary is available, graphical shared HTDemucs worker management, remaining native speech conditioning,
 and safe advanced SA3 output/continuation controls. Treat settings
 that require a different model, new ABI, new transport or changed
 live timing as explicit extensions; do not expose them as working
@@ -78,3 +77,31 @@ This does not qualify every decoder extreme, CUDA Whisper, or improve
 WER conclusively. Hotwords are not yet exposed: the exact pinned
 model revision does not include a BPE vocabulary, which the Sherpa
 ordinary-text contextual-biasing API requires for this model family.
+
+
+## HTDemucs shared quality settings (2026-11-25)
+
+The worker now accepts --device auto/cuda/cpu, --shifts 0–2,
+--overlap .05–.5 and --segment-seconds 1–7 (omit for model default).
+Existing precision and model-directory options remain. Explicit
+device requests are checked, and autocast with CPU is rejected.
+The fixed geometry and original quality defaults are unchanged
+(1 shift, .25 overlap, default segment, split enabled, FP32).
+An initial real CUDA test using shifts 0, overlap .1, segment 4
+missed the 4-second budget on its first cold request (4.807 s),
+correctly yielding silence. A synthetic 8-second stereo separation
+now runs before the private socket is made ready. The warmup uses
+the exact separation path, validates all four stems and discards
+its ephemeral output. The installed adapter still reloads weights
+per request; this is runtime/cache warmup, not model residency.
+Actual 48 kHz OBS retry with those nondefault settings passed:
+warmup 2.240 s; two real windows 1.309/1.208 s; 24 seconds of
+input, correct first-11-second silence and distinct stereo vocal
+output. Eight worker unit tests passed. No real-time guarantee at
+higher quality, under contention, with CPU, or for all allowed
+values. See expanded-build.md for worker CLI/verification.
+
+The existing default quality regression also passed the isolated
+pipeline, socket contract, eight worker tests, registry, missing
+worker silence and real GPU OBS audio. Defaults: warmup 2.300 s;
+two windows 1.366/1.241 s. No live installation or service changes.

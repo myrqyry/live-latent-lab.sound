@@ -144,10 +144,12 @@ QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
     >"$work/offline.log" 2>&1
 grep -F 'expect_silence=1' "$work/offline.log" | grep -F 'pass=1'
 # Then run the *real cached* model through the plugin's actual OBS callback.
+quality=(--device "${STEM_VERIFY_DEVICE:-auto}" --shifts "${STEM_VERIFY_SHIFTS:-1}" --overlap "${STEM_VERIFY_OVERLAP:-0.25}")
+if [[ -n "${STEM_VERIFY_SEGMENT:-}" ]]; then quality+=(--segment-seconds "$STEM_VERIFY_SEGMENT"); fi
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 "$venv" "$root/tools/live_stem_sidecar.py" \
-    --precision "$precision" --socket "$socket_dir/model.sock" >"$work/model.log" 2>&1 &
+    "${quality[@]}" --precision "$precision" --socket "$socket_dir/model.sock" >"$work/model.log" 2>&1 &
 worker_pid=$!
-for ((i=0;i<100;i++)); do
+for ((i=0;i<180;i++)); do
     [[ -S "$socket_dir/model.sock" ]] && break
     kill -0 "$worker_pid" || { tail -25 "$work/model.log" >&2;exit 1; }
     sleep .2
@@ -158,6 +160,8 @@ QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
     "$work/input-f32-stereo.bin" "$socket_dir/model.sock" \
     >"$work/real-audio.log" 2>&1
 grep -F 'expect_silence=0' "$work/real-audio.log" | grep -F 'pass=1'
+grep -F 'STEM_QUALITY' "$work/model.log"
+grep -F 'STEM_WARMUP' "$work/model.log"
 grep -F 'STEM_WINDOW seq=0' "$work/model.log"
 grep -F 'STEM_WINDOW seq=1' "$work/model.log"
 echo "SOUND_STEM_LIVE_REAL_GPU_OBS_PASS=1"

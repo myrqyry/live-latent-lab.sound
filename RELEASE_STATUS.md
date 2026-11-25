@@ -684,3 +684,23 @@ No module or reader service installation performed in this pass.
 No blanket qualification of all model options or numeric extremes.
 The remaining supported-control gaps and fixed contracts are listed
 in docs/model-settings-audit.md; full expanded regression not rerun.
+
+## Recognition and shared stem model settings (2026-11-25)
+
+Whisper and Zipformer now expose advanced model decoder settings
+with backend-specific visibility. Real CPU recognition passed both
+host rates for both engines, hot updates, unchanged audio,
+caption routing, silence, mute, disable and missing-model recovery.
+Zipformer retained rolling partial captions; matching BPE vocabulary
+for plain-text hotwords is not present in the pinned model package.
+HTDemucs shared CLI now exposes device, shifts, overlap and segment
+length. Cold first inference missed the four-second deadline;
+pre-readiness warmup corrected the observed problem. Real CUDA OBS
+nondefault (0/.1/4s) and default (1/.25/model default) settings
+passed: two eight-second windows respectively 1.309/1.208 s and
+1.366/1.241 s. Eight worker unit tests and isolated default
+acceptance including missing worker silence passed. Underlying
+adapter still reloads weights per call. Worker graphical controls,
+other accepted gaps and full expanded regression remain open.
+Combined seven-effect staged module SHA256 2756229d8f8438dc3dbd276990c377f22f49fe2e53e37e01baabcb147ae4dd08.
+No installation or push in this pass.

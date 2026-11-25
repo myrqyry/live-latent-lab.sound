@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -33,6 +34,26 @@ def precision_options(mode: str) -> dict[str, bool]:
     if mode not in ('fp32','autocast'):
         raise ValueError('Unsupported/unqualified Demucs precision: '+str(mode))
     return {'use_autocast':mode=='autocast','use_native_fp16':False}
+
+
+def demucs_options(shifts=1, overlap=.25, segment=None):
+    # The live worker retains its 8 s request geometry. Limit quality
+    # options to bounded candidates; HTDemucs has a training segment limit.
+    if type(shifts) is not int or not 0 <= shifts <= 2:
+        raise ValueError("Live Demucs shifts must be 0–2")
+    if type(overlap) not in (int,float) or not math.isfinite(overlap) or not .05 <= overlap <= .5:
+        raise ValueError("Live Demucs overlap must be 0.05–0.5")
+    if segment is not None and (type(segment) is not int or not 1 <= segment <= 7):
+        raise ValueError("Live Demucs segment must be 1–7 seconds or default")
+    return {"segment_size":"Default" if segment is None else str(segment),
+            "shifts":shifts,"overlap":overlap,"segments_enabled":True}
+
+
+def require_device(requested, actual):
+    if requested not in ("auto","cpu","cuda"):
+        raise ValueError("Unsupported compute device")
+    if requested!="auto" and str(actual).split(":")[0]!=requested:
+        raise RuntimeError(f"Demucs requested {requested} but runtime selected {actual}")
 
 
 def require_effective_precision(requested: str, actual: str, device: object) -> None:
@@ -109,6 +130,20 @@ def separate_window(sep, audio,rate:int, temporary:Path):
     return np.asarray(output,dtype="<f4")
 
 
+def warmup(separator, temporary: Path) -> float:
+    # Exercise the real separation before declaring the socket ready. This
+    # primes runtime/kernel and filesystem caches, not model residency:
+    # the installed audio-separator Demucs adapter reloads weights per call.
+    import numpy as np
+    rate=48000
+    t=np.arange(rate*WINDOW_SECONDS,dtype=np.float32)/rate
+    pcm=np.stack((.03*np.sin(2*np.pi*220*t),.025*np.sin(2*np.pi*330*t)))
+    started=time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="stem-warmup-",dir=temporary) as folder:
+        separate_window(separator,pcm,rate,Path(folder))
+    return time.monotonic()-started
+
+
 def serve_client(conn:socket.socket,separator,temporary:Path)->None:
     version,rate,frames,seq=VERSION,0,0,0
     conn.settimeout(30.0)
@@ -174,7 +209,20 @@ def main()->int:
     parser.add_argument("--socket",default=None)
     parser.add_argument('--precision',choices=('fp32','autocast'),default='fp32',
                         help='FP32 reference (default), or measured experimental CUDA mixed FP16 autocast')
+    parser.add_argument("--device",choices=("auto","cuda","cpu"),default="auto",
+                        help="Require a device or let the installed runtime choose")
+    parser.add_argument("--shifts",type=int,default=1,help="Random shift averaging, 0–2")
+    parser.add_argument("--overlap",type=float,default=.25,help="Model overlap, 0.05–0.5")
+    parser.add_argument("--segment-seconds",type=int,default=None,help="1–7 seconds, omit for model default")
     args=parser.parse_args()
+    try:
+        quality=demucs_options(args.shifts,args.overlap,args.segment_seconds)
+        if args.device=="cpu" and args.precision=="autocast":
+            raise ValueError("CUDA autocast cannot use CPU")
+    except ValueError as error:
+        parser.error(str(error))
+    if args.device=="cpu":
+        os.environ["CUDA_VISIBLE_DEVICES"]=""
     models=model_path(args.model_dir)
     if not (models/"htdemucs.yaml").is_file() or not any(models.glob("*.th")):
         raise FileNotFoundError("Verified HTDemucs model is not cached; no downloads allowed")
@@ -185,11 +233,20 @@ def main()->int:
     print("STEM_MODEL_LOADING existing HTDemucs model only",flush=True)
     sep=Separator(model_file_dir=str(models),output_format="WAV",use_soundfile=True,
                   **precision_options(args.precision),
-                  demucs_params={"segment_size":"Default","shifts":1,"overlap":0.25,"segments_enabled":True})
+                  demucs_params=quality)
+    require_device(args.device,sep.torch_device)
     sep.load_model("htdemucs.yaml")
     require_effective_precision(args.precision,sep.effective_precision,sep.torch_device)
+    actual=sep.model_instance
+    if actual.shifts!=quality["shifts"] or actual.overlap!=quality["overlap"] or not actual.segments_enabled:
+        raise RuntimeError("Demucs runtime did not retain requested quality settings")
+    if args.segment_seconds is not None and str(actual.segment_size)!=str(args.segment_seconds):
+        raise RuntimeError("Demucs runtime did not retain requested segment setting")
+    print(f"STEM_QUALITY device={sep.torch_device} shifts={actual.shifts} overlap={actual.overlap} segment={actual.segment_size}",flush=True)
     print(f'STEM_PRECISION requested={args.precision} effective={sep.effective_precision} device={sep.torch_device}',flush=True)
     with tempfile.TemporaryDirectory(prefix="lll-sound-stem-sidecar-") as work:
+        elapsed=warmup(sep,Path(work))
+        print(f"STEM_WARMUP processing={elapsed:.3f}s",flush=True)
         old_umask=os.umask(0o077)
         try:
             with StreamServer(str(endpoint),Handler,sep,Path(work)) as server:

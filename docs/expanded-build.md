@@ -139,3 +139,34 @@ It does not install into the normal OBS profile. It is not a clean-machine
 runtime installer, a sustained production performance test, or proof of
 redistribution rights. The existing test still depends on matching OBS
 development and text-source components being installed.
+
+### Shared HTDemucs model controls
+
+Launch the existing local sidecar with the model-specific options
+below. These control the shared worker, not each OBS filter.
+
+```sh
+python tools/live_stem_sidecar.py --device cuda --shifts 0 \
+  --overlap 0.1 --segment-seconds 4 --precision fp32
+```
+
+Use the installed stem-splitter Python environment and cached model
+directory. `--device auto` is the default; explicit CPU or CUDA
+selection fails if the runtime cannot honor it. CPU is not qualified
+for live deadlines. Shifts 0–2, overlap 0.05–0.5 and segment seconds
+1–7 are bounded choices. Omit segment length for model default;
+defaults are one shift and 0.25 overlap. A synthetic warmup runs
+before the socket accepts audio. High quality settings can exceed
+the fixed four-second inference allowance; missed deadlines mute.
+The worker CLI can be changed before launching/restarting it.
+A global OBS graphical worker manager remains future work.
+
+The existing verification runner accepts STEM_VERIFY_DEVICE,
+STEM_VERIFY_SHIFTS, STEM_VERIFY_OVERLAP and STEM_VERIFY_SEGMENT
+to check a selected configuration using its isolated real model
+test. For example, with the required fixture/environment configured:
+
+```sh
+STEM_VERIFY_DEVICE=cuda STEM_VERIFY_SHIFTS=0 STEM_VERIFY_OVERLAP=0.1 \
+  STEM_VERIFY_SEGMENT=4 ./tests/verify-stem-live.sh --with-model
+```
