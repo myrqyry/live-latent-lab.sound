@@ -26,6 +26,9 @@
 #include <sys/socket.h>
 #include <poll.h>
 #include "framework/same_resident.hpp"
+#include "framework/same_overlap.hpp"
+#include "framework/ring-buffer.hpp"
+#include <media-io/audio-resampler.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <unistd.h>
@@ -44,7 +47,7 @@ struct Config {
     std::string models,prompt,negative,device,variant="small-music",input_file,input_source,alternate_prompt,
         lora_a,lora_b,sound_channel,sight_channel;
     float lora_a_strength=1.f,lora_b_strength=1.f;
-    std::string morph_a,morph_b,morph_effect="blend";float morph_mix=.5f,morph_position=.5f;int morph_radius=2,morph_grain=2;bool morph_ramp=false;
+    std::string morph_a,morph_b,morph_effect="blend";float morph_mix=.5f,morph_position=.5f;int morph_radius=2,morph_grain=2,live_reserve=4;bool morph_ramp=false;
     bool automate_b=false,capture_muted=false,adaptive_buffer=false;
     double capture_seconds=6;
     float transform_noise=.5f;
@@ -57,7 +60,7 @@ struct Clip {
     size_t frames=0;
     uint32_t sample_rate=rate,source_channels=2;
 };
-enum class Job { None, Generate, Replay, Continuous, Transform, Extend, Morph };
+enum class Job { None, Generate, Replay, Continuous, Transform, Extend, Morph, LiveTexture };
 struct State {
     explicit State(obs_source_t* s):source(s){}
     obs_source_t* source;
@@ -73,6 +76,8 @@ struct State {
     std::atomic<uint64_t> captured{0},sound_cues{0},sight_cues{0},automated{0};
     std::atomic<uint64_t> resident_starts{0},resident_requests{0},resident_graph_builds{0};
     std::atomic<bool> resident_active{false};
+    std::atomic<uint64_t> live_blocks{0},live_dropped{0},live_delay_ms{0};
+    std::atomic<bool> live_running{false};
     // Session telemetry is protected by mutex. The cooperative finish flag
     // is also read by the native lookahead callback without taking a lock.
     std::atomic<bool> finish_requested{false};
@@ -763,6 +768,158 @@ public:
         }catch(...){close();throw;}
     }
 };
+// Interleaved bounded SPSC input. Only the callback writes; only the
+// inference producer reads. A discontinuity terminates the session rather
+// than skipping samples or time-compressing the wet signal.
+struct LiveCapture {
+    const unsigned hz,channels;
+    const bool capture_muted;
+    stts::RingBuffer ring;
+    std::atomic<bool> invalid{false};
+    std::atomic<uint64_t> dropped{0},first{0};
+    std::atomic_flag busy=ATOMIC_FLAG_INIT;
+    uint64_t expected=0;
+    LiveCapture(unsigned r,unsigned c,bool m):hz(r),channels(c),capture_muted(m),ring(size_t(r)*16){}
+};
+void live_capture(void* opaque,obs_source_t*,const audio_data* a,bool muted){
+    auto& c=*static_cast<LiveCapture*>(opaque);
+    if(c.invalid||!a||!a->frames)return;
+    if(c.busy.test_and_set(std::memory_order_acquire)){c.invalid=true;return;}
+    struct Unlock{std::atomic_flag& b;~Unlock(){b.clear(std::memory_order_release);}} unlock{c.busy};
+    if(!a->data[0]||(c.channels==2&&!a->data[1])){c.invalid=true;return;}
+    if(c.expected&&((a->timestamp>c.expected?a->timestamp-c.expected:c.expected-a->timestamp)>80000000)){
+        c.invalid=true;return;
+    }
+    c.expected=a->timestamp+uint64_t(a->frames)*1000000000/c.hz;
+    if(!c.first)c.first=a->timestamp;
+    std::array<float,2048> pcm{};
+    for(uint32_t i=0;i<a->frames;){
+        unsigned count=std::min<uint32_t>(1024,a->frames-i);
+        for(unsigned j=0;j<count;++j)for(unsigned ch=0;ch<2;++ch){
+            float v=muted&&!c.capture_muted?0.f:reinterpret_cast<const float*>(a->data[c.channels==1?0:ch])[i+j];
+            if(!std::isfinite(v)){c.invalid=true;return;}
+            pcm[2*j+ch]=std::clamp(v,-1.f,1.f);
+        }
+        const auto n=c.ring.write(pcm.data(),count*2);
+        if(n!=count*2){c.dropped+=(a->frames-i)-n/2;c.invalid=true;return;}
+        i+=count;
+    }
+}
+void live_texture(State& s,Config c,uint64_t epoch){
+    constexpr size_t hop=16384,window=2*hop;
+    auto fail=[&](const std::string& error,bool underrun=false){
+        std::lock_guard lock(s.mutex);if(s.current(epoch)){++s.failed;if(underrun)++s.underruns;s.message=error;}
+    };
+    if(c.morph_effect=="blend"){fail("Select Freeze, Temporal smear or Grain repeat for live texture");return;}
+    auto* raw=obs_get_source_by_uuid(c.input_source.c_str());
+    struct Source{obs_source_t* p;~Source(){if(p)obs_source_release(p);}} source{raw};
+    if(!capture_source(raw)||raw==s.source||obs_source_removed(raw)||!obs_source_enabled(raw)){fail("Live texture input unavailable");return;}
+    auto* audio=obs_get_audio();
+    unsigned hz=audio?audio_output_get_sample_rate(audio):0,ch=audio?audio_output_get_channels(audio):0;
+    if((hz!=44100&&hz!=48000)||(ch!=1&&ch!=2)){fail("Live texture requires mono/stereo 44.1 or 48 kHz");return;}
+    LiveCapture capture(hz,ch,c.capture_muted);
+    s.live_running=true;
+    struct End{State& s;LiveCapture& capture;~End(){s.live_running=false;s.live_dropped=capture.dropped.load();}} end{s,capture};
+    obs_source_add_audio_capture_callback(raw,live_capture,&capture);
+    struct Detach{obs_source_t* src;LiveCapture& c;~Detach(){obs_source_remove_audio_capture_callback(src,live_capture,&c);}} detach{raw,capture};
+    std::deque<std::shared_ptr<Clip>> ready;
+    bool done=false;std::string error;
+    const auto target=size_t(c.live_reserve);
+    const auto helper=std::filesystem::path(obs_get_module_binary_path(obs_current_module())).parent_path()/"sa3-runtime/sound-sa3-morph";
+    const auto model=std::filesystem::path(c.models)/"stable-audio-3-small-music-same-s-v1.0-F16.gguf";
+    Cancel token{s,epoch,true};
+    {std::lock_guard lock(s.mutex);if(!s.current(epoch))return;s.message="Prefilling live texture reserve";s.stage="capturing";++s.started;}
+    auto producer=std::async(std::launch::async,[&]{
+        // Mutex ownership and process lifetime stay on this producer.
+        ResidentWorker resident(s);
+        try{
+            if(!resident.start(helper.string(),model.string(),c.device=="cpu"?"cpu":"auto"))
+                throw std::runtime_error("Another source owns the warm SAME-S worker");
+            resample_info in{hz,AUDIO_FORMAT_FLOAT,SPEAKERS_STEREO},out{rate,AUDIO_FORMAT_FLOAT_PLANAR,SPEAKERS_STEREO};
+            std::unique_ptr<audio_resampler_t,decltype(&audio_resampler_destroy)> resampler(hz==rate?nullptr:audio_resampler_create(&out,&in),audio_resampler_destroy);
+            if(hz!=rate&&!resampler)throw std::runtime_error("Live resampler failed");
+            std::array<float,4096> incoming{};
+            std::array<std::vector<float>,2> samples;
+            for(auto& v:samples)v.reserve(window+8192);
+            std::vector<float> previous;
+            Clip input;input.frames=window;input.pcm.resize(window*2);
+            auto last_input=std::chrono::steady_clock::now();
+            while(token.current()&&!capture.invalid&&!obs_source_removed(raw)&&obs_source_enabled(raw)){
+                if(samples[0].size()<window){
+                    const auto count=capture.ring.read(incoming.data(),incoming.size());
+                    if(!count){
+                        if(std::chrono::steady_clock::now()-last_input>2s)throw std::runtime_error("Live input stalled");
+                        std::this_thread::sleep_for(4ms);continue;
+                    }
+                    last_input=std::chrono::steady_clock::now();
+                    if(count%2)throw std::runtime_error("Invalid stereo input framing");
+                    if(resampler){
+                        const uint8_t* data[MAX_AUDIO_CHANNELS]{reinterpret_cast<const uint8_t*>(incoming.data())};
+                        uint8_t* output[MAX_AUDIO_CHANNELS]{};uint32_t frames=0;uint64_t offset=0;
+                        if(!audio_resampler_resample(resampler.get(),output,&frames,&offset,data,uint32_t(count/2))||
+                            (frames&&(!output[0]||!output[1])))throw std::runtime_error("Live resample failed");
+                        for(int channel=0;channel<2;++channel)if(frames){
+                            auto* p=reinterpret_cast<float*>(output[channel]);
+                            for(uint32_t j=0;j<frames;++j)samples[channel].push_back(std::clamp(p[j],-1.f,1.f));
+                        }
+                    }else for(size_t j=0;j<count/2;++j)for(int channel=0;channel<2;++channel)samples[channel].push_back(incoming[j*2+channel]);
+                    continue;
+                }
+                Config next=c;
+                {
+                    std::unique_lock lock(s.mutex);
+                    while(token.current()&&!capture.invalid&&ready.size()>=target+2)s.cv.wait_for(lock,20ms);
+                    if(!token.current()||capture.invalid)break;
+                    const auto& v=s.config;
+                    if(v.morph_effect!="blend")next.morph_effect=v.morph_effect;
+                    next.morph_mix=v.morph_mix;next.morph_position=v.morph_position;
+                    next.morph_radius=v.morph_radius;next.morph_grain=v.morph_grain;
+                }
+                for(int channel=0;channel<2;++channel)std::copy_n(samples[channel].data(),window,input.pcm.data()+channel*window);
+                // The live codec has a single independently bounded native
+                // process. Do not serialize its subsecond deadline behind a
+                // potentially multi-second diffusion job. The residency slot
+                // limits this exception to ONE live codec across all sources.
+                // Resource exhaustion is reported and stops the wet source;
+                // the original source continues dry.
+                auto decoded=resident.request(input,next,token);
+                auto output=std::make_shared<Clip>();output->frames=hop;
+                same_overlap::blend(decoded->pcm,previous,output->pcm,hop);
+                for(auto& v:samples)v.erase(v.begin(),v.begin()+hop);
+                std::lock_guard lock(s.mutex);
+                if(!token.current()||capture.invalid)break;
+                ready.push_back(std::move(output));++s.live_blocks;s.cv.notify_all();
+            }
+            if(capture.invalid)throw std::runtime_error("Live input overflow or timestamp discontinuity");
+            if(token.current())throw std::runtime_error("Live input removed or disabled");
+        }catch(const std::exception& e){std::lock_guard lock(s.mutex);error=e.what();}
+        catch(...){std::lock_guard lock(s.mutex);error="Live producer failed";}
+        resident.close();
+        std::lock_guard lock(s.mutex);done=true;s.cv.notify_all();
+    });
+    struct StopProducer{State& s;uint64_t epoch;~StopProducer(){std::lock_guard lock(s.mutex);if(s.current(epoch))s.finish_requested=true;s.cv.notify_all();}} stop{s,epoch};
+    {
+        std::unique_lock lock(s.mutex);
+        s.cv.wait(lock,[&]{return !s.current(epoch)||done||ready.size()>=target;});
+        if(!s.current(epoch))return;
+        if(done){auto e=error;lock.unlock();fail(e.empty()?"Live prefill failed":e);return;}
+        s.message="Live texture playing";s.stage="live";s.progress=100;
+    }
+    PlayClock clock;
+    const auto first=capture.first.load();if(first&&clock.clock>=first)s.live_delay_ms=(clock.clock-first)/1000000;
+    bool initial=true;
+    while(s.current(epoch)){
+        std::shared_ptr<Clip> clip;
+        {
+            std::unique_lock lock(s.mutex);
+            if(!s.current(epoch))return;
+            if(ready.empty()||done){auto e=error;lock.unlock();fail(e.empty()?"Live reserve exhausted":e,true);return;}
+            clip=std::move(ready.front());ready.pop_front();s.next_frames=ready.size()*hop;s.cv.notify_all();
+        }
+        if(initial){for(int ch=0;ch<2;++ch)for(size_t j=0;j<rate/50;++j)clip->pcm[ch*hop+j]*=float(j)/float(rate/50);initial=false;}
+        if(!play_range(s,*clip,hop,clock,epoch)){if(s.current(epoch))fail("Live playback deadline missed",true);return;}
+    }
+}
 std::shared_ptr<Clip> morph(State& s,const Config& c,uint64_t epoch,std::string& error,ResidentWorker& resident){
     GenerationStatus generation(s,epoch,false);
     if(!generation.token.current())return {};
@@ -854,6 +1011,9 @@ void worker(State* s){
         SessionEnd end{*s,e};
         try{
             if(job==Job::Continuous){continuous(*s,c,e);continue;}
+#ifdef SOUND_WITH_SAME_MORPH
+            if(job==Job::LiveTexture){live_texture(*s,c,e);continue;}
+#endif
             if(job==Job::Generate||job==Job::Transform||job==Job::Extend||job==Job::Morph){
                 {std::lock_guard lock(s->mutex);if(!s->current(e))continue;++s->started;s->progress=0;s->message="Generating";}
                 std::string error;
@@ -906,6 +1066,7 @@ void update(void* p,obs_data_t* d){
     auto position=obs_data_get_double(d,"morph_position");c.morph_position=std::isfinite(position)?float(std::clamp(position,0.,1.)):.5f;
     c.morph_radius=int(std::clamp<int64_t>(obs_data_get_int(d,"morph_radius"),1,16));
     c.morph_grain=int(std::clamp<int64_t>(obs_data_get_int(d,"morph_grain"),1,16));
+    c.live_reserve=int(std::clamp<int64_t>(obs_data_get_int(d,"live_reserve"),3,12));
     c.input_file=obs_data_get_string(d,"input_file");c.input_source=obs_data_get_string(d,"input_source");
     c.alternate_prompt=obs_data_get_string(d,"alternate_prompt");
     c.lora_a=obs_data_get_string(d,"lora_a");c.lora_b=obs_data_get_string(d,"lora_b");
@@ -934,6 +1095,7 @@ bool queue(void* p,Job job){
     invalidate(s);s.pending=job;s.message="Queued";
     s.continuous_session=job==Job::Continuous;
     s.adaptive_session=s.continuous_session&&s.config.adaptive_buffer;s.prefill_frames=0;
+    s.live_blocks=s.live_dropped=s.live_delay_ms=0;
     s.session_frames=s.generation_ms=s.underruns=0;s.cv.notify_all();return false;
 }
 std::string status_description(void* p){
@@ -942,6 +1104,7 @@ std::string status_description(void* p){
         status+="\nStage: "+std::string(s.stage)+" | Last generation: "+std::to_string(s.generation_ms)+" ms";
         status+="\nCurrent buffer: "+std::to_string(s.buffer_frames*1000/rate)+" ms | Next clip: "+std::to_string(s.next_frames*1000/rate)+" ms";
         status+="\nPlayed: "+std::to_string(s.session_frames/rate)+" s | Underruns: "+std::to_string(s.underruns);
+        if(s.live_running)status+="\nLive blocks: "+std::to_string(s.live_blocks.load())+" | Delay: "+std::to_string(s.live_delay_ms.load())+" ms";
         if(s.resident_active)status+="\nSAME-S warm | Requests: "+std::to_string(s.resident_requests.load())+" | Graph pairs: "+std::to_string(s.resident_graph_builds.load());
         if(s.adaptive_session)status+="\nReserve: "+std::to_string(s.reserve_frames*1000/rate)+" ms | "+std::to_string(s.queued_clips)+"/"+std::to_string(s.target_clips)+" clips"+(s.prefilling?" | Prefilling":"");}
     return status;
@@ -959,6 +1122,7 @@ bool transform(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Tr
 bool extend(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Extend);}
 #ifdef SOUND_WITH_SAME_MORPH
 bool morph_button(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Morph);}
+bool live_button(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::LiveTexture);}
 #endif
 bool replay(obs_properties_t*,obs_property_t*,void* p){return queue(p,Job::Replay);}
 bool finish_segment(obs_properties_t*,obs_property_t*,void* p){
@@ -974,7 +1138,7 @@ void defaults(obs_data_t* d){
     obs_data_set_default_double(d,"morph_mix",.5);
     obs_data_set_default_string(d,"morph_effect","blend");
     obs_data_set_default_double(d,"morph_position",.5);
-    obs_data_set_default_int(d,"morph_radius",2);obs_data_set_default_int(d,"morph_grain",2);
+    obs_data_set_default_int(d,"morph_radius",2);obs_data_set_default_int(d,"morph_grain",2);obs_data_set_default_int(d,"live_reserve",4);
     obs_data_set_default_bool(d,"adaptive_buffer",false);
     obs_data_set_default_double(d,"lora_a_strength",1);obs_data_set_default_double(d,"lora_b_strength",1);
     obs_data_set_default_string(d,"variant","small-music");obs_data_set_default_double(d,"transform_noise",.5);
@@ -1025,6 +1189,9 @@ obs_properties_t* props(void* p){
     obs_properties_add_int_slider(morph_props,"morph_grain","Grain length (latent frames)",1,16,1);
     obs_properties_add_bool(morph_props,"morph_ramp","Ramp from A toward selected blend");
     obs_properties_add_button2(morph_props,"morph","Process and play",morph_button,p);
+    obs_properties_add_int_slider(morph_props,"live_reserve","Live reserve (370 ms blocks)",3,12,1);
+    obs_properties_add_text(morph_props,"live_note","Live: choose capture source above and a single-input operation. Separate delayed wet output; original source stays dry.",OBS_TEXT_INFO);
+    obs_properties_add_button2(morph_props,"live_texture","Start live texture",live_button,p);
     obs_properties_add_group(d,"latent_morph","Neural latent morph / texture (SAME-S)",OBS_GROUP_NORMAL,morph_props);
 #endif
     obs_properties_add_button2(d,"stop","Stop / cancel",stop,p);
@@ -1086,6 +1253,10 @@ void buffer_status(void* p,calldata_t* d){
     calldata_set_int(d,"prefill_ms",s.prefill_frames*1000/rate);
 }
 #ifdef SOUND_WITH_SAME_MORPH
+void live_status(void* p,calldata_t* d){
+    auto& s=*static_cast<State*>(p);
+    calldata_set_int(d,"blocks",s.live_blocks);calldata_set_int(d,"dropped",s.live_dropped);calldata_set_int(d,"delay_ms",s.live_delay_ms);calldata_set_bool(d,"running",s.live_running);
+}
 void resident_status(void* p,calldata_t* d){
     auto& s=*static_cast<State*>(p);
     calldata_set_int(d,"starts",s.resident_starts);calldata_set_int(d,"requests",s.resident_requests);
@@ -1108,6 +1279,7 @@ void* create(obs_data_t* d,obs_source_t* source){
 #ifdef SOUND_WITH_SAME_MORPH
         proc_handler_add(obs_source_get_proc_handler(source),
           "void sound_same_resident_v1(out int starts, out int requests, out int graph_builds, out int active)",resident_status,s.get());
+        proc_handler_add(obs_source_get_proc_handler(source),"void sound_same_live_v1(out int blocks, out int dropped, out int delay_ms, out bool running)",live_status,s.get());
 #endif
         return s.release();
     }catch(...){return nullptr;}

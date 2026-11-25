@@ -465,3 +465,41 @@ context/overlap handling, seam quality, cross-source contention test and
 full expanded Sound acceptance remain open. Existing separate YAMNet/TTS
 work is excluded from this commit; the staged module was built in the
 working tree containing the pre-existing YAMNet change.
+
+## Continuous live SAME-S, native YAMNet and local reader providers (2026-11-24)
+
+Qualified staged module SHA256: 28302f1226a7731d6e1e01610314a80e083cebe69cb0cb3c7931667f002558dc.
+Continuous single-input neural texture source uses 32768-frame windows,
+16384-frame hops, aligned linear crossfade, bounded capture and output
+queues, worker-owned resampling and a sample-count output clock. The
+source preserves the original dry signal. One live resident worker may
+execute concurrently with the serialized batch diffusion gate; another
+live source cannot obtain a second resident slot. The initial serialized
+test exhausted the reserve under heavy diffusion; the bounded concurrent
+implementation passed actual 60-second/32-step SA3 contention at 44.1 kHz
+with eight-block reserve (3347 ms startup, zero dropped/underrun).
+Default 48 kHz four-block reserve measured 1860 ms startup; the 40-second
+input run processed 106 blocks, captured 1834301 wet frames, dropped zero,
+had zero failures/underruns and max timestamp gap 354167 ns. Stalled input
+stopped wet output, released its helper, and explicit restart recovered.
+The actual generated-music audition run passed (max adjacent sample step
+0.1112; no clipped samples), with dry and wet WAVs retained in the local
+qualification directory. These are objective measurements, not subjective
+listening or indefinite hardware-clock/saturation qualification.
+The complete focused SA3 upgrades runner passed both sample rates,
+capture/automation/LoRA/Sight fixture, SFX/transform/extend and original
+manual generation. Resident texture/morph runner with lifecycle, dock,
+registry and quarantine passed. New live wrapper assembles the separately
+executed cases; its entire wrapper was not rerun as one invocation.
+YAMNet commits d37e3d3 (CPU default, Auto fallback and strict GPU error)
+and reader commits df4d5bd/7562df7 (provider policy and docs) are included
+in the history; no remaining pre-existing uncommitted YAMNet/TTS changes.
+Real YAMNet CPU/Auto at both sample rates and explicit GPU-failure dry
+pass passed. Native GPU graph init failed on this MediaPipe/model pair.
+Qualified model copied without replacing files to external Audio/yamnet.
+Local Piper/Kokoro policy tests, option and retention tests, direct
+CPU speech and actual reader service socket passed. Existing ONNX
+Runtime offers CPU but no CUDA provider. Reader service drop-in points
+to the current repository; original unit/old checkout preserved.
+Full legacy expanded acceptance (including online speech, stem and all
+STT backends) was not rerun; the old wrapper still has obsolete counts.

@@ -124,12 +124,13 @@ from anchor/grain selection. Freeze and grain are neural texture
 operations, not spectral freeze or a conventional PCM granular engine.
 All retain the input clip duration and use the existing replay/cancel
 path. For longer grains than the available input, the length is clamped.
-No continuous live capture or streaming latent processing is implied.
+The clip buttons process files; the separate live texture command below
+processes a selected live source.
 
 The current family/step/negative prompt settings do not affect morphing.
 Auto prefers CUDA; CPU can be selected explicitly. No sample format
-conversion, automatic truncation of different input durations, live
-source morph, beat alignment, or per-frame slider scrubbing is provided.
+conversion for file morph, automatic truncation of different input durations,
+live two-input morph, beat alignment, or per-frame slider scrubbing is provided.
 
 The OBS worker launches a fixed local executable with argv (no shell)
 and shares the existing inference gate with diffusion. A/B morph and
@@ -159,7 +160,7 @@ recovery. Run `tests/verify-same-texture.sh` with the same environment for
 deterministic latent indexing, effect amount zero, distinct audio for
 all three modes, CPU/GPU agreement and actual OBS playback of each
 mode without a second WAV. Subjective quality and live neural granular
-processing remain separate qualification steps.
+processing quality remain separate qualification steps.
 
 ### Resident SAME-S texture worker
 
@@ -172,9 +173,9 @@ there is no unbounded graph cache. PCM is transferred directly through
 a private local socket, not temporary WAV files.
 
 One warm context is allowed across Sound sources. If another source
-already owns it, the existing isolated one-shot path is used. All
-inference still shares the diffusion gate; idle warm weights can remain
-resident while another source runs diffusion. The worker is released
+already owns it, the existing isolated one-shot path is used. Batch inference still shares the diffusion gate; idle warm weights can remain
+resident while another source runs diffusion. The live single-input codec
+is a bounded concurrent exception described below. The worker is released
 after eight seconds of inactivity following playback, on Stop,
 deactivation, destruction, or before another kind of generation in
 the same source. Model/device changes are picked up on the next request.
@@ -201,8 +202,66 @@ short-block throughput. Use SOUND_SAME_RESIDENT_OBS=1 with the existing
 texture runner to exercise warm reuse, Stop, restart, idle expiry and
 resident cancellation in actual OBS. Short-block throughput is not a
 measurement of live audio latency, decoder seam quality or an inline
-filter. Live capture scheduling and overlap/context management remain
-separate work.
+filter. Live scheduling and overlap/context handling are described below.
+
+### Continuous live neural textures
+
+Add a separate Audio Diffusion source to the active scene. Select an
+existing audio input using **Capture audio source (optional)**, then
+choose Freeze, Temporal smear or Latent grain repeat in the
+**Neural latent morph / texture (SAME-S)** group. Choose Live reserve
+(3–12 blocks) and click **Start live texture**. Stop / cancel ends the
+session. The dry source remains untouched; the generated output is a
+separate delayed wet channel. Mute or route the dry channel separately
+if you only want the wet output. Captured muted packets are replaced
+with zeros unless Capture muted source is explicitly enabled.
+A/B morph continues to be a two-file batch operation.
+
+At the model's 44.1 kHz rate, the resident codec processes windows of
+32768 samples (743 ms), advancing 16384 samples (372 ms) per request.
+48 kHz input is resampled using libobs on the inference producer,
+not the audio callback. The previous decoded second half and the next
+decoded first half are blended linearly at matching sample positions.
+The first block fades in over 20 ms. This preserves the sample count,
+reduces boundary discontinuities and does not resample each window
+independently. Output uses one sample-count clock for the session;
+no per-window clock reset. Changes to amount, position, radius,
+grain size and single-input effect apply to newly processed windows,
+not previously buffered audio. Input source, compute device and reserve
+apply on restart. Freeze/grain selections are per-window positions,
+not a persistent global freeze latch.
+
+Four ready blocks is the default; the observed startup delay was
+about 1.86 seconds. Eight blocks measured about 3.35 seconds. Reserve
+trades latency for scheduling headroom. The input ring, ready queue
+and graph cache are bounded. A full ring, invalid sample/timestamp
+discontinuity, stalled input, removed source, native worker failure
+or exhausted reserve stops wet playback and reports an error; it never
+silently drops time or replaces it with fabricated audio. Restart
+explicitly to recover. The callback copies input into preallocated
+storage; inference, resampling and output pacing run off that thread.
+
+One live resident codec may run in its own process concurrently with
+the serialized batch diffusion gate. This avoids starving the wet
+channel behind a multi-second diffusion job. The residency slot
+prevents additional concurrent warm codecs; another live source must
+wait until the existing one is stopped. Concurrent resource exhaustion
+can still stop the wet source. Actual CUDA contention with a separate
+60-second, 32-step SA3 generation passed; arbitrary GPU saturation is
+not guaranteed. A/B morph, one-shot fallback and batch generation
+retain their existing serialization rules. The procedure
+`sound_same_live_v1` exposes running, processed blocks, dropped input
+frames (final count on stop), and measured startup delay_ms. Existing
+diffusion status V3 exposes playback and underruns.
+
+Use `tests/verify-same-live.sh` with SOUND_SA3_STAGE and SOUND_SA3_MODELS
+for overlap math, actual 48 kHz default reserve, 44.1 kHz competing
+generation, 40-second 48 kHz soak and stall/restart. The actual
+fixtures checked finite bounded output, monotonic near-contiguous
+timestamps, dry continuity and measured sample discontinuities.
+This is a delayed live wet source, not a zero-latency inline filter.
+Subjective sound quality, long-duration hardware clock drift and
+arbitrary GPU workload coverage are not established by these tests.
 
 ### Playback and audio-to-audio
 
