@@ -19,6 +19,7 @@
 #include "engines/stt_backend.hpp"
 #include "framework/stt_capture.hpp"
 #include "framework/stt_config.hpp"
+#include "framework/stt_caption_history.hpp"
 #include "framework/stt_wake.hpp"
 #include "interop/sound_signal_client.hpp"
 namespace {
@@ -55,6 +56,8 @@ bool is_text(obs_source_t* source){
 Config config(obs_data_t* d){
     Config c;
     c.backend=obs_data_get_string(d,"backend");
+    c.zipformer_model=obs_data_get_string(d,"zipformer_model_dir");
+    c.zipformer_threads=int(std::clamp<int64_t>(obs_data_get_int(d,"zipformer_threads"),1,8));
     c.nemotron_model=obs_data_get_string(d,"nemotron_model_path");
     c.nemotron_library=obs_data_get_string(d,"nemotron_library");
     c.nemotron_language=obs_data_get_string(d,"nemotron_language");
@@ -74,7 +77,7 @@ Config config(obs_data_t* d){
     c.nemotron_right=int(obs_data_get_int(d,"nemotron_right_context"));
     c.threads=get("threads",1,16);c.threshold=get("voice_threshold_db",-65,-20);
     c.silence=get("silence_ms",200,2000);c.max_phrase=get("max_phrase_ms",1500,15000);
-    c.hold=get("caption_hold_ms",1000,30000);
+    c.hold=get("caption_hold_ms",1000,30000);c.caption_lines=get("caption_lines",1,8);
     c.translate=obs_data_get_bool(d,"translate");c.while_muted=obs_data_get_bool(d,"process_muted");
     return c;
 }
@@ -184,6 +187,7 @@ void run(State& s){
     uint64_t rev=0,hot_rev=0,stream_epoch=0,expected_ts=0;
     bool ready=false,enabled=false;
     bool written=false;
+    stts::CaptionHistory history;
     std::vector<float> phrase;
     std::array<float,frame_size> frame{};
     size_t used=0;
@@ -192,7 +196,7 @@ void run(State& s){
     auto last_packet=std::chrono::steady_clock::now();
     auto clear_caption=[&]{
         if(written)caption(s,"","");
-        written=false;
+        written=false;history.clear();
     };
     auto reset_stream=[&]{
         engine.reset();
@@ -226,7 +230,7 @@ void run(State& s){
             s.partial_observed=std::chrono::steady_clock::now();
             s.partial_ms=std::chrono::duration_cast<std::chrono::milliseconds>(s.partial_observed-begin).count();
         }
-        if(changed&&!c.target.empty()){caption(s,c.target,t,e);written=true;}
+        if(changed&&!c.target.empty()){caption(s,c.target,history.partial(t,c.caption_lines),e);written=true;}
     };
     auto publish=[&](uint64_t e){
         if(speech_frames<10||phrase.empty()||s.epoch!=e){phrase.clear();speech_frames=quiet_frames=0;reset_stream();return;}
@@ -241,7 +245,7 @@ void run(State& s){
         if(aborted(&a))return;
         if(!ok){clear_caption();set_status(s,"inference_error");return;}
         if(t.empty()){if(had_partial)clear_caption();reset_stream();return;}
-        if(!c.target.empty()){caption(s,c.target,t,e);written=true;}
+        if(!c.target.empty()){caption(s,c.target,history.final(t,c.caption_lines),e);written=true;}
         std::lock_guard lock(s.result);
         if(s.epoch!=e)return;
         s.partial_text.clear();s.partial_epoch=0;
@@ -428,6 +432,9 @@ obs_audio_data* audio(void* ptr,obs_audio_data* packet){
 void defaults(obs_data_t* d){
     obs_data_set_default_string(d,"backend","whisper");
     obs_data_set_default_string(d,"parakeet_model_path","");
+    obs_data_set_default_string(d,"zipformer_model_dir","");
+    obs_data_set_default_int(d,"zipformer_threads",2);
+    obs_data_set_default_string(d,"zipformer_device","cpu");
     obs_data_set_default_string(d,"parakeet_device","auto");
     obs_data_set_default_string(d,"nemotron_model_path","");
     obs_data_set_default_string(d,"nemotron_library","");
@@ -453,6 +460,7 @@ void defaults(obs_data_t* d){
     obs_data_set_default_int(d,"silence_ms",600);
     obs_data_set_default_int(d,"max_phrase_ms",8000);
     obs_data_set_default_int(d,"caption_hold_ms",5000);
+    obs_data_set_default_int(d,"caption_lines",1);
     obs_data_set_default_bool(d,"translate",false);obs_data_set_default_bool(d,"process_muted",false);
 }
 bool add_target(void* p,obs_source_t* source){
@@ -460,6 +468,10 @@ bool add_target(void* p,obs_source_t* source){
     return true;
 }
 void backend_visibility(obs_properties_t* p,const std::string& backend){
+#ifdef SOUND_WITH_ZIPFORMER
+    for(auto key:{"zipformer_model_dir","zipformer_device","zipformer_threads","zipformer_note"})
+        obs_property_set_visible(obs_properties_get(p,key),backend=="zipformer");
+#endif
     for(auto key:{"nemotron_model_path","nemotron_library","nemotron_language","nemotron_device","nemotron_threads","nemotron_right_context","nemotron_note"})
         obs_property_set_visible(obs_properties_get(p,key),backend=="nemotron");
     for(auto key:{"model_path","whisper_device","language","translate","threads","initial_prompt"})
@@ -476,6 +488,12 @@ obs_properties_t* properties(void* ptr){
     obs_property_list_add_string(backend,"Whisper (GPU / CPU)","whisper");
     obs_property_list_add_string(backend,"Parakeet TDT (MediaPipe GPU / CPU)","parakeet");
     obs_property_list_add_string(backend,"Nemotron 3.5 ASR (streaming GPU / CPU)","nemotron");
+#ifdef SOUND_WITH_ZIPFORMER
+    obs_property_list_add_string(backend,"Zipformer (lightweight streaming CPU)","zipformer");
+    obs_properties_add_path(p,"zipformer_model_dir","Model",OBS_PATH_DIRECTORY,nullptr,nullptr);
+    auto* zip_device=obs_properties_add_list(p,"zipformer_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(zip_device,"CPU only","cpu");
+#endif
     obs_property_set_modified_callback(backend,backend_changed);
     obs_properties_add_path(p,"nemotron_model_path","Model",OBS_PATH_FILE,"GGUF models (*.gguf)",nullptr);
     auto* device=obs_properties_add_list(p,"nemotron_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
@@ -506,6 +524,7 @@ obs_properties_t* properties(void* ptr){
     obs_properties_add_int(p,"silence_ms","End-of-phrase silence (ms)",200,2000,20);
     obs_properties_add_int(p,"max_phrase_ms","Maximum phrase (ms)",1500,15000,100);
     obs_properties_add_int(p,"caption_hold_ms","Caption hold (ms)",1000,30000,100);
+    obs_properties_add_int(p,"caption_lines","Caption history (lines)",1,8,1);
     obs_properties_add_bool(p,"process_muted","Transcribe muted audio");
     obs_properties_add_path(p,"nemotron_library","Native Nemotron runtime (optional override)",OBS_PATH_FILE,"Shared libraries (*.so)",nullptr);
     obs_properties_add_text(p,"nemotron_language","Language locale (en-US, es-ES, auto, ...)",OBS_TEXT_DEFAULT);
@@ -522,7 +541,11 @@ obs_properties_t* properties(void* ptr){
     obs_properties_add_bool(p,"translate","Translate to English (multilingual model)");
     obs_properties_add_int(p,"threads","CPU threads",1,16,1);
     obs_properties_add_text(p,"initial_prompt","Vocabulary prompt (optional)",OBS_TEXT_DEFAULT);
-    obs_properties_add_text(p,"note","Local inference. Auto selects GPU when the selected runtime supports it; explicit GPU never requests CPU fallback. Nemotron supports partial captions; other engines publish completed phrases. Audio is unchanged. Choose a dedicated OBS text source (not file-backed). Gate, timing, prompt and caption target update live; model/runtime settings reload; disable filter to unload.",OBS_TEXT_INFO);
+#ifdef SOUND_WITH_ZIPFORMER
+    obs_properties_add_int(p,"zipformer_threads","Zipformer CPU threads",1,8,1);
+    obs_properties_add_text(p,"zipformer_note","Verified English 20M int8 model only. Native streaming CPU recognition; shared phrase segmentation.",OBS_TEXT_INFO);
+#endif
+    obs_properties_add_text(p,"note","Local inference. Auto selects GPU when the selected runtime supports it; explicit GPU never requests CPU fallback. Nemotron and optional Zipformer support partial captions; Whisper and Parakeet publish completed phrases. Audio is unchanged. Choose a dedicated OBS text source (not file-backed). Gate, timing, prompt and caption target update live; model/runtime settings reload; disable filter to unload.",OBS_TEXT_INFO);
     backend_visibility(p,selected);
     return p;
 }

@@ -285,3 +285,19 @@ work remains uncommitted. Small-SFX, audio-to-audio in OBS, continuous
 music and arbitrary GPU plugin coexistence remain unqualified. The
 existing expanded preset intentionally still requires explicit diffusion
 enablement.
+
+## Optional Zipformer and rolling captions (2026-11-24)
+
+Tested staged six-effect module SHA256: 2c42de01fa8506e61d82d426c5875efd347de97ba0058e6df0b73ca0afeb6ff9.
+Pinned Sherpa v1.12.40/ORT 1.24.4 runtime, pinned 43.65 MB English
+int8 model, CPU only. Real native fixture decode 158 ms, context 294 ms;
+OBS startup 341 ms at both 48 and 44.1 kHz, 30 distinct partial changes
+in each expanded caption test. Real recognition, unchanged audio,
+caption history, transcript isolation, lifecycle and hot-update tests
+passed at both rates. Four-engine layout, config policy, history tests,
+runtime checksum/license staging and default quarantine passed.
+The tested module predates a packaging-only CMake reconfigure with a
+different generated build marker; the new packaging rule was checked
+separately. Full expanded regression and switching/coexistence across
+all four engines remain unverified. OBS was open, so installation was
+not changed. See docs/zipformer-stt.md.

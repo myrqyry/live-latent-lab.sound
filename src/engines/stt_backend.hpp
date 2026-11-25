@@ -2,6 +2,9 @@
 #include "stt_whisper.hpp"
 #include "stt_parakeet.hpp"
 #include "stt_nemotron.hpp"
+#ifdef SOUND_WITH_ZIPFORMER
+#include "stt_zipformer.hpp"
+#endif
 #include "framework/stt_config.hpp"
 #include <algorithm>
 #include <filesystem>
@@ -12,18 +15,24 @@ namespace stts {
 // Worker-owned session. Native engines keep their own runtime ABI; capture,
 // caption publication, and cancellation epochs remain in the OBS filter.
 class SttBackend {
-    enum class Kind { None, Whisper, Parakeet, Nemotron };
+    enum class Kind { None, Whisper, Parakeet, Nemotron, Zipformer };
     Kind kind_=Kind::None;
     SttWhisper whisper_;
     SttParakeet parakeet_;
     SttNemotron nemotron_;
+#ifdef SOUND_WITH_ZIPFORMER
+    SttZipformer zipformer_;
+#endif
     bool started_=false;
     size_t fed_=0;
-    static constexpr size_t chunk_=8960;
+    size_t chunk()const{return kind_==Kind::Zipformer?1600:8960;}
 public:
     using Abort=bool(*)(void*);
     void close(){
         reset();whisper_.close();parakeet_.close();nemotron_.close();kind_=Kind::None;
+#ifdef SOUND_WITH_ZIPFORMER
+        zipformer_.close();
+#endif
     }
     bool open(const SttConfig& c,const std::filesystem::path& runtime){
         close();
@@ -42,6 +51,11 @@ public:
                 nemotron_.close();return false;
             }
             nemotron_.reset();kind_=Kind::Nemotron;
+#ifdef SOUND_WITH_ZIPFORMER
+        }else if(c.backend=="zipformer"){
+            if(!zipformer_.open(runtime/"zipformer/libsound-zipformer-sherpa.so",c.zipformer_model,c.zipformer_threads))return false;
+            kind_=Kind::Zipformer;
+#endif
         }else return false;
         return true;
     }
@@ -50,26 +64,44 @@ public:
         case Kind::Whisper:return whisper_.device();
         case Kind::Parakeet:return parakeet_.delegate();
         case Kind::Nemotron:return nemotron_.device_backend();
+        case Kind::Zipformer:return "CPU";
         default:return "none";
         }
     }
-    bool streaming()const{return kind_==Kind::Nemotron;}
-    bool partial_ready(size_t count)const{return streaming()&&count>=fed_&&count-fed_>=chunk_;}
+    bool streaming()const{return kind_==Kind::Nemotron||kind_==Kind::Zipformer;}
+    bool partial_ready(size_t count)const{return streaming()&&count>=fed_&&count-fed_>=chunk();}
     void reset(){
-        if(streaming())nemotron_.reset();
+        if(kind_==Kind::Nemotron)nemotron_.reset();
+#ifdef SOUND_WITH_ZIPFORMER
+        if(kind_==Kind::Zipformer)zipformer_.reset();
+#endif
         started_=false;fed_=0;
     }
     bool advance(const std::vector<float>& pcm,bool final,Abort abort,void* opaque,std::string& out){
         out.clear();
         if(!streaming()||pcm.size()<fed_||abort(opaque))return false;
-        if(!started_){if(!nemotron_.begin())return false;started_=true;fed_=0;}
-        while(pcm.size()-fed_>=chunk_||(final&&fed_<pcm.size())){
+        if(!started_){
+#ifdef SOUND_WITH_ZIPFORMER
+            if(kind_==Kind::Zipformer){if(!zipformer_.begin())return false;}
+            else
+#endif
+            if(!nemotron_.begin())return false;
+            started_=true;fed_=0;
+        }
+        while(pcm.size()-fed_>=chunk()||(final&&fed_<pcm.size())){
             if(abort(opaque))return false;
-            const auto n=std::min(chunk_,pcm.size()-fed_);
+            const auto n=std::min(chunk(),pcm.size()-fed_);
+#ifdef SOUND_WITH_ZIPFORMER
+            if(kind_==Kind::Zipformer){if(!zipformer_.feed(pcm.data()+fed_,n,out,abort,opaque))return false;}
+            else
+#endif
             if(!nemotron_.feed(pcm.data()+fed_,n,out))return false;
             fed_+=n;
         }
         if(abort(opaque))return false;
+#ifdef SOUND_WITH_ZIPFORMER
+        if(kind_==Kind::Zipformer)return (!final||zipformer_.finish(out,abort,opaque))&&!abort(opaque);
+#endif
         return (!final||nemotron_.finish(out))&&!abort(opaque);
     }
     bool finalize(std::vector<float>& pcm,const SttConfig& c,Abort abort,void* opaque,std::string& out){

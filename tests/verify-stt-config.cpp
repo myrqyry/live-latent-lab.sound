@@ -16,6 +16,7 @@ int main() {
     live.target = "different-caption-uuid";
     live.prompt = "streamer names";
     live.while_muted = true;
+    live.caption_lines = 3;
     assert(!stts::requires_model_reload(original, live));
 
     auto cold = original;
@@ -61,6 +62,12 @@ int main() {
     assert(stts::requires_model_reload(nemo, cold));
     cold = nemo; cold.parakeet_device = "gpu"; cold.model = "unused.bin";
     assert(!stts::requires_model_reload(nemo, cold));
+    cold=original;cold.zipformer_model="zipformer";cold.zipformer_threads=4;
+    assert(!stts::requires_model_reload(original,cold));
+    auto zip=original;zip.backend="zipformer";
+    cold=zip;cold.zipformer_threads=4;assert(stts::requires_model_reload(zip,cold));
+    cold=zip;cold.zipformer_model="new-model";assert(stts::requires_model_reload(zip,cold));
+    cold=zip;cold.model="unused";cold.caption_lines=4;assert(!stts::requires_model_reload(zip,cold));
     assert(!stts::requires_model_reload(original, original));
     std::cout << "SOUND_STT_CONFIG_POLICY_PASS=1\n";
 }

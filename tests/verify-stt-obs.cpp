@@ -48,6 +48,8 @@ static void capture(void* ptr,obs_source_t*,const audio_data* a,bool){
     double old=d->power.load();while(!d->power.compare_exchange_weak(old,old+p)){}
     d->frames+=a->frames;
 }
+static int streaming_partials=0;
+static std::string last_streaming_partial;
 static void feed(obs_source_t* s,const std::vector<float>& data,uint32_t rate,obs_source_t* f,std::string& transcript,int64_t& seq){
     const size_t block=rate/100;std::vector<float> l(block),r(block);
     uint64_t start=os_gettime_ns();
@@ -58,9 +60,17 @@ static void feed(obs_source_t* s,const std::vector<float>& data,uint32_t rate,ob
         a.frames=block;a.speakers=SPEAKERS_STEREO;a.format=AUDIO_FORMAT_FLOAT_PLANAR;a.samples_per_sec=rate;a.timestamp=start+pos*1000000000ULL/rate;
         obs_source_output_audio(s,&a);std::this_thread::sleep_until(clock+std::chrono::nanoseconds((pos+block)*1000000000ULL/rate));drain_ui();
         auto t=read(f);if(t.available&&t.sequence!=seq){transcript+=" "+t.text;seq=t.sequence;}
+        calldata_t partial{};
+        if(proc_handler_call(obs_source_get_proc_handler(f),"sound_stt_read_v2",&partial)&&
+           calldata_bool(&partial,"available")&&!calldata_bool(&partial,"final")){
+            const char* raw=calldata_string(&partial,"text");
+            if(raw&&last_streaming_partial!=raw){last_streaming_partial=raw;++streaming_partials;}
+        }
+        calldata_free(&partial);
     }
 }
 int main(int argc,char** argv){
+    const bool zipformer=std::getenv("SOUND_TEST_ZIPFORMER")!=nullptr;
     const bool parakeet=argc==8;
     if((argc!=6&&!parakeet)||!obs_startup("en-US",nullptr,nullptr))return 2;
     obs_set_ui_task_handler(queue_ui);drain_ui();
@@ -87,6 +97,14 @@ int main(int argc,char** argv){
         printf("SOUND_STT_PARAKEET_PICKER=%d\n",ui);
         if(!ui){obs_properties_destroy(props);obs_shutdown();return 1;}
     }
+    if(zipformer){
+        auto* d=obs_data_create();obs_data_set_string(d,"backend","zipformer");
+        obs_property_modified(obs_properties_get(props,"backend"),d);
+        auto* model=obs_properties_get(props,"zipformer_model_dir");
+        bool visible=model&&obs_property_visible(model)&&!obs_property_visible(obs_properties_get(props,"model_path"));
+        obs_data_release(d);printf("SOUND_ZIPFORMER_PICKER=%d\n",visible);
+        if(!visible){obs_properties_destroy(props);obs_shutdown();return 1;}
+    }
     obs_properties_destroy(props);
     obs_video_info v{};v.graphics_module="libobs-opengl";v.fps_num=30;v.fps_den=1;v.base_width=v.output_width=320;v.base_height=v.output_height=240;v.output_format=VIDEO_FORMAT_RGBA;v.colorspace=VIDEO_CS_DEFAULT;v.range=VIDEO_RANGE_DEFAULT;v.scale_type=OBS_SCALE_DISABLE;
     if(obs_reset_video(&v)!=OBS_VIDEO_SUCCESS)return 5;
@@ -100,6 +118,7 @@ int main(int argc,char** argv){
     auto* cfg=obs_data_create();obs_data_set_string(cfg,"model_path",argv[3]);
     if(const char* device=std::getenv("SOUND_TEST_WHISPER_DEVICE"))
         obs_data_set_string(cfg,"whisper_device",device);
+    if(zipformer){obs_data_set_string(cfg,"backend","zipformer");obs_data_set_string(cfg,"zipformer_model_dir",argv[3]);obs_data_set_int(cfg,"caption_lines",3);}
     if(parakeet){
         obs_data_set_string(cfg,"backend","parakeet");
         obs_data_set_string(cfg,"parakeet_model_path",argv[3]);obs_data_set_string(cfg,"parakeet_library",argv[6]);
@@ -126,7 +145,7 @@ int main(int argc,char** argv){
     bool ready=initial.status=="ready";
     const bool within_startup_target=ready&&init_ms<=10000;
     printf("SOUND_STT_INITIAL_READY backend=%s status=%s elapsed_ms=%lld deadline_ms=%d within_10s=%d ready=%d\n",
-        parakeet?"parakeet":"whisper",initial.status.c_str(),(long long)init_ms,functional_deadline_ms,within_startup_target,ready);
+        zipformer?"zipformer":parakeet?"parakeet":"whisper",initial.status.c_str(),(long long)init_ms,functional_deadline_ms,within_startup_target,ready);
     std::string transcript;int64_t seq=0;
     feed(s,std::vector<float>(rate,0),rate,f,transcript,seq);
     bool silence=seq==0&&transcript.empty();
@@ -173,6 +192,29 @@ int main(int argc,char** argv){
         std::this_thread::sleep_for(40ms);
     }
     const bool stopped_source_flush=seq>flush_before&&!idle_text.empty();
+    drain_ui();
+    bool rolling=true;
+    if(zipformer){
+        // One uninterrupted timestamp sequence with two separated utterances.
+        // The earlier stopped-source fixture intentionally creates a gap.
+        auto two=fragment;
+        two.resize(two.size()+rate*2,0);
+        two.insert(two.end(),fragment.begin(),fragment.end());
+        two.resize(two.size()+rate*2,0);
+        const auto start_seq=seq;
+        std::string separate;feed(s,two,rate,f,separate,seq);
+        for(int i=0;i<100&&seq<start_seq+2;++i){
+            drain_ui();auto r=read(f);if(r.available&&r.sequence!=seq){seq=r.sequence;}
+            std::this_thread::sleep_for(20ms);
+        }
+        drain_ui();
+        cfg=obs_source_get_settings(target);std::string display=obs_data_get_string(cfg,"text");obs_data_release(cfg);
+        const auto latest=read(f);
+        rolling=seq>=start_seq+2&&display.find('\n')!=std::string::npos&&
+            !latest.text.empty()&&latest.text.find('\n')==std::string::npos&&
+            display.size()>latest.text.size()&&display.substr(display.size()-latest.text.size())==latest.text;
+        printf("SOUND_ZIPFORMER_ROLLING=%d distinct_partials=%d sequences=%lld display=%s\n",rolling,streaming_partials,(long long)(seq-start_seq),display.c_str());
+    }
     printf("SOUND_STT_STOPPED_SOURCE_FLUSH=%d\n",stopped_source_flush);
     obs_source_set_muted(s,true);
     const auto before=seq;feed(s,audio,rate,f,transcript,seq);
@@ -182,15 +224,15 @@ int main(int argc,char** argv){
     drain_ui();
     bool off=read(f).status=="off"&&!read(f).available;
     cfg=obs_source_get_settings(target);off=off&&std::string(obs_data_get_string(cfg,"text")).empty();obs_data_release(cfg);
-    cfg=obs_data_create();obs_data_set_string(cfg,parakeet?"parakeet_model_path":"model_path","/nonexistent/stt-model.bin");obs_source_update(f,cfg);obs_data_release(cfg);
+    cfg=obs_data_create();obs_data_set_string(cfg,zipformer?"zipformer_model_dir":parakeet?"parakeet_model_path":"model_path","/nonexistent/stt-model.bin");obs_source_update(f,cfg);obs_data_release(cfg);
     obs_source_set_enabled(f,true);
     for(int i=0;i<200&&read(f).status!="model_error";++i){drain_ui();std::this_thread::sleep_for(20ms);}
     bool missing=read(f).status=="model_error"&&!read(f).available;
-    cfg=obs_data_create();obs_data_set_string(cfg,parakeet?"parakeet_model_path":"model_path",argv[3]);obs_source_update(f,cfg);obs_data_release(cfg);
+    cfg=obs_data_create();obs_data_set_string(cfg,zipformer?"zipformer_model_dir":parakeet?"parakeet_model_path":"model_path",argv[3]);obs_source_update(f,cfg);obs_data_release(cfg);
     for(int i=0;i<500&&read(f).status!="ready";++i){drain_ui();std::this_thread::sleep_for(20ms);}
     bool recovered=read(f).status=="ready";
     printf("SOUND_STT_LIFECYCLE off=%d missing=%d recovered=%d\n",off,missing,recovered);
-    bool ok=ui&&ready&&silence&&words&&routed&&hot_stable&&stopped_source_flush&&clean&&muted&&off&&missing&&recovered;
+    bool ok=ui&&ready&&silence&&words&&routed&&hot_stable&&stopped_source_flush&&clean&&muted&&off&&missing&&recovered&&rolling&&(!zipformer||streaming_partials>0);
     if(parakeet){
         // Same audio source and filter; preserve the independently saved
         // model paths across both switches and actually run Whisper again.

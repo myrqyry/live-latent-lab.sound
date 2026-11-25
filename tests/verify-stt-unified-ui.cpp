@@ -12,7 +12,12 @@ int main(int argc,char** argv){
     if(!p)return 4;
     auto* d=obs_data_create();
     bool ok=true;
-    for(auto backend:{"whisper","parakeet","nemotron"}){
+    std::vector<std::string> backends={"whisper","parakeet","nemotron"};
+    auto* selector=obs_properties_get(p,"backend");
+    for(size_t i=0;selector&&i<obs_property_list_item_count(selector);++i)
+        if(std::string(obs_property_list_item_string(selector,i))=="zipformer")backends.emplace_back("zipformer");
+    for(const auto& name:backends){
+        auto* backend=name.c_str();
         obs_data_set_string(d,"backend",backend);
         obs_property_modified(obs_properties_get(p,"backend"),d);
         std::vector<std::string> names;

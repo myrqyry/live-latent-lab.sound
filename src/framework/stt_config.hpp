@@ -10,8 +10,10 @@ struct SttConfig {
     std::string whisper_device="auto";
     std::string nemotron_model,nemotron_library,nemotron_language="en-US",nemotron_device="auto";
     std::string parakeet_device="auto";
+    std::string zipformer_model;
+    int zipformer_threads=2;
     int nemotron_threads=4,nemotron_right=3;
-    int threads=4,threshold=-45,silence=600,max_phrase=8000,hold=5000;
+    int threads=4,threshold=-45,silence=600,max_phrase=8000,hold=5000,caption_lines=1;
     bool translate=false,while_muted=false;
 };
 
@@ -23,6 +25,7 @@ inline bool requires_model_reload(const SttConfig& a,const SttConfig& b) {
     if(a.backend=="parakeet")
         return a.parakeet_model!=b.parakeet_model || a.parakeet_library!=b.parakeet_library ||
             a.parakeet_device!=b.parakeet_device;
+    if(a.backend=="zipformer")return a.zipformer_model!=b.zipformer_model||a.zipformer_threads!=b.zipformer_threads;
     if(a.backend=="nemotron")
         return a.nemotron_model!=b.nemotron_model || a.nemotron_library!=b.nemotron_library ||
             a.nemotron_language!=b.nemotron_language || a.nemotron_device!=b.nemotron_device ||
