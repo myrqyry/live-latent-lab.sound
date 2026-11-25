@@ -41,7 +41,7 @@ struct Config {
     std::string models,prompt,negative,device,variant="small-music",input_file,input_source,alternate_prompt,
         lora_a,lora_b,sound_channel,sight_channel;
     float lora_a_strength=1.f,lora_b_strength=1.f;
-    std::string morph_a,morph_b;float morph_mix=.5f;bool morph_ramp=false;
+    std::string morph_a,morph_b,morph_effect="blend";float morph_mix=.5f,morph_position=.5f;int morph_radius=2,morph_grain=2;bool morph_ramp=false;
     bool automate_b=false,capture_muted=false,adaptive_buffer=false;
     double capture_seconds=6;
     float transform_noise=.5f;
@@ -670,9 +670,10 @@ std::shared_ptr<Clip> morph(State& s,const Config& c,uint64_t epoch,std::string&
     if(!generation.token.current())return {};
     // Existing PCM reader bounds size and validates RIFF before spawning.
     auto a=read_wav(c.morph_a,error);if(!a)return {};
-    auto b=read_wav(c.morph_b,error);if(!b)return {};
-    if(a->sample_rate!=rate||b->sample_rate!=rate||a->frames!=b->frames||
-       a->frames<8192||a->frames>12*rate){error="Morph needs equal 44.1 kHz WAVs, 0.19–12 seconds";return {};}
+    const bool blend=c.morph_effect=="blend";
+    std::shared_ptr<Clip> b;if(blend){b=read_wav(c.morph_b,error);if(!b)return {};}
+    if(a->sample_rate!=rate||(blend&&(b->sample_rate!=rate||a->frames!=b->frames))||
+       a->frames<8192||a->frames>12*rate){error="Use stereo 44.1 kHz WAVs, 0.19–12 seconds; blend requires equal lengths";return {};}
     std::unique_lock<std::timed_mutex> gate(inference_gate,std::defer_lock);
     while(generation.token.current()&&!gate.try_lock_for(50ms)){}
     if(!generation.token.current()||!gate.owns_lock())return {};
@@ -683,10 +684,11 @@ std::shared_ptr<Clip> morph(State& s,const Config& c,uint64_t epoch,std::string&
     if(!dir){error="Cannot create private morph workspace";return {};}
     struct Cleanup{std::filesystem::path dir;~Cleanup(){std::error_code ec;std::filesystem::remove_all(dir,ec);}} cleanup{dir};
     const auto output=cleanup.dir/"result.wav",log=cleanup.dir/"worker.log";
-    std::array<std::string,8> args={helper.string(),model.string(),c.morph_a,c.morph_b,
-        std::to_string(c.morph_mix),output.string(),c.device=="cpu"?"cpu":"auto",c.morph_ramp?"ramp":"fixed"};
-    std::array<char*,9> argv{};
-    for(size_t i=0;i<args.size();++i)argv[i]=args[i].data();
+    std::vector<std::string> args={helper.string(),model.string(),c.morph_a,blend?c.morph_b:"",
+        std::to_string(c.morph_mix),output.string(),c.device=="cpu"?"cpu":"auto",
+        blend?(c.morph_ramp?"ramp":"fixed"):c.morph_effect};
+    if(!blend){args.push_back(std::to_string(c.morph_position));args.push_back(std::to_string(c.morph_radius));args.push_back(std::to_string(c.morph_grain));}
+    std::vector<char*> argv;for(auto& arg:args)argv.push_back(arg.data());argv.push_back(nullptr);
     posix_spawn_file_actions_t actions;
     if(posix_spawn_file_actions_init(&actions)){error="Cannot initialize morph worker";return {};}
     struct Actions{posix_spawn_file_actions_t* p;~Actions(){posix_spawn_file_actions_destroy(p);}} guard{&actions};
@@ -778,6 +780,11 @@ void update(void* p,obs_data_t* d){
     c.morph_a=obs_data_get_string(d,"morph_a");c.morph_b=obs_data_get_string(d,"morph_b");
     auto mix=obs_data_get_double(d,"morph_mix");c.morph_mix=std::isfinite(mix)?float(std::clamp(mix,0.,1.)):.5f;
     c.morph_ramp=obs_data_get_bool(d,"morph_ramp");
+    const std::string effect=obs_data_get_string(d,"morph_effect");
+    if(effect=="freeze"||effect=="smear"||effect=="grain")c.morph_effect=effect;
+    auto position=obs_data_get_double(d,"morph_position");c.morph_position=std::isfinite(position)?float(std::clamp(position,0.,1.)):.5f;
+    c.morph_radius=int(std::clamp<int64_t>(obs_data_get_int(d,"morph_radius"),1,16));
+    c.morph_grain=int(std::clamp<int64_t>(obs_data_get_int(d,"morph_grain"),1,16));
     c.input_file=obs_data_get_string(d,"input_file");c.input_source=obs_data_get_string(d,"input_source");
     c.alternate_prompt=obs_data_get_string(d,"alternate_prompt");
     c.lora_a=obs_data_get_string(d,"lora_a");c.lora_b=obs_data_get_string(d,"lora_b");
@@ -843,6 +850,9 @@ bool stop(obs_properties_t*,obs_property_t*,void* p){
 void defaults(obs_data_t* d){
     obs_data_set_default_double(d,"capture_seconds",6);
     obs_data_set_default_double(d,"morph_mix",.5);
+    obs_data_set_default_string(d,"morph_effect","blend");
+    obs_data_set_default_double(d,"morph_position",.5);
+    obs_data_set_default_int(d,"morph_radius",2);obs_data_set_default_int(d,"morph_grain",2);
     obs_data_set_default_bool(d,"adaptive_buffer",false);
     obs_data_set_default_double(d,"lora_a_strength",1);obs_data_set_default_double(d,"lora_b_strength",1);
     obs_data_set_default_string(d,"variant","small-music");obs_data_set_default_double(d,"transform_noise",.5);
@@ -884,10 +894,16 @@ obs_properties_t* props(void* p){
     auto* morph_props=obs_properties_create();
     obs_properties_add_path(morph_props,"morph_a","Audio A (stereo 44.1 kHz WAV)",OBS_PATH_FILE,"WAV (*.wav)",nullptr);
     obs_properties_add_path(morph_props,"morph_b","Audio B (same length)",OBS_PATH_FILE,"WAV (*.wav)",nullptr);
-    obs_properties_add_float_slider(morph_props,"morph_mix","Latent blend",0,1,.01);
+    auto* effect=obs_properties_add_list(morph_props,"morph_effect","Operation",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(effect,"A/B morph","blend");obs_property_list_add_string(effect,"Freeze","freeze");
+    obs_property_list_add_string(effect,"Temporal smear","smear");obs_property_list_add_string(effect,"Latent grain repeat","grain");
+    obs_properties_add_float_slider(morph_props,"morph_mix","Blend / effect amount",0,1,.01);
+    obs_properties_add_float_slider(morph_props,"morph_position","Freeze / grain position",0,1,.01);
+    obs_properties_add_int_slider(morph_props,"morph_radius","Smear radius (latent frames)",1,16,1);
+    obs_properties_add_int_slider(morph_props,"morph_grain","Grain length (latent frames)",1,16,1);
     obs_properties_add_bool(morph_props,"morph_ramp","Ramp from A toward selected blend");
-    obs_properties_add_button2(morph_props,"morph","Morph and play",morph_button,p);
-    obs_properties_add_group(d,"latent_morph","Neural latent morph (SAME-S)",OBS_GROUP_NORMAL,morph_props);
+    obs_properties_add_button2(morph_props,"morph","Process and play",morph_button,p);
+    obs_properties_add_group(d,"latent_morph","Neural latent morph / texture (SAME-S)",OBS_GROUP_NORMAL,morph_props);
 #endif
     obs_properties_add_button2(d,"stop","Stop / cancel",stop,p);
     auto* advanced=obs_properties_create();

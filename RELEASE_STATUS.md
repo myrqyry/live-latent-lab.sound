@@ -419,3 +419,24 @@ acceptance runner passed. The full expanded Sound suite, adaptive
 continuous soak with simultaneous morph, manual GUI interaction,
 subjective morph quality and live inline latent processing are not
 qualified. No changes to existing SA3 model weights or scene settings.
+
+## Native SAME-S latent texture operations (2026-11-24)
+
+Staged module SHA256: 5b009e3bb4940e4b62dd442290a83d2690b6b47ecbe5859a8ccc9ecfa269fcfc.
+Helper SHA256: 73363e7217d8ee297cc69e064b01c161f1994ed27df5d7cacbc138584bca5b9c.
+Single-input freeze, centered temporal smear, and contiguous latent
+grain repetition reuse the pinned SAME-S autoencoder, shared inference
+gate and isolated worker. No additional runtime or weights. Deterministic
+frame indexing, zero-amount reconstruction, distinct output, exact
+2-second duration, and CPU/GPU smear agreement (0.002463 RMS difference)
+passed. Real OBS playback at 48 kHz passed all three modes with no
+second WAV; existing A/B morph, cancellation and recovery passed in the
+same runner. Standalone CUDA 12-second fixtures passed exact duration
+and amplitude checks, with single-input encoding 94–96 ms and decoding
+39–43 ms excluding model load and verification. Six-effect registry
+and Qt dock regression passed. No subjective listening, continuous
+live capture/latent processing or expanded Sound acceptance in this
+checkpoint. Separate pre-existing YAMNet delegate and TTS provider
+changes were inspected and preserved outside this commit; their actual
+device qualification and production configuration still require
+separate reconciliation.

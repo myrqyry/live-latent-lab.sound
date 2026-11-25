@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <thread>
 #include <string>
+#include <cstdlib>
+#include <initializer_list>
 using namespace std::chrono_literals;
 struct Capture{std::atomic<uint64_t> frames{0},nonzero{0},bad{0};};
 static void capture(void* p,obs_source_t*,const audio_data* a,bool){
@@ -62,6 +64,18 @@ int main(int argc,char**argv){
     obs_data_set_string(d,"device","auto");obs_source_update(s,d);
     bool retry=click(s,"morph")&&wait(s,"played",4)&&!c.bad;
     printf("SA3_MORPH_CANCEL cancelled=%d retry=%d\n",cancelled,retry);
+    if(std::getenv("SOUND_SAME_TEXTURE")){
+        bool textures=true;int played=4;
+        obs_data_set_string(d,"morph_b","/nonexistent/unused-b.wav");
+        obs_data_set_double(d,"morph_mix",.8);obs_data_set_double(d,"morph_position",.4);
+        for(const char* mode:{"freeze","smear","grain"}){
+            const auto n=c.frames.load();
+            obs_data_set_string(d,"morph_effect",mode);obs_source_update(s,d);
+            bool pass=click(s,"morph")&&wait(s,"played",++played)&&c.frames-n>=95000&&c.frames-n<=97000&&!c.bad;
+            printf("SAME_TEXTURE_OBS mode=%s pass=%d\n",mode,pass);textures&=pass;
+        }
+        retry=retry&&textures;
+    }
     bool ok=available&&generated&&audio&&replay&&missing&&recovered&&cancelled&&retry;
     printf("SA3_MORPH_OBS available=%d generated=%d audio=%d replay=%d missing=%d recovered=%d pass=%d\n",available,generated,audio,replay,missing,recovered,ok);
     obs_source_remove_audio_capture_callback(s,capture,&c);obs_set_output_source(1,nullptr);obs_source_release(s);obs_data_release(d);obs_wait_for_destroy_queue();obs_shutdown();return ok?0:1;

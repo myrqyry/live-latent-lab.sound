@@ -51,3 +51,6 @@ inc="$(pkg-config --variable=includedir libobs)/obs"
 QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 45 "$work/probe" "$SOUND_SA3_STAGE/bin/64bit/live-latent-lab-sound.so" "$SOUND_SA3_STAGE/data" "$SOUND_SA3_MODELS" "$SOUND_SAME_INPUT_A" "$SOUND_SAME_INPUT_B" >"$work/obs.log" 2>&1 || { cat "$work/obs.log";exit 1; }
 grep -F 'SA3_MORPH_CANCEL cancelled=1 retry=1' "$work/obs.log"
 grep -F 'SA3_MORPH_OBS available=1 generated=1 audio=1 replay=1 missing=1 recovered=1 pass=1' "$work/obs.log"
+if [[ "${SOUND_SAME_TEXTURE:-0}" == 1 ]]; then
+    for mode in freeze smear grain; do grep -F "SAME_TEXTURE_OBS mode=$mode pass=1" "$work/obs.log";done
+fi

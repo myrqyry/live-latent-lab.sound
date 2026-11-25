@@ -3,6 +3,7 @@
 #include "gguf_model.h"
 #include "same_ae.h"
 #include "wav.h"
+#include "../src/framework/same_texture.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -118,15 +119,30 @@ std::vector<float> pad(const Audio& a,int n){
 }
 int main(int argc,char** argv){
     try{
-        if(argc!=8)throw std::runtime_error("usage: sa3-latent-morph <SAME-S.gguf> <A.wav> <B.wav> <mix 0..1> <output.wav> <auto|cpu|gpu:CUDA0> <fixed|ramp>");
+        if(argc!=8&&argc!=11)throw std::runtime_error("usage: sa3-latent-morph MODEL A.wav B.wav MIX OUTPUT DEVICE fixed|ramp; or MODE freeze|smear|grain POSITION RADIUS GRAIN (B ignored)");
         const std::string mix_text=argv[4];size_t parsed=0;
         const float mix=std::stof(mix_text,&parsed);
         if(parsed!=mix_text.size()||!std::isfinite(mix)||mix<0||mix>1)throw std::runtime_error("Mix must be 0..1");
         const std::string device=argv[6],mode=argv[7];
-        if((device!="auto"&&device!="cpu"&&device!="gpu:CUDA0")||(mode!="fixed"&&mode!="ramp"))throw std::runtime_error("Unsupported device or mode");
+        const bool blend=mode=="fixed"||mode=="ramp";
+        if((device!="auto"&&device!="cpu"&&device!="gpu:CUDA0")||
+           (!blend&&mode!="freeze"&&mode!="smear"&&mode!="grain")||
+           (blend?argc!=8:argc!=11))throw std::runtime_error("Unsupported device or mode");
+        float position=.5f;int radius=2,grain=2;
+        if(!blend){
+            auto number=[](const char* raw){
+                std::string str=raw;size_t n=0;float v=std::stof(str,&n);
+                if(n!=str.size()||!std::isfinite(v))throw std::runtime_error("Invalid texture parameter");
+                return v;
+            };
+            position=number(argv[8]);float r=number(argv[9]),g=number(argv[10]);
+            if(position<0||position>1||r<1||r>16||g<1||g>16||std::floor(r)!=r||std::floor(g)!=g)
+                throw std::runtime_error("Invalid texture parameter");
+            radius=int(r);grain=int(g);
+        }
         if(std::filesystem::exists(argv[5]))throw std::runtime_error("Output already exists");
-        auto a=read(argv[2]),b=read(argv[3]);
-        if(a.frames!=b.frames)throw std::runtime_error("Input WAV durations must match");
+        auto a=read(argv[2]);Audio b;if(blend)b=read(argv[3]);
+        if(blend&&a.frames!=b.frames)throw std::runtime_error("Input WAV durations must match");
         auto t=Clock::now();verify_model(argv[1]);std::cout<<"MODEL_VERIFY_MS="<<ms(t)<<std::endl;
         t=Clock::now();
         auto backend=std::unique_ptr<ggml_backend,decltype(&ggml_backend_free)>(sa3::make_backend(8,device.c_str()),ggml_backend_free);
@@ -141,16 +157,29 @@ int main(int argc,char** argv){
         std::cout<<"MODEL_LOAD_MS="<<ms(t)<<" DEVICE="<<ggml_backend_name(w.backend)<<" LATENT_DIM="<<c.latent<<" FRAMES="<<frames<<std::endl;
         std::vector<float> za,zb;
         t=Clock::now();
-        {Graph enc(w,c,frames,true);za=enc.run(pad(a,n));zb=enc.run(pad(b,n));}
+        {Graph enc(w,c,frames,true);za=enc.run(pad(a,n));if(blend)zb=enc.run(pad(b,n));}
         std::cout<<"ENCODE_BOTH_MS="<<ms(t)<<std::endl;
-        if(za.size()!=size_t(c.latent)*frames||zb.size()!=za.size())throw std::runtime_error("Unexpected latent shape");
-        double delta=0;
-        for(size_t i=0;i<za.size();++i){
-            delta+=std::abs(za[i]-zb[i]);
-            const float weight=mode=="ramp"?mix*float(i/c.latent)/float(frames-1):mix;
-            za[i]=(1-weight)*za[i]+weight*zb[i];
+        if(za.size()!=size_t(c.latent)*frames||(blend&&zb.size()!=za.size()))throw std::runtime_error("Unexpected latent shape");
+        if(blend){
+            double delta=0;
+            for(size_t i=0;i<za.size();++i){
+                delta+=std::abs(za[i]-zb[i]);
+                const float weight=mode=="ramp"?mix*float(i/c.latent)/float(frames-1):mix;
+                za[i]=(1-weight)*za[i]+weight*zb[i];
+            }
+            std::cout<<"LATENT_MEAN_ABS_DELTA="<<delta/za.size()<<std::endl;
+        }else{
+            // Exclude wholly padded frames from selecting anchors or grains.
+            const int valid_frames=(a.frames+4095)/4096;
+            const size_t valid_size=size_t(c.latent)*valid_frames;
+            std::vector<float> valid(za.begin(),za.begin()+valid_size);
+            const auto effect=mode=="freeze"?same_texture::Mode::Freeze:mode=="smear"?same_texture::Mode::Smear:same_texture::Mode::Grain;
+            auto texture=same_texture::process(valid,c.latent,valid_frames,effect,mix,position,radius,grain);
+            double delta=0;for(size_t i=0;i<valid_size;++i)delta+=std::abs(valid[i]-texture[i]);
+            std::copy(texture.begin(),texture.end(),za.begin());
+            // The final padding latent remains the original, not repeated content.
+            std::cout<<"TEXTURE_LATENT_DELTA="<<delta/valid_size<<std::endl;
         }
-        std::cout<<"LATENT_MEAN_ABS_DELTA="<<delta/za.size()<<std::endl;
         t=Clock::now();std::vector<float> audio;
         {Graph dec(w,c,frames,false);audio=dec.run(za);}
         std::cout<<"DECODE_MS="<<ms(t)<<std::endl;

@@ -98,15 +98,34 @@ It loads no new inference runtime and requires no Python. Upstream SAME
 implementation comes from the MIT-licensed pinned sa3.cpp headers.
 Model license remains separate. No ONNX model was imported.
 
-In Audio Diffusion source properties, open **Neural latent morph (SAME-S)**.
+In Audio Diffusion source properties, open **Neural latent morph / texture (SAME-S)**.
 Choose two stereo PCM16 WAVs at 44.1 kHz of identical length (8192 samples
 through 12 seconds). Choose Latent blend 0–1 or enable the ramp from A
-toward the selected blend. Click Morph and play. The helper encodes
+toward the selected blend. Click Process and play. The helper encodes
 both signals into SAME's 256-dimensional latent sequence, interpolates
 those features and decodes the result. The output has the original
 duration, bounded amplitude and exact stereo format. Fixed blend 0 or 1
 still passes through neural reconstruction; it is not bit-perfect bypass.
 The ramp changes the blend over latent frames, not PCM gain.
+
+The Operation selector also offers three single-input texture effects.
+For these, choose only Audio A; Audio B and the A/B ramp are ignored.
+- Freeze repeats the latent frame selected by position across the sequence.
+- Temporal smear averages neighboring latent frames using the selected
+  radius (1–16 frames on each side, truncated at the clip boundaries).
+- Latent grain repeat cycles a contiguous 1–16-frame region starting
+  near the selected position, clamped to fit the available sequence.
+
+Blend / effect amount interpolates between the original and modified
+latent sequence. Zero reconstructs the unmodified input through SAME;
+it is not a bit-perfect dry bypass. Each latent frame represents 4096
+samples (about 93 ms). The operations exclude completely padded frames
+from anchor/grain selection. Freeze and grain are neural texture
+operations, not spectral freeze or a conventional PCM granular engine.
+All retain the input clip duration and use the existing replay/cancel
+path. For longer grains than the available input, the length is clamped.
+No continuous live capture or streaming latent processing is implied.
+
 The current family/step/negative prompt settings do not affect morphing.
 Auto prefers CUDA; CPU can be selected explicitly. No sample format
 conversion, automatic truncation of different input durations, live
@@ -123,7 +142,11 @@ This is batch generation, not a low-latency inline audio effect.
 
 The executable can also be used directly:
 `sound-sa3-morph MODEL A.wav B.wav 0.5 output.wav auto fixed`
-or use `ramp` and an explicit `cpu` or `gpu:CUDA0` device. The standalone
+or use `ramp` and an explicit `cpu` or `gpu:CUDA0` device.
+For single-input textures:
+`sound-sa3-morph MODEL A.wav "" 0.8 output.wav auto grain 0.4 3 4`.
+The last three arguments are normalized position, smear radius and
+grain length. Select freeze, smear or grain as the operation. The standalone
 command refuses to overwrite an output file.
 
 Run `tests/verify-sa3-morph.sh` with SOUND_SA3_STAGE,
@@ -131,8 +154,11 @@ SOUND_SA3_MODELS, SOUND_SAME_INPUT_A and SOUND_SAME_INPUT_B (two
 different two-second WAVs). It measures actual endpoint reconstruction,
 GPU/CPU waveform agreement, distinction from PCM crossfade, ramp output,
 safe invalid-input behavior, real OBS playback/replay and cancellation
-recovery. Subjective quality and live neural granular processing are
-separate qualification steps.
+recovery. Run `tests/verify-same-texture.sh` with the same environment for
+deterministic latent indexing, effect amount zero, distinct audio for
+all three modes, CPU/GPU agreement and actual OBS playback of each
+mode without a second WAV. Subjective quality and live neural granular
+processing remain separate qualification steps.
 
 ### Playback and audio-to-audio
 
