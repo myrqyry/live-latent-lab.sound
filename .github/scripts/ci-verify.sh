@@ -23,6 +23,10 @@ export LD_LIBRARY_PATH="$sdk/lib:${LD_LIBRARY_PATH:-}"
 export CMAKE_PREFIX_PATH="$sdk:${CMAKE_PREFIX_PATH:-}"
 export QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1
 test "$(realpath "$(pkg-config --variable=prefix libobs)")" = "$(realpath "$sdk")"
+# A working tree may contain ignored local resources; prove they are not packaged.
+canary=$(mktemp "$root/data/.source-preview-canary.XXXXXX")
+trap 'rm -f -- "$canary"' EXIT
+printf 'SYNTHETIC_NOT_PRIVATE\n' > "$canary"
 cmake --preset public-linux -B "$work/build" -DOBS_HEADER_PATH="$sdk/include/obs"
 cmake --build "$work/build" --parallel 2
 stage="$work/stage"

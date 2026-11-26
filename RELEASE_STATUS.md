@@ -796,3 +796,9 @@ directory, Cancel preserved it, reopening restored it, OK cleared it.
 No normal OBS config edited. Other plugins not migrated, cross-version
 and native plugin-manager behavior not tested. Qt integration remains
 opt-in and baseline CI archive is unchanged in scope.
+
+## Runtime resource package boundary (2026-11-26)
+
+Install the manifest and locale explicitly rather than copying the entire data directory.
+The preview CI stages a synthetic untracked canary and verifies the exact payload
+allowlist; local assets must not enter the distributed package.

@@ -476,7 +476,9 @@ if(NOT DEFINED OBS_DATA_DESTINATION)
 endif()
 
 install(TARGETS live-latent-lab-sound LIBRARY DESTINATION ${OBS_PLUGIN_DESTINATION})
-install(DIRECTORY data/ DESTINATION ${OBS_DATA_DESTINATION})
+# Package only maintained runtime resources, never ignored local assets.
+install(FILES data/manifest.json DESTINATION "${OBS_DATA_DESTINATION}")
+install(FILES data/locale/en-US.ini DESTINATION "${OBS_DATA_DESTINATION}/locale")
 
 if(SOUND_NEEDS_ONNX AND UNIX AND NOT APPLE)
     install(DIRECTORY "${onnxruntime_SOURCE_DIR}/lib/"
