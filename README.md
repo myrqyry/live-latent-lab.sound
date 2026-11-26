@@ -92,13 +92,13 @@ edits normal OBS scenes or installs to the user profile.
 
 ### Qualification scope
 
-The current seven-effect staged profile contains YAMNet, buffered stems,
+The current seven-effect profile contains YAMNet, buffered stems,
 STT, TTS, Audio Diffusion, DDSP and native RVC. Microphone modeling has
 moved to HyperDSP. Individual real OBS audio tests at both 44.1/48 kHz
 cover multiple backends, but the latest combined acceptance suite has
 not passed as one uninterrupted run. Parakeet has an unresolved
 intermittent 44.1 kHz lifecycle failure; the SA3 lifecycle also required
-a retry. The current staged build is not the previously installed module.
+a retry. The latest seven-effect module has been installed locally and verified with isolated OBS registration, YAMNet, DDSP and native CUDA RVC at 48 kHz. This is local qualification, not a distributed installer.
 
 [Release evidence and history](RELEASE_STATUS.md) · [Model settings audit](docs/model-settings-audit.md)
 · [Build checks](https://github.com/myrqyry/live-latent-lab.sound/actions)

@@ -748,3 +748,33 @@ Replaced only those three aliases with regular executable wrappers
 delegating to the same zsh formatter, with explicit formatter names.
 Original and replacement version output matched (2.0.0); all three
 replacement help paths passed. No archive-policy exceptions.
+
+## Local installation follow-up (2026-11-25)
+
+Installed the seven-effect module corresponding to f12af01, SHA-256
+2756229d8f8438dc3dbd276990c377f22f49fe2e53e37e01baabcb147ae4dd08.
+The current combined build and staged module matched exactly; subsequent
+source changes before installation were documentation and release tooling.
+OBS was closed. All staged non-module files matched the existing
+installation, so only the module was replaced atomically; the previous
+module was backed up. Existing model files, runtime libraries, scenes,
+and service configurations were preserved. RVC helper v3 and native
+runtime checksums passed, and all three speech worker health endpoints
+reported the options protocol.
+
+Installed-module verification:
+- Exact seven-effect registration passed in isolated libobs.
+- Real YAMNet CPU inference and stereo preservation passed at 48 kHz.
+- DDSP passed on retry at 48 kHz: 595 hops, 1.157 ms last worker hop,
+  instrument morph/switch, pitch, noise, dry/wet and silence checks.
+  First attempt remained loading beyond the short readiness window;
+  cold-start timing remains unqualified.
+- Native CUDA RVC passed at 48 kHz with the existing v3 worker and
+  qualified synthetic speech fixture: 16 hops, 297.7 ms last hop,
+  nonzero wet audio, mono wet and stereo dry checks passed.
+
+Both final local CI preview archives passed the shared package auditor
+after the formatter launcher correction. This installation does not
+clear redistribution rights or establish uninterrupted combined
+STT/TTS/stem/SA3 acceptance. No model or runtime binaries were added
+to Git, and no services were restarted or OBS scenes changed.
