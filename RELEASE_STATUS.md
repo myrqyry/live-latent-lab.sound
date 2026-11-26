@@ -740,3 +740,11 @@ cross-platform and clean-host provisioning, current GUI captures,
 comprehensive source/license audit and expanded redistribution
 clearance remain open. No runtime implementation, installed plugin,
 worker configuration, remote branch, or repository visibility changed.
+
+Source package follow-up: the first binary audit passed, but the
+source archive was rejected by the shared auditor because three
+formatter aliases were symlinks inherited from the OBS template.
+Replaced only those three aliases with regular executable wrappers
+delegating to the same zsh formatter, with explicit formatter names.
+Original and replacement version output matched (2.0.0); all three
+replacement help paths passed. No archive-policy exceptions.
