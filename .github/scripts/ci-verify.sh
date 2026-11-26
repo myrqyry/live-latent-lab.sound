@@ -55,6 +55,16 @@ count=$((count+1))
 count=$((count+1))
 python3 tests/test_public_repo_urls.py
 count=$((count+1))
+# Test the optional Qt bridge separately; keep the distributed baseline Qt-free.
+"$cxx" -std=c++17 -O2 -fPIC tests/verify-plugin-settings.cpp $(pkg-config --cflags --libs Qt6Widgets) -o "$work/settings-page"
+"$work/settings-page"
+count=$((count+1))
+cmake --preset public-linux -B "$work/settings-build" -DOBS_HEADER_PATH="$sdk/include/obs" -DSOUND_SETTINGS_PAGE=ON
+cmake --build "$work/settings-build" --parallel 2
+cmake --install "$work/settings-build" --prefix "$work/settings-stage"
+"$cxx" -std=gnu++17 -O2 -fPIC -I"$inc" tests/verify-settings-picker.cpp $(pkg-config --cflags --libs Qt6Core) $(pkg-config --libs libobs) -o "$work/settings-picker"
+xvfb-run -a timeout 30 "$work/settings-picker" "$work/settings-stage/bin/64bit/$MODULE.so" "$work/settings-stage/data"
+count=$((count+1))
 (( count >= MINIMUM_TESTS ))
 echo "Verified $count independent model-free test groups; no inference qualification implied."
 (cd "$stage"; while read -r file; do sha256sum "$file"; done < "$work/expected-files" > "$srcwork/PAYLOAD-SHA256SUMS"; sha256sum -c "$srcwork/PAYLOAD-SHA256SUMS"; tar -czf "$work/$ARCHIVE" -T "$work/expected-files")

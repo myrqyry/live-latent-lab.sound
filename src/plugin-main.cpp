@@ -66,6 +66,11 @@ extern struct obs_source_info mediapipe_filter;
 void log_qt_version();
 #endif
 
+#ifdef SOUND_WITH_SETTINGS_PAGE
+void register_sound_settings();
+void unregister_sound_settings();
+#endif
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
@@ -145,15 +150,23 @@ bool obs_module_load(void)
     return true;
 }
 
-#ifdef SOUND_WITH_DIFFUSION_DOCK
+#if defined(SOUND_WITH_DIFFUSION_DOCK) || defined(SOUND_WITH_SETTINGS_PAGE)
 void obs_module_post_load(void)
 {
+#ifdef SOUND_WITH_DIFFUSION_DOCK
     register_diffusion_dock();
+#endif
+#ifdef SOUND_WITH_SETTINGS_PAGE
+    register_sound_settings();
+#endif
 }
 #endif
 
 void obs_module_unload(void)
 {
+#ifdef SOUND_WITH_SETTINGS_PAGE
+    unregister_sound_settings();
+#endif
 #ifdef SOUND_WITH_DIFFUSION_DOCK
     unregister_diffusion_dock();
 #endif

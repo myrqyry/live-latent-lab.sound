@@ -1,3 +1,4 @@
+#include "framework/preferences.hpp"
 #include <obs-module.h>
 #include <util/platform.h>
 #include <media-io/audio-io.h>
@@ -1157,7 +1158,7 @@ void defaults(obs_data_t* d){
 }
 obs_properties_t* props(void* p){
     auto* d=obs_properties_create();
-    obs_properties_add_path(d,"models_dir","Stable Audio 3 GGUF model directory",OBS_PATH_DIRECTORY,nullptr,nullptr);
+    obs_properties_add_path(d,"models_dir","Stable Audio 3 GGUF model directory",OBS_PATH_DIRECTORY,nullptr,sound_preferences::directory(false).c_str());
     auto* variant=obs_properties_add_list(d,"variant","Model family",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(variant,"Small Music","small-music");obs_property_list_add_string(variant,"Small SFX","small-sfx");
     auto* device=obs_properties_add_list(d,"device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
@@ -1217,9 +1218,9 @@ obs_properties_t* props(void* p){
     obs_properties_add_button2(d,"stop","Stop / cancel",stop,p);
     auto* advanced=obs_properties_create();
     obs_properties_add_text(advanced,"alternate_prompt","Fade toward prompt (optional)",OBS_TEXT_MULTILINE);
-    obs_properties_add_path(advanced,"lora_a","LoRA A (compatible GGUF)",OBS_PATH_FILE,"GGUF (*.gguf)",nullptr);
+    obs_properties_add_path(advanced,"lora_a","LoRA A (compatible GGUF)",OBS_PATH_FILE,"GGUF (*.gguf)",sound_preferences::directory(false).c_str());
     obs_properties_add_float_slider(advanced,"lora_a_strength","LoRA A strength",0,2,.05);
-    obs_properties_add_path(advanced,"lora_b","LoRA B (compatible GGUF)",OBS_PATH_FILE,"GGUF (*.gguf)",nullptr);
+    obs_properties_add_path(advanced,"lora_b","LoRA B (compatible GGUF)",OBS_PATH_FILE,"GGUF (*.gguf)",sound_preferences::directory(false).c_str());
     obs_properties_add_float_slider(advanced,"lora_b_strength","LoRA B strength",0,2,.05);
     obs_properties_add_bool(advanced,"automate_b","Fade in LoRA B across generated segment");
     auto* sound=obs_properties_add_list(advanced,"sound_channel","Sound context (optional)",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);

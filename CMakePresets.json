@@ -135,6 +135,7 @@
         "SOUND_EXPERIMENTAL": true,
         "SOUND_EFFECTS": "yamnet",
         "SOUND_TOOLS_MENU": false,
+        "SOUND_SETTINGS_PAGE": false,
         "OBS_PLUGIN_DESTINATION": "bin/64bit",
         "OBS_DATA_DESTINATION": "data"
       }

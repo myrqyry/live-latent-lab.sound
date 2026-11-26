@@ -17,4 +17,4 @@ jobs:
       profile: linux-obs32
       driver: caller
       source-package: true
-      minimum-tests: 5
+      minimum-tests: 7

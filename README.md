@@ -54,6 +54,17 @@ requires a separately qualified SA3 runtime and the explicit diffusion gate.
 DDSP requires its separately qualified LiteRT runtime/models and ddsp gate.
 Other historical effects stay quarantined.
 
+## Plugin preferences
+
+Enable the optional native Settings integration with
+`-DSOUND_SETTINGS_PAGE=ON` (the Audio Diffusion dock build enables it by
+default unless explicitly disabled). In OBS, open **Settings → Plugins →
+LLL.sound** to select starting folders for model and runtime file pickers
+and access backend-specific model, setup and licensing resources.
+Apply/OK saves preferences; Cancel discards unapplied changes.
+Existing sources retain their own selected models and devices.
+See [plugin settings integration](docs/plugin-settings.md).
+
 ## Build and stage
 
 Requirements: CMake 3.28+, Ninja, C++17, pkg-config, compatible libobs and
@@ -104,7 +115,7 @@ a retry. The latest seven-effect module has been installed locally and verified 
 · [Build checks](https://github.com/myrqyry/live-latent-lab.sound/actions)
 
 The shared Linux CI driver builds the small YAMNet profile and verifies
-registration, quarantine, ring buffer, STT configuration and public links.
+registration, quarantine, ring buffer, STT configuration, public links, and the optional settings bridge and actual property-picker defaults.
 It uploads a model-free test archive and corresponding source, not an
 expanded installer. Actual classification requires the external assets above.
 

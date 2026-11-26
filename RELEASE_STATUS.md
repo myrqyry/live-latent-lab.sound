@@ -778,3 +778,21 @@ after the formatter launcher correction. This installation does not
 clear redistribution rights or establish uninterrupted combined
 STT/TTS/stem/SA3 acceptance. No model or runtime binaries were added
 to Git, and no services were restarted or OBS scenes changed.
+
+## Native Plugins settings (2026-11-25)
+
+Added optional SOUND_SETTINGS_PAGE Qt integration using the existing
+Aftermarket sidebar/stack pattern; shared versioned tab convention lets
+independent plugins contribute without linking each other. OBS 32.2.0
+installed locale confirms its existing Plugin Manager Browse/Installed/
+Updates; no duplicate manager. Sound adds model/runtime chooser roots and
+compiled-effect resource links. No automatic downloads, cloud changes,
+source migration or device override. RED missing shared bridge; GREEN
+two-provider attach/detach, rejected Apply, successful Apply, Cancel,
+layout mismatch; real libobs property default probe confirmed persisted
+roots without changing selected model defaults. Isolated actual OBS
+Fluffy Dark showed Plugins / LLL.sound, Browse, Apply wrote selected
+directory, Cancel preserved it, reopening restored it, OK cleared it.
+No normal OBS config edited. Other plugins not migrated, cross-version
+and native plugin-manager behavior not tested. Qt integration remains
+opt-in and baseline CI archive is unchanged in scope.

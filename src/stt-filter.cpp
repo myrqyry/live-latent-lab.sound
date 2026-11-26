@@ -1,3 +1,4 @@
+#include "framework/preferences.hpp"
 // LocalVocal-inspired local captions, with Sound's bounded audio-tap design.
 // No upstream code copied. Audio is always returned unchanged.
 #include <obs-module.h>
@@ -504,22 +505,22 @@ obs_properties_t* properties(void* ptr){
     obs_property_list_add_string(backend,"Nemotron 3.5 ASR (streaming GPU / CPU)","nemotron");
 #ifdef SOUND_WITH_ZIPFORMER
     obs_property_list_add_string(backend,"Zipformer (lightweight streaming CPU)","zipformer");
-    obs_properties_add_path(p,"zipformer_model_dir","Model",OBS_PATH_DIRECTORY,nullptr,nullptr);
+    obs_properties_add_path(p,"zipformer_model_dir","Model",OBS_PATH_DIRECTORY,nullptr,sound_preferences::directory(false).c_str());
     auto* zip_device=obs_properties_add_list(p,"zipformer_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(zip_device,"CPU only","cpu");
 #endif
     obs_property_set_modified_callback(backend,backend_changed);
-    obs_properties_add_path(p,"nemotron_model_path","Model",OBS_PATH_FILE,"GGUF models (*.gguf)",nullptr);
+    obs_properties_add_path(p,"nemotron_model_path","Model",OBS_PATH_FILE,"GGUF models (*.gguf)",sound_preferences::directory(false).c_str());
     auto* device=obs_properties_add_list(p,"nemotron_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(device,"Auto (GPU when available, CPU fallback)","auto");
     obs_property_list_add_string(device,"CUDA (require NVIDIA GPU)","cuda");
     obs_property_list_add_string(device,"CPU only","cpu");
-    obs_properties_add_path(p,"parakeet_model_path","Model",OBS_PATH_FILE,"LiteRT-LM model (*.litertlm)",nullptr);
+    obs_properties_add_path(p,"parakeet_model_path","Model",OBS_PATH_FILE,"LiteRT-LM model (*.litertlm)",sound_preferences::directory(false).c_str());
     auto* para_device=obs_properties_add_list(p,"parakeet_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(para_device,"Auto (GPU where supported, CPU fallback)","auto");
     obs_property_list_add_string(para_device,"GPU (require MediaPipe GPU delegate)","gpu");
     obs_property_list_add_string(para_device,"CPU only","cpu");
-    obs_properties_add_path(p,"model_path","Model",OBS_PATH_FILE,"Whisper models (*.bin)",nullptr);
+    obs_properties_add_path(p,"model_path","Model",OBS_PATH_FILE,"Whisper models (*.bin)",sound_preferences::directory(false).c_str());
     auto* whisper_device=obs_properties_add_list(p,"whisper_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(whisper_device,"Auto (GPU when available, CPU fallback)","auto");
     obs_property_list_add_string(whisper_device,"CUDA (require NVIDIA GPU)","cuda");
@@ -540,7 +541,7 @@ obs_properties_t* properties(void* ptr){
     obs_properties_add_int(p,"caption_hold_ms","Caption hold (ms)",1000,30000,100);
     obs_properties_add_int(p,"caption_lines","Caption history (lines)",1,8,1);
     obs_properties_add_bool(p,"process_muted","Transcribe muted audio");
-    obs_properties_add_path(p,"nemotron_library","Native Nemotron runtime (optional override)",OBS_PATH_FILE,"Shared libraries (*.so)",nullptr);
+    obs_properties_add_path(p,"nemotron_library","Native Nemotron runtime (optional override)",OBS_PATH_FILE,"Shared libraries (*.so)",sound_preferences::directory(true).c_str());
     obs_properties_add_text(p,"nemotron_language","Language locale (en-US, es-ES, auto, ...)",OBS_TEXT_DEFAULT);
     obs_properties_add_int(p,"nemotron_threads","Nemotron CPU threads",1,std::max(1u,std::thread::hardware_concurrency()),1);
     auto* context=obs_properties_add_list(p,"nemotron_right_context","Encoder right context",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
@@ -549,7 +550,7 @@ obs_properties_t* properties(void* ptr){
     obs_property_list_add_int(context,"6 frames (480 ms)",6);
     obs_property_list_add_int(context,"13 frames (1040 ms)",13);
     obs_properties_add_text(p,"nemotron_note","Native streaming with automatic GPU selection when compiled. The OBS log records the actual device; CPU fallback remains available. Finalize on silence or maximum phrase.",OBS_TEXT_INFO);
-    obs_properties_add_path(p,"parakeet_library","MediaPipe Tasks 1.2.3 native library",OBS_PATH_FILE,"Shared library (*.so)",nullptr);
+    obs_properties_add_path(p,"parakeet_library","MediaPipe Tasks 1.2.3 native library",OBS_PATH_FILE,"Shared library (*.so)",sound_preferences::directory(true).c_str());
     obs_properties_add_text(p,"parakeet_note","Automatic language detection. MediaPipe attempts GPU where available; CPU remains the fallback. Completed phrases only; no language override, translation or vocabulary prompt.",OBS_TEXT_INFO);
     obs_properties_add_text(p,"language","Language code (en, auto, es, ...)",OBS_TEXT_DEFAULT);
     obs_properties_add_bool(p,"translate","Translate to English (multilingual model)");

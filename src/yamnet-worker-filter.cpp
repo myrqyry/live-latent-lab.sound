@@ -1,3 +1,4 @@
+#include "framework/preferences.hpp"
 // Opt-in native YAMNet. OBS audio callback never runs inference, resampling,
 // disk I/O, allocation or mutex operations; original audio passes unchanged.
 #include <obs-module.h>
@@ -203,9 +204,9 @@ obs_properties_t* properties(void*){
     auto* props=obs_properties_create();
     obs_properties_add_path(props,"mediapipe_library",
        "MediaPipe Tasks 1.2.3 native library (.so)",OBS_PATH_FILE,
-       "Shared library (*.so)",nullptr);
+       "Shared library (*.so)",sound_preferences::directory(true).c_str());
     obs_properties_add_path(props,"yamnet_model","Existing YAMNet (.tflite)",
-       OBS_PATH_FILE,"Model (*.tflite)",nullptr);
+       OBS_PATH_FILE,"Model (*.tflite)",sound_preferences::directory(false).c_str());
     auto* device=obs_properties_add_list(props,"yamnet_device","Compute delegate",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(device,"CPU (recommended)","cpu");
     obs_property_list_add_string(device,"Auto (GPU then CPU)","auto");
