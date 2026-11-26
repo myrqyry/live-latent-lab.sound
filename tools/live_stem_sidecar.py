@@ -2,7 +2,7 @@
 """Opt-in local 8-second stereo HTDemucs worker for OBS; no model downloads.
 
 Run with the EXISTING stem-splitter venv, not OBS's Python or a cloud service.
-The socket protocol is fixed-size/versioned and rejects incomplete/fake stems.
+The socket protocol is fixed-size/versioned and rejects incomplete or invalid stem responses.
 """
 from __future__ import annotations
 
