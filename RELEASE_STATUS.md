@@ -704,3 +704,39 @@ adapter still reloads weights per call. Worker graphical controls,
 other accepted gaps and full expanded regression remain open.
 Combined seven-effect staged module SHA256 2756229d8f8438dc3dbd276990c377f22f49fe2e53e37e01baabcb147ae4dd08.
 No installation or push in this pass.
+
+## Source-preview preparation (2026-11-25)
+
+Reviewed synchronized main 074fc0e and reachable Git history; basic
+credential/personal-path scan found no matches, no production model
+weights or shared libraries tracked. The existing 103-byte ONNX
+negative fixture now carries its upstream Microsoft MIT notice.
+Reconciled README with mic-free seven-effect candidate and older
+installed module. Added dependency/distribution inventory and
+standalone YAMNet setup, with no model or runtime bundling. The
+qualified model is 4,126,810 bytes, SHA256
+4d8b4a53282dc83ef04e3e7dbc4fbc98082e34e44ed798e16c3a0cdd4c584faf;
+Google object metadata size and MD5 matched. MediaPipe 1.2.3
+library SHA256 7ce8b23159d3fd4e8b727e35afbfb35f3d45d6bde1ec11cc01c316b3bf469f63
+matches the previously verified official wheel member. Fresh baseline
+CPU inference at 48/44.1 kHz: Silence .800781, Sine wave .996094,
+521 category signals, zero dropped samples, missing-model dry
+fallback, stale expiry, original RMS .212132/.106066. A separate
+shorter cached model was rejected as an invalid FlatBuffer; not
+modified or included. Staged seven-effect binary 2756229d8f8438dc3dbd276990c377f22f49fe2e53e37e01baabcb147ae4dd08
+rechecked exact seven registrations in isolated libobs, not a new
+seven-effect inference acceptance run.
+
+Shared CI pin 092e14e32c65b9447bc0a572e789edcf4074ac91, Linux OBS
+32.2.0 caller driver, five model-free test groups: baseline registry,
+quarantine, concurrent ring-buffer, STT config and public URLs.
+Verified local driver against installed OBS SDK; quarantine supports
+explicit SDK path rather than accidentally requiring system libobs.
+Test package strictly allows module, locale/manifest, LICENSE,
+NOTICE; no model/runtimes. Source archive from committed tree only.
+Hosted run and fresh downloaded SDK not yet qualified. Full
+expanded suite, Parakeet intermittent failure, SA3 lifecycle retry,
+cross-platform and clean-host provisioning, current GUI captures,
+comprehensive source/license audit and expanded redistribution
+clearance remain open. No runtime implementation, installed plugin,
+worker configuration, remote branch, or repository visibility changed.

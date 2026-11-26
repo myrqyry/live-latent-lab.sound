@@ -2,7 +2,7 @@
 
 `onnxruntime_non_rvc_sigmoid.onnx` is a 103-byte valid ONNX Sigmoid graph
 (originally `onnxruntime/datasets/sigmoid.onnx` from the Microsoft ONNX
-Runtime Python distribution, MIT-licensed).
+Runtime Python distribution, MIT-licensed; see [included MIT notice](LICENSE-onnxruntime.txt)).
 
 SHA-256: `5340aba67a7e3475162ad794378af55f1718f55f9a5d74b4af60ecc7f7a624b6`
 

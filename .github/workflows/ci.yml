@@ -1,0 +1,20 @@
+name: Linux source preview
+on:
+  push:
+    branches: [main, ci/public-preview]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    uses: myrqyry/obs-plugin-ci/.github/workflows/build.yml@092e14e32c65b9447bc0a572e789edcf4074ac91
+    with:
+      module: live-latent-lab-sound
+      profile: linux-obs32
+      driver: caller
+      source-package: true
+      minimum-tests: 5

@@ -6,7 +6,16 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d /tmp/sound-effect-quarantine-XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 
-cmake -S "$root" -B "$work/build" -G Ninja \
+sdk_args=()
+ldd_env=(env -u LD_LIBRARY_PATH)
+if [[ -n "${SOUND_OBS_SDK:-}" ]]; then
+    sdk="$(realpath "$SOUND_OBS_SDK")"
+    test "$(realpath "$(pkg-config --variable=prefix libobs)")" = "$sdk"
+    test -r "$sdk/include/obs/obs-module.h"
+    sdk_args+=("-DOBS_HEADER_PATH=$sdk/include/obs")
+    ldd_env=(env "LD_LIBRARY_PATH=$sdk/lib")
+fi
+cmake -S "$root" -B "$work/build" -G Ninja "${sdk_args[@]}" \
     -DFETCH_OBS=OFF \
     -DSOUND_EFFECTS= \
     -DSOUND_EXPERIMENTAL=OFF \
@@ -22,7 +31,8 @@ if ! test -r "$module"; then
     echo "QUARANTINE_FAIL: missing staged module" >&2
     exit 1
 fi
-if env -u LD_LIBRARY_PATH ldd "$module" | grep -E 'not found|libonnxruntime|libwhisper|libggml|libQt6'; then
+"${ldd_env[@]}" ldd "$module" > "$work/dependencies.log"
+if grep -E 'not found|libonnxruntime|libwhisper|libggml|libQt6' "$work/dependencies.log"; then
     echo "QUARANTINE_FAIL: default module has missing/unexpected AI/UI runtime dependencies" >&2
     exit 1
 fi

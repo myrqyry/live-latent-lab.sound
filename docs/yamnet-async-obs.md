@@ -41,7 +41,7 @@ objects still close on worker teardown, and real OBS tests now exit 0.
 
 ## Reproduce the real OBS path
 
-Run ./tests/verify-yamnet-obs-async.sh from the Sound repository.
+Run ./tests/verify-public-linux.sh from the Sound repository.
 Use SOUND_MEDIAPIPE_LIB and SOUND_YAMNET_MODEL to select existing
 user-owned files if the defaults are unavailable. No models download
 or network access is required.
@@ -64,7 +64,7 @@ Observed outputs on yuzu-mint:
 Existing regressions also passed: verify-quarantine.sh (zero
 default effects), verify-stem-live.sh
 (contract and mocked sidecar only), and
-verify-mediapipe-audio-native.sh (direct local YAMNet inference).
+the historical direct MediaPipe inference test (superseded by the public-profile runner).
 
 The architectural reference was XWHQSJ/captionflow, but the transport
 reuses Sound's own existing ring buffer. No upstream source was copied.

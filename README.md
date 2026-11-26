@@ -2,11 +2,7 @@
 
 Native audio processing and inference tools for OBS Studio.
 
-**Source:** [live-latent-lab.sound](https://github.com/myrqyry/live-latent-lab.sound)
-(currently private). This is a curated, separately rooted release-candidate
-repository, not the historical development repository. There are currently
-**no GitHub releases or redistribution-cleared installers**; building locally
-does not grant permission to redistribute third-party runtimes or models.
+> **v0.3.0 experimental source-preview candidate.** Linux x86_64 / OBS 32.2.0 is the tested target. No production installers or bundled model weights. The baseline and expanded builds are deliberately separate.
 
 **Start here:** The `public-linux` preset below builds the smaller YAMNet candidate. For STT, TTS and buffered stems, follow the
 [expanded Linux instructions](docs/expanded-build.md). See the
@@ -50,7 +46,7 @@ supports STT-to-TTS relay and [shared audio/speech signals](docs/sound-signal-in
 Sending recognized speech to cloud TTS requires explicit opt-in.
 
 YAMNet requires a separately supplied compatible MediaPipe 1.2.3 runtime
-and classification model.
+and classification model. Follow the [verified asset setup](docs/yamnet-setup.md).
 
 The baseline profile includes only YAMNet. Deterministic microphone modeling now lives in [HyperDSP](https://github.com/myrqyry/hyperdsp). The expanded
 profile registers the four baseline/expanded entries above. Audio Diffusion
@@ -76,10 +72,9 @@ until it has been backed up. The public candidate does not register
 obsolete development-only speech sources.
 
 For the four-entry expanded preset, use the
-[expanded build instructions](docs/expanded-build.md). To add the
-two optional neural effects, see [Audio Diffusion](docs/audio-diffusion.md)
-and [Neural Timbre](docs/ddsp.md) for their required runtimes,
-models, explicit build gates and acceptance tests.
+[expanded build instructions](docs/expanded-build.md). To add the three opt-in effects, see [Audio Diffusion](docs/audio-diffusion.md),
+[Neural Timbre](docs/ddsp.md), and [Voice Conversion](docs/native-rvc.md)
+for their runtimes, models, build gates and acceptance tests.
 
 ## Verify
 
@@ -95,26 +90,26 @@ classification, missing/invalid model handling, stale expiry and 44.1/48 kHz
 stereo passthrough in isolated libobs. It requires xvfb-run. Neither test
 edits normal OBS scenes or installs to the user profile.
 
-The locally installed seven-effect build (2026-11-25) includes the
-expanded profile plus Audio Diffusion and Neural Timbre (DDSP).
-Native Kokoro CUDA and CPU-only Chatterbox Turbo are additional
-backends within the single TTS source, for seven selectable engines.
-The installed module passed seven-effect registration, actual DDSP
-audio at 48 kHz, and Turbo speech playback, controls, cancellation
-and recovery. The staged DDSP build also passed 44.1 kHz and
-missing-model recovery. The complete expanded STT/stem/TTS/SA3 suite
-has not been rerun on this build. Earlier Parakeet testing had an
-intermittent 44.1 kHz lifecycle failure. See
-[release status](RELEASE_STATUS.md) for evidence and limitations.
-The previous seven-effect installation described above predates removal of microphone DSP. Current mic-free presets exclude it; diffusion and
-DDSP require explicit opt-in gates. No release binaries or model
-weights are published here.
+### Qualification scope
+
+The current seven-effect staged profile contains YAMNet, buffered stems,
+STT, TTS, Audio Diffusion, DDSP and native RVC. Microphone modeling has
+moved to HyperDSP. Individual real OBS audio tests at both 44.1/48 kHz
+cover multiple backends, but the latest combined acceptance suite has
+not passed as one uninterrupted run. Parakeet has an unresolved
+intermittent 44.1 kHz lifecycle failure; the SA3 lifecycle also required
+a retry. The current staged build is not the previously installed module.
+
+[Release evidence and history](RELEASE_STATUS.md) · [Model settings audit](docs/model-settings-audit.md)
+· [Build checks](https://github.com/myrqyry/live-latent-lab.sound/actions)
+
+The shared Linux CI driver builds the small YAMNet profile and verifies
+registration, quarantine, ring buffer, STT configuration and public links.
+It uploads a model-free test archive and corresponding source, not an
+expanded installer. Actual classification requires the external assets above.
 
 ## License and distribution
 
-See LICENSE (GPL-2.0). Model weights and third-party runtime distribution
-are separate terms. No weights are included. The candidate is not yet
-approved for external publication; dependency provenance, fresh-machine
-testing and packaging remain open.
+See [LICENSE](LICENSE), [NOTICE](NOTICE.md) and the [dependency/distribution inventory](docs/distribution.md). External model and runtime terms are separate. Full expanded redistribution and clean-machine provisioning remain unqualified.
 
 See the [model settings coverage audit](docs/model-settings-audit.md) for backend-specific controls, fixed runtime contracts and remaining gaps.
