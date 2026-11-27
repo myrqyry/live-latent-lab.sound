@@ -1,3 +1,6 @@
+#ifdef SOUND_RT_PROBE
+#include "rt-callback-probe.hpp"
+#endif
 // Actual OBS source/filter audio capture against the real local GPU sidecar.
 // Uses a PRIVATE stereo music fixture converted to float32 in /tmp. Neither
 // the fixture nor its generated stems enter the source repository.
@@ -133,5 +136,10 @@ int main(int argc,char**argv){
     obs_source_release(filter);obs_source_release(input);
     obs_data_release(settings);
     obs_shutdown();
+#ifdef SOUND_RT_PROBE
+    const bool probe_ok=rt_probe::report(1400,{4});
+    return pass&&probe_ok?0:1;
+#else
     return pass?0:1;
+#endif
 }

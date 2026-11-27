@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <time.h>
+#include <initializer_list>
 
 namespace rt_probe {
 using Callback=obs_audio_data*(*)(void*,obs_audio_data*);
@@ -22,8 +23,9 @@ struct Stats {
     uint64_t calls=0,allocs=0,frees=0,locks=0,waits=0,late=0,max=0,cpu_max=0;
     uint64_t slow_wall=0,slow_mostly_off_cpu=0;
 };
-inline Stats stats[3]={{nullptr,"sound_stt_filter"},{nullptr,"sound_ddsp_filter"},
-                       {nullptr,"stts_rvc_filter"}};
+inline Stats stats[]={{nullptr,"sound_stt_filter"},{nullptr,"sound_ddsp_filter"},
+                       {nullptr,"stts_rvc_filter"},{nullptr,"yamnet_classifier_source"},
+                       {nullptr,"stem_live_buffered_filter"}};
 inline thread_local Stats* active=nullptr;
 inline uint64_t thread_cpu_ns(){
     timespec ts{};
@@ -46,9 +48,10 @@ template<int I> obs_audio_data* dispatch(void* state,obs_audio_data* p){
     if(ns>=10000000)++s.late;
     return out;
 }
-inline bool report(size_t minimum){
+inline bool report(size_t minimum,std::initializer_list<size_t> selected={0,1,2}){
     bool ok=true;
-    for(auto& s:stats){
+    for(auto index:selected){
+        auto& s=stats[index];
         if(!s.original){ok=false;continue;}
         const size_t n=std::min<uint64_t>(s.calls,s.times.size());
         std::sort(s.times.begin(),s.times.begin()+n);
@@ -121,8 +124,8 @@ void obs_register_source_s(const obs_source_info* info,size_t size){
     using Fn=void(*)(const obs_source_info*,size_t);
     static const auto real=reinterpret_cast<Fn>(dlsym(RTLD_NEXT,"obs_register_source_s"));
     if(size==sizeof(obs_source_info)&&info->filter_audio){
-        constexpr rt_probe::Callback wrappers[]={rt_probe::dispatch<0>,rt_probe::dispatch<1>,rt_probe::dispatch<2>};
-        for(size_t i=0;i<3;++i){
+        constexpr rt_probe::Callback wrappers[]={rt_probe::dispatch<0>,rt_probe::dispatch<1>,rt_probe::dispatch<2>,rt_probe::dispatch<3>,rt_probe::dispatch<4>};
+        for(size_t i=0;i<sizeof(wrappers)/sizeof(wrappers[0]);++i){
             auto& s=rt_probe::stats[i];
             if(std::strcmp(info->id,s.id)==0){
                 s.original=info->filter_audio;

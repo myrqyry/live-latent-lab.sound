@@ -70,7 +70,7 @@ int main(int argc,char** argv){
     assert(obs_reset_audio(&ai));
     obs_module_t* m=nullptr;
     assert(obs_open_module(&m,argv[1],argv[2])==MODULE_SUCCESS&&obs_init_module(m));
-    for(const auto& s:rt_probe::stats)assert(s.original);
+    for(size_t i=0;i<3;++i)assert(rt_probe::stats[i].original);
     obs_register_source(&fixture);
     auto* source=obs_source_create(fixture.id,"Chain input",nullptr,nullptr);assert(source);
     auto add=[&](const char* id,const char* title,obs_data_t* d){

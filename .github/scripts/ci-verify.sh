@@ -57,6 +57,12 @@ count=$((count+1))
 "$cxx" -std=c++17 -O2 -Isrc tests/verify-rt-queues.cpp -o "$work/rt-queues"
 "$work/rt-queues"
 count=$((count+1))
+# Validate the Linux/glibc callback interposer against a separate DSO,
+# without requiring any models or inference runtimes.
+"${CC:-cc}" -std=gnu11 -O2 -fno-builtin -fPIC -shared -pthread tests/rt-probe-fixture.c -o "$work/rt-probe-fixture.so"
+"$cxx" -std=gnu++17 -O2 -pthread -rdynamic -I"$inc" tests/verify-rt-probe.cpp $(pkg-config --libs libobs) -ldl -o "$work/rt-probe"
+"$work/rt-probe" "$work/rt-probe-fixture.so"
+count=$((count+1))
 for test in ddsp-pipeline rvc-window wet-queue-blocks worker-reuse; do
     "$cxx" -std=c++17 -O2 -Isrc "tests/verify-$test.cpp" -o "$work/$test"
     "$work/$test"

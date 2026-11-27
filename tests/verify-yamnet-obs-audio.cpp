@@ -1,3 +1,6 @@
+#ifdef SOUND_RT_PROBE
+#include "rt-callback-probe.hpp"
+#endif
 // Real libobs source audio through the production opt-in native YAMNet
 // filter. Model must classify actual supplied silence and sine audio.
 // The source audio must pass through unchanged; no mocked classifier.
@@ -266,5 +269,10 @@ int main(int argc,char** argv){
     obs_source_release(source);
     obs_data_release(settings);
     obs_shutdown();
+#ifdef SOUND_RT_PROBE
+    const bool probe_ok=rt_probe::report(350,{3});
+    return ok&&probe_ok?0:1;
+#else
     return ok?0:1;
+#endif
 }

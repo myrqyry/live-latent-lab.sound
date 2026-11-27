@@ -164,6 +164,52 @@ specified in its environment variables. It builds the shared-library
 positive control and chain runner, then launches a bounded test.
 No changes to production callbacks were needed in this pass.
 
+## Fifth pass: YAMNet and live stem callback coverage
+
+The scoped Linux/glibc interposer now wraps five production filter types.
+The optional probe-enabled YAMNet and buffered-stem OBS fixtures reuse
+their existing functional checks, and require observed callback invocations
+and zero intercepted allocations, frees, blocking locks and waits.
+The separate DSO positive control is also included in model-free Linux CI.
+
+YAMNet used the documented SHA-256-matched MediaPipe Tasks 1.2.3 and
+YAMNet float32 assets, with explicit CPU selection. Both 44.1 and 48 kHz
+passed twice: 414 callback invocations per run, 521 model categories,
+silence and sine classification, unchanged stereo audio, missing-model
+fail-closed behavior, stale-score expiry and zero capture drops.
+The callback count includes the intentionally invalid model instance.
+
+Real buffered stem testing used a private CUDA HTDemucs sidecar (FP32,
+zero shifts, 0.1 overlap, four-second segments), at 48 kHz. A preliminary
+fixture made by repeating a 12-second music excerpt failed the preexisting
+wet-output energy/stereo difference thresholds despite nonzero wet samples
+and no intercepted RT violations. No acceptance thresholds were changed.
+The earlier qualified 24-second fixture passed: 1,152,000 frames, initial
+silence, distinct nonzero stereo vocal output, and all four stem choices
+exposed. Actual eight-second worker windows completed in 1.802, 2.076
+and 1.811 seconds. This does not establish sustained deadline guarantees.
+
+| Path | Rate | Calls | Wall p99 us | CPU p99 us | CPU max us |
+| --- | --- | ---: | ---: | ---: | ---: |
+| YAMNet first | 48 kHz | 414 | 16.051 | 6.643 | 10.360 |
+| YAMNet first | 44.1 kHz | 414 | 20.049 | 6.592 | 9.357 |
+| YAMNet repeat | 48 kHz | 414 | 24.237 | 7.344 | 11.272 |
+| YAMNet repeat | 44.1 kHz | 414 | 13.777 | 6.822 | 13.485 |
+| Live stem preliminary fixture (functional fail) | 48 kHz | 2400 | 17.154 | 8.376 | 25.117 |
+| Live stem qualified fixture | 48 kHz | 2400 | 15.431 | 8.486 | 20.458 |
+| Live stem unavailable backend | 48 kHz | 1400 | 13.476 | 6.522 | 20.659 |
+
+The missing-socket run also passed, producing silence across all 672,000
+frames rather than misrepresenting dry audio as separated stems.
+All 7,856 additional callback invocations recorded zero intercepted allocation, deallocation,
+blocking lock or wait calls and no individual 10 ms callback overruns.
+They were tested separately, not in the earlier three-filter chain.
+Only test code changed; neither production filters nor active OBS
+profile were modified. Reproduce using
+`tests/verify-rt-extra-filters.sh [--with-stems]` and local assets
+specified in the script. The stem worker uses a temporary private
+socket and is stopped by the test runner.
+
 ## Repeatable tests
 
 Model-free queue and DSP checks are included in the public CI verification
@@ -199,7 +245,8 @@ in the tested paths, not arbitrary malloc or all third-party operations.
   sustained latency remain unqualified. Current transport recovery has been
   tested, but a real noise suppression model was not available locally.
 - STT model qualification for other backends and the 44.1 kHz full pipeline
-  was not repeated in this pass. Extend callback instrumentation to other
-  filters, longer sustained measurements and additional allocator/lock
-  APIs; further worker-side tensor allocation improvements remain candidates.
+  was not repeated in this pass. Extend callback instrumentation to legacy
+  opt-in filters and other production source paths, longer sustained
+  measurements and additional allocator/lock APIs; further worker-side
+  tensor allocation improvements remain candidates.
 - Public hosted CI and other platforms have not been run for this checkpoint.
