@@ -21,6 +21,7 @@ public:
     size_t hop()const{return hop_;}size_t delay()const{return delay_;}
     bool failed()const{return fault_.load(std::memory_order_acquire);}
     void fail(){fault_.store(true,std::memory_order_release);}
+    bool input_ready()const{return !failed()&&input_.available()>=hop_;}
     bool read(float* l,float* r){return !failed()&&input_.pop(l,r,hop_);}
     bool write(const float* v){if(failed())return false;if(wet_.write(v,hop_)!=hop_){fail();return false;}return true;}
     void process(float* l,float* r,size_t n,float mix){

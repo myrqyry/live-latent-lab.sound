@@ -71,7 +71,7 @@ done
 "$cxx" -std=c++17 -O2 -Isrc tests/verify-stt-config.cpp -o "$work/stt-config"
 "$work/stt-config"
 count=$((count+1))
-for test in stt-capture stt-wake; do
+for test in stt-capture stt-wake rt-wake; do
     "$cxx" -std=c++17 -O2 -pthread -Isrc "tests/verify-$test.cpp" -o "$work/$test"
     "$work/$test"
     count=$((count+1))

@@ -75,6 +75,7 @@ public:
         }
         return true;
     }
+    bool input_ready()const{return ok()&&inputs_.available()>=window_frames();}
     bool read_input_window(float* left,float* right){
         return ok() && inputs_.pop(left,right,window_frames());
     }

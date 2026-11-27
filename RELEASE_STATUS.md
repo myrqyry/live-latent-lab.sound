@@ -117,6 +117,45 @@ Nemotron model-backed hot tuning, sustained live OBS use, and clean-machine
 qualification were not revalidated by this pass. Keep expanded features
 opt-in and maintain all existing release/distribution gates.
 
+## Shared neural audio worker wakeups (2026-11-27)
+
+The Linux STT eventfd mechanism now lives in `framework/rt_wake.hpp`;
+STT retains its compatible alias. DDSP, native RVC and buffered stems
+signal their workers after queued input reaches a useful processing
+threshold (one DDSP hop, at least one RVC hop, or one stem window).
+Shutdown and pipeline faults also signal; DDSP settings corrections wake
+its initial model retry. A bounded 100 ms watchdog remains in the newly
+converted workers. The existing queue ownership, fixed delays and failure
+policies are unchanged; this is not automatic fault recovery.
+
+The standalone wake/readiness test covers notification races, timeouts,
+stereo queue handoffs and threshold readiness at 44.1/48 kHz, and is wired
+into CI. The final staged seven-effect build passed the 36-second real
+Whisper/DDSP/CUDA RVC chain: 3,600 callbacks per filter, zero observed
+allocator/lock/wait violations, 1,800 DDSP hops, 70 RVC hops and zero STT
+drops. Dispatch p99 was 0.866 ms and maximum 6.235 ms, with no 10 ms
+overruns in that run. An earlier per-packet notification prototype had
+three wall-time overruns; the threshold-gated implementation supersedes it.
+These observations are not a controlled before/after benchmark or a
+guarantee against scheduler preemption.
+Final 44.1 kHz isolated real-model DDSP and RVC tests also passed
+(595 and 16 hops respectively); the affected model-free transport and
+wake tests passed again.
+
+Actual CUDA HTDemucs with a synthetic stereo speech/tone fixture passed
+the 24-second libobs acceptance test: 1,152,000 frames, correct initial
+silence, distinct stereo vocal output, and 2,400 measured callbacks with
+zero allocation/free/lock/wait violations. The earlier weak-vocal music
+fixture missed the existing energy thresholds both before and after the
+first wake change, with identical measured audio energies. The fixture
+was replaced, not the acceptance thresholds.
+
+Remaining roadmap: migrate YAMNet, DeepFilter and live SAME-S worker
+polling without changing cancellation semantics; then implement
+generation-tagged recovery/hot reload using DeepFilter's existing
+transport as the reference, and benchmark DSP improvements before
+promoting them. No changes to supported platforms or release gates.
+
 ## STT event-driven worker wakeups (2026-11-22)
 
 Replaced the STT worker's 4 ms empty-queue polling with a Linux nonblocking

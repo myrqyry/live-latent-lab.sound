@@ -15,6 +15,7 @@
 #include <vector>
 #include "framework/live-stem-pipeline.hpp"
 #include "framework/live-stem-client.hpp"
+#include "framework/rt_wake.hpp"
 
 namespace {
 struct StemFilter {
@@ -22,6 +23,7 @@ struct StemFilter {
         : sample_rate(rate),pipeline(rate),client(stopping) {}
     uint32_t sample_rate;
     stts::LiveStemPipeline pipeline;
+    stts::RtWake wake;
     std::atomic<bool> stopping{false};
     stts::LiveStemClient client;
     std::atomic<int> selected{3}; // drums=0 bass=1 other=2 vocals=3
@@ -73,8 +75,9 @@ void worker_loop(StemFilter* data) {
     uint32_t seq=0;
     while(!data->stopping.load(std::memory_order_acquire)){
         if(!data->pipeline.ok())break;
+        const auto ticket=data->wake.sequence();
         if(!data->pipeline.read_input_window(input_l.data(),input_r.data())){
-            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+            if(!data->stopping.load()&&data->pipeline.ok())data->wake.wait(ticket,100);
             continue;
         }
         const int stem=data->selected.load(std::memory_order_acquire);
@@ -102,7 +105,8 @@ void* create(obs_data_t* settings,obs_source_t*) {
         blog(LOG_WARNING,"[Sound stems] Requires OBS stereo project at 44.1 or 48 kHz");
         return nullptr;
     }
-    auto* data=new(std::nothrow) StemFilter(rate);
+    StemFilter* data=nullptr;
+    try{data=new StemFilter(rate);}catch(...){return nullptr;}
     if(!data)return nullptr;
     const char* path=obs_data_get_string(settings,"socket_path");
     if(path)data->socket_path=path;
@@ -125,6 +129,7 @@ void destroy(void* ptr) {
     auto* data=static_cast<StemFilter*>(ptr);
     if(!data)return;
     data->stopping.store(true,std::memory_order_release);
+    data->wake.notify();
     data->client.cancel(); // interrupt the worker, never an OBS audio call
     if(data->worker.joinable())data->worker.join();
     delete data;
@@ -140,13 +145,16 @@ obs_audio_data* filter_audio(void* ptr,obs_audio_data* packet){
     };
     if(!packet->frames)return packet;
     if(!packet->data[0] || !packet->data[1] || !data->pipeline.ok()){
+        const bool was_valid=data->pipeline.ok();
         data->pipeline.invalidate();
+        if(was_valid)data->wake.notify();
         zero();
         return packet;
     }
     auto* left=reinterpret_cast<float*>(packet->data[0]);
     auto* right=reinterpret_cast<float*>(packet->data[1]);
     data->pipeline.process(left,right,packet->frames);
+    if(!data->pipeline.ok()||data->pipeline.input_ready())data->wake.notify();
     for(size_t ch=2;ch<MAX_AUDIO_CHANNELS;++ch)
         if(packet->data[ch])
             std::fill_n(reinterpret_cast<float*>(packet->data[ch]),packet->frames,0.f);

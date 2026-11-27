@@ -19,6 +19,8 @@ public:
     explicit Pipeline(size_t rate):rate_(rate),delay_(rate*3/2),in_(rate*4),wet_(rate*3),l_(delay_),r_(delay_){}
     bool failed()const{return failed_.load(std::memory_order_acquire);}
     void fail(){failed_.store(true,std::memory_order_release);}
+    // Producer checks the minimum subsequent hop; the worker checks its exact window.
+    bool input_ready()const{return !failed()&&in_.available()>=rate_/2;}
     bool read(float* l,float* r,size_t n){return !failed()&&in_.pop(l,r,n);}
     bool write(const float* x){if(failed()||wet_.write(x,rate_/2)!=rate_/2){fail();return false;}return true;}
     void process(float* l,float* r,size_t n,float mix){

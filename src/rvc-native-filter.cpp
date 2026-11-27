@@ -4,6 +4,7 @@
 #include <media-io/audio-io.h>
 #include "framework/rvc_native_protocol.hpp"
 #include "framework/rvc_window.hpp"
+#include "framework/rt_wake.hpp"
 #include "framework/sola_stitcher.hpp"
 #include <thread>
 #include <chrono>
@@ -27,6 +28,7 @@ enum Status{Loading,Ready,Error};
 struct State{
     size_t rate;
     rvc_native::Pipeline pipeline;
+    stts::RtWake wake;
     std::atomic<bool> stop{false};
     std::atomic<int> status{Loading},pitch{0};
     std::atomic<bool> pitch_median{true};
@@ -91,10 +93,11 @@ void run(State* s){
         s->status.store(Ready,std::memory_order_release);
         auto last=std::chrono::steady_clock::now();
         while(!s->stop.load()&&!s->pipeline.failed()){
+            const auto ticket=s->wake.sequence();
             auto n=window.needed();
             if(!s->pipeline.read(l.data(),r.data(),n)){
                 if(std::chrono::steady_clock::now()-last>30s)throw std::runtime_error("RVC input idle; recreate filter to restart");
-                std::this_thread::sleep_for(2ms);continue;
+                if(!s->stop.load()&&!s->pipeline.failed())s->wake.wait(ticket,100);continue;
             }
             auto t=std::chrono::steady_clock::now();auto pcm=window.push(l.data(),r.data(),n);
             // Always convert the real window, including silence; never reuse stale output.
@@ -169,13 +172,16 @@ void* create(obs_data_t* d,obs_source_t* source){
         return s.release();
     }catch(...){return nullptr;}
 }
-void destroy(void* ptr){auto* s=static_cast<State*>(ptr);s->stop=true;if(s->worker.joinable())s->worker.join();delete s;}
+void destroy(void* ptr){auto* s=static_cast<State*>(ptr);s->stop=true;s->wake.notify();if(s->worker.joinable())s->worker.join();delete s;}
 obs_audio_data* audio(void* ptr,obs_audio_data* a){
     auto* s=static_cast<State*>(ptr);if(!a||!a->data[0]||!a->frames)return a;
     if(!s->started){if(s->status.load(std::memory_order_acquire)!=Ready)return a;s->started=true;}
+    const bool was_failed=s->pipeline.failed();
     if(s->expected&&(a->timestamp>s->expected?a->timestamp-s->expected:s->expected-a->timestamp)>80000000)s->pipeline.fail();
     s->expected=a->timestamp+uint64_t(a->frames)*1000000000/s->rate;
-    s->pipeline.process(reinterpret_cast<float*>(a->data[0]),reinterpret_cast<float*>(a->data[1]),a->frames,s->mix.load());return a;
+    s->pipeline.process(reinterpret_cast<float*>(a->data[0]),reinterpret_cast<float*>(a->data[1]),a->frames,s->mix.load());
+    if(!was_failed&&(s->pipeline.failed()||s->pipeline.input_ready()))s->wake.notify();
+    return a;
 }
 }
 void register_sound_rvc(){

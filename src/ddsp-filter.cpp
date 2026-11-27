@@ -13,6 +13,7 @@
 #include <mutex>
 #include <openssl/evp.h>
 #include "framework/ddsp_pipeline.hpp"
+#include "framework/rt_wake.hpp"
 #include "engines/ddsp_litert.hpp"
 #include "engines/ddsp_manifest.hpp"
 
@@ -21,6 +22,7 @@ enum Status{Loading,Ready,Error};
 struct Filter{
     explicit Filter(size_t rate):pipeline(rate){}
     ddsp::Pipeline pipeline;
+    stts::RtWake wake;
     std::atomic<bool> stop{false};
     std::atomic<int> status{Loading};
     std::atomic<float> mix{1},morph{0},pitch{0},harmonics{1},noise{1},expression{1},gate{-60},gain{1};
@@ -91,7 +93,8 @@ void run(Filter* f){
             }
             int old_a=-1,old_b=-1;
             while(!f->stop.load(std::memory_order_acquire)&&!f->pipeline.failed()){
-                if(!f->pipeline.read(l.data(),r.data())){std::this_thread::sleep_for(std::chrono::milliseconds(1));continue;}
+                const auto ticket=f->wake.sequence();
+                if(!f->pipeline.read(l.data(),r.data())){if(!f->stop.load()&&!f->pipeline.failed())f->wake.wait(ticket,100);continue;}
                 auto start=std::chrono::steady_clock::now();
                 auto feature=features.run(analysis.push(l.data(),r.data()));
                 f->hz.store(feature.db>f->gate.load()?feature.hz:0);
@@ -123,8 +126,9 @@ void run(Filter* f){
         }
         // Wait for an explicit settings change, not an endless load loop.
         while(!f->stop.load()){
+            const auto ticket=f->wake.sequence();
             {std::lock_guard<std::mutex> lock(f->config_mutex);if(revision!=f->config_revision)break;}
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            if(!f->stop.load())f->wake.wait(ticket,100);
         }
     }
 }
@@ -155,7 +159,7 @@ void update(void* data,obs_data_t* d){
     std::lock_guard<std::mutex> lock(f->config_mutex);
     std::string lib=obs_data_get_string(d,"runtime"),models=obs_data_get_string(d,"models");
     if(f->status.load()!=Ready&&(lib!=f->lib||models!=f->models)){
-        f->lib=std::move(lib);f->models=std::move(models);++f->config_revision;
+        f->lib=std::move(lib);f->models=std::move(models);++f->config_revision;f->wake.notify();
     }
 }
 obs_properties_t* properties(void* data){
@@ -200,13 +204,15 @@ void* create(obs_data_t* d,obs_source_t* source){
         return f.release();
     }catch(...){return nullptr;}
 }
-void destroy(void* data){auto* f=static_cast<Filter*>(data);if(!f)return;f->stop=true;if(f->worker.joinable())f->worker.join();delete f;}
+void destroy(void* data){auto* f=static_cast<Filter*>(data);if(!f)return;f->stop=true;f->wake.notify();if(f->worker.joinable())f->worker.join();delete f;}
 obs_audio_data* filter_audio(void* data,obs_audio_data* p){
     auto* f=static_cast<Filter*>(data);if(!f||!p||!p->data[0]||!p->frames)return p;
     // Stay dry before successful model initialization. Once latency begins,
     // preserve it even on worker failure. No model or filesystem work here.
     if(!f->started){if(f->status.load(std::memory_order_acquire)!=Ready)return p;f->started=true;}
+    const bool was_failed=f->pipeline.failed();
     f->pipeline.process(reinterpret_cast<float*>(p->data[0]),reinterpret_cast<float*>(p->data[1]),p->frames,f->mix.load());
+    if(!was_failed&&(f->pipeline.failed()||f->pipeline.input_ready()))f->wake.notify();
     return p;
 }
 }
