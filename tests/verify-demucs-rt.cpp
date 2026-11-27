@@ -46,5 +46,35 @@ int main(){
     realtime=false;
     stem.release();
     assert(!stem.claim()); // closed parent cannot be rebound
+    // One bounded queue serves all filter output modes. Old configuration
+    // blocks must be discarded rather than replayed after a mode change.
+    stts::DemucsFilterQueue queue(7);
+    const std::array<float,7> bass{-1,-2,-3,-4,-5,-6,-7};
+    const float* mono[]={input.data()};
+    const float* four[]={input.data(),bass.data(),input.data(),bass.data()};
+    std::array<std::array<float,7>,8> planes{};
+    std::array<float*,8> output{};
+    for(size_t i=0;i<output.size();++i)output[i]=planes[i].data();
+    constexpr uint64_t old_tag=8, multi_tag=21, new_tag=30;
+    realtime=true;
+    assert(queue.publish(old_tag,mono,1,7));
+    assert(queue.publish(multi_tag,four,4,7));
+    queue.render(multi_tag,output.data(),8,3);
+    for(size_t ch=0;ch<8;++ch)for(size_t i=0;i<3;++i)
+        assert(planes[ch][i]==((ch/2)%2?bass[i]:input[i]));
+    queue.render(multi_tag,output.data(),8,7);
+    for(size_t ch=0;ch<8;++ch)for(size_t i=0;i<7;++i)
+        assert(planes[ch][i]==(i<4?((ch/2)%2?bass[i+3]:input[i+3]):0.f));
+    assert(queue.publish(multi_tag,four,4,7));
+    assert(queue.publish(new_tag,mono,1,7));
+    assert(queue.publish(new_tag,mono,1,7));
+    assert(!queue.publish(new_tag,mono,1,7)); // exactly 3 pending blocks
+    queue.render(new_tag,output.data(),8,7);
+    for(auto& channel:planes)assert(channel==input);
+    queue.render(new_tag,output.data(),8,7);
+    for(auto& channel:planes)assert(channel==input);
+    queue.render(new_tag,output.data(),8,7);
+    for(auto& channel:planes)assert((channel==std::array<float,7>{}));
+    realtime=false;
     puts("DEMUCS_RT_CAPTURE_AND_STEM_PASS=1");
 }

@@ -2,7 +2,6 @@
 #include <vector>
 #include <thread>
 #include <mutex>
-#include <deque>
 #include <memory>
 #include <atomic>
 #include <array>
@@ -10,7 +9,7 @@
 #include "engines/demucs_engine.hpp"
 #include "engines/demucs_cpp_engine.hpp"
 #include "framework/audio_utils.hpp"
-#include "framework/ring-buffer.hpp"
+#include "framework/demucs_rt.hpp"
 #include "framework/stem_output_guard.hpp"
 #include "framework/obs_helpers.h"
 
@@ -25,30 +24,19 @@ struct demucs_filter_data {
     std::unique_ptr<stts::InferenceEngine> engine;
     std::string model_path;
     std::string model_type; // "onnx" or "cpp"
-    int output_mode; // 0=vocals, 1=instrumental, 2=drums, 3=bass, 4=other, 5=multi-channel, 6=custom, 7=dmca-safe
+    // Settings written under engine_mutex and consumed by the worker.
+    int output_mode=0;
+    unsigned include_mask=15;
+    int num_threads=4;
+    int chunk_ms=5000;
+    std::string backend;
+    std::mutex control_mutex; // serialize updates; callback never takes this
 
-    // Custom mix toggles (for mode 6)
-    bool include_drums;
-    bool include_bass;
-    bool include_other;
-    bool include_vocals;
-
-    // Performance
-    int num_threads;
-    int chunk_ms;
-
-    // Audio Buffering (lock-free input ring buffer)
-    std::unique_ptr<stts::RingBuffer> input_ring;
-
-    // Single-stem output modes (0-4, 6, 7) use a lock-free output ring buffer
-    std::unique_ptr<stts::RingBuffer> output_ring;
-
-    // Multi-channel output buffers (mode 5) — still deque-based since each stem needs separate tracking
-    std::array<std::deque<float>, 4> stem_buffers;
-
-    // Custom mix / DMCA safe buffer (modes 6, 7) — separate from single-stem output
-    std::deque<float> custom_mix_buffer;
-    std::mutex mix_mutex; // protects custom_mix_buffer and stem_buffers
+    // Audio sees one coherent generation+mode tag. Output blocks are tagged
+    // before publication, so switching modes cannot replay a previous mix.
+    std::atomic<uint64_t> tag{0};
+    std::unique_ptr<stts::DemucsCapture> capture;
+    std::unique_ptr<stts::DemucsFilterQueue> output;
 
     // Processing Thread
     std::thread worker_thread;
@@ -67,81 +55,72 @@ struct demucs_filter_data {
 /* ------------------------------------------------------------------------- */
 
 static void demucs_process_thread(demucs_filter_data *data) {
+    std::vector<float> current_chunk, mixed;
+    uint64_t capture_epoch=0;
     while (!data->stop_thread.load()) {
-        std::vector<float> current_chunk;
-
-        size_t chunk_size = (data->sample_rate * data->chunk_ms) / 1000;
-        chunk_size = std::max(chunk_size, (size_t)(data->sample_rate * 2));
-
-        size_t available = data->input_ring->available();
-        if (available >= chunk_size) {
-            current_chunk.resize(chunk_size);
-            data->input_ring->read(current_chunk.data(), chunk_size);
+        size_t chunk_size;
+        uint64_t tag;
+        {
+            std::lock_guard<std::mutex> lock(data->engine_mutex);
+            chunk_size=size_t(data->sample_rate)*data->chunk_ms/1000;
+            tag=data->tag.load();
         }
-
-        if (current_chunk.empty()) {
+        current_chunk.resize(chunk_size);
+        if(!data->capture->read_chunk(current_chunk.data(),chunk_size,capture_epoch)){
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
 
-        {
-            std::lock_guard<std::mutex> e_lock(data->engine_mutex);
-            if (data->engine && data->engine->is_ready()) {
-                if (data->output_mode == 5 || data->output_mode == 6 || data->output_mode == 7) {
-                    std::vector<std::vector<float>> stems;
-                    try {
-                        stems = data->engine->process_all_stems(current_chunk, data->sample_rate);
-                    } catch (const std::exception& e) {
-                        blog(LOG_WARNING, "[Demucs] Processing error: %s", e.what());
-                    }
-                    // Any missing, short or non-finite stems are a failed
-                    // inference batch, never a valid separated audio output.
-                    if (!stts::stem_batch_is_valid(stems, 4, current_chunk.size()))
-                        continue;
-
-                    std::lock_guard<std::mutex> lock(data->mix_mutex);
-                    if (data->output_mode == 5) {
-                        for (size_t stem = 0; stem < 4 && stem < stems.size(); stem++) {
-                            for (float s : stems[stem]) {
-                                data->stem_buffers[stem].push_back(s);
-                            }
-                        }
-                    } else if (data->output_mode == 7) {
-                        if (stems.size() > 3) {
-                            for (float s : stems[3]) {
-                                data->custom_mix_buffer.push_back(s);
-                            }
-                        }
-                    } else {
-                        size_t num_samples = stems[0].size();
-                        for (size_t i = 0; i < num_samples; i++) {
-                            float mixed = 0.0f;
-                            int count = 0;
-                            if (data->include_drums && stems.size() > 0) { mixed += stems[0][i]; count++; }
-                            if (data->include_bass && stems.size() > 1) { mixed += stems[1][i]; count++; }
-                            if (data->include_other && stems.size() > 2) { mixed += stems[2][i]; count++; }
-                            if (data->include_vocals && stems.size() > 3) { mixed += stems[3][i]; count++; }
-                            if (count > 1) mixed = mixed / std::sqrt(static_cast<float>(count));
-                            data->custom_mix_buffer.push_back(mixed);
-                        }
-                    }
-                } else {
-                    std::vector<float> processed;
-                    try {
-                        processed = data->engine->process(current_chunk, data->sample_rate);
-                    } catch (const std::exception& e) {
-                        blog(LOG_WARNING, "[Demucs] Processing error: %s", e.what());
-                        processed = std::move(current_chunk);
-                    }
-                    data->output_ring->write(processed.data(), processed.size());
+        std::lock_guard<std::mutex> lock(data->engine_mutex);
+        if(tag!=data->tag.load())continue; // settings changed while collecting input
+        const int mode=data->output_mode;
+        auto publish_mono=[&](const std::vector<float>& samples){
+            if(samples.size()!=current_chunk.size() || data->capture->epoch()!=capture_epoch)return;
+            const float* planes[]={samples.data()};
+            data->output->publish(tag,planes,1,samples.size());
+        };
+        if(data->engine && data->engine->is_ready()){
+            if(mode>=5){
+                std::vector<std::vector<float>> stems;
+                try{
+                    stems=data->engine->process_all_stems(current_chunk,data->sample_rate);
+                }catch(const std::exception& e){
+                    blog(LOG_WARNING,"[Demucs] Processing error: %s",e.what());
                 }
-            } else {
-                // Single-stem filter modes keep their existing dry bypass.
-                // Multi-stem, custom mix and DMCA-safe modes MUST stay silent
-                // when no model is available: input music is not separation.
-                if (data->output_mode >= 0 && data->output_mode <= 4)
-                    data->output_ring->write(current_chunk.data(), current_chunk.size());
+                if(!stts::stem_batch_is_valid(stems,4,current_chunk.size()) ||
+                   data->capture->epoch()!=capture_epoch)continue;
+                if(mode==5){
+                    const float* planes[]={stems[0].data(),stems[1].data(),stems[2].data(),stems[3].data()};
+                    data->output->publish(tag,planes,4,current_chunk.size());
+                }else if(mode==7){
+                    publish_mono(stems[3]);
+                }else{
+                    mixed.resize(current_chunk.size());
+                    unsigned count=0;
+                    for(unsigned stem=0;stem<4;++stem)if(data->include_mask&(1u<<stem))++count;
+                    const float divisor=count>1?std::sqrt(float(count)):1.f;
+                    for(size_t i=0;i<mixed.size();++i){
+                        float sample=0;
+                        for(unsigned stem=0;stem<4;++stem)
+                            if(data->include_mask&(1u<<stem))sample+=stems[stem][i];
+                        mixed[i]=sample/divisor;
+                    }
+                    publish_mono(mixed);
+                }
+            }else{
+                std::vector<float> processed;
+                try{
+                    processed=data->engine->process(current_chunk,data->sample_rate);
+                }catch(const std::exception& e){
+                    blog(LOG_WARNING,"[Demucs] Processing error: %s",e.what());
+                    processed=current_chunk;
+                }
+                publish_mono(processed);
             }
+        }else if(mode>=0 && mode<=4){
+            // Retain the legacy delayed dry fallback only for single-stem modes.
+            // No unconfigured model may produce purported custom/multi stems.
+            publish_mono(current_chunk);
         }
     }
 }
@@ -227,78 +206,53 @@ static void demucs_defaults(obs_data_t *settings) {
 static void demucs_update(void *data_ptr, obs_data_t *settings) {
     demucs_filter_data *data = (demucs_filter_data *)data_ptr;
 
-    std::string new_path = safe_obs_data_get_string(settings, "model_path");
-    std::string new_type = safe_obs_data_get_string(settings, "model_type");
-    int new_mode = (int)obs_data_get_int(settings, "output_mode");
-    data->output_mode = new_mode;
-    data->chunk_ms = (int)obs_data_get_int(settings, "chunk_ms");
-    data->num_threads = (int)obs_data_get_int(settings, "num_threads");
-    data->include_drums = obs_data_get_bool(settings, "include_drums");
-    data->include_bass = obs_data_get_bool(settings, "include_bass");
-    data->include_other = obs_data_get_bool(settings, "include_other");
-    data->include_vocals = obs_data_get_bool(settings, "include_vocals");
+    std::lock_guard<std::mutex> control(data->control_mutex);
+    const auto path=safe_obs_data_get_string(settings,"model_path");
+    const auto type=safe_obs_data_get_string(settings,"model_type");
+    auto backend=safe_obs_data_get_string(settings,"backend");
+    if(backend.empty())backend="auto";
+    const int mode=std::clamp(int(obs_data_get_int(settings,"output_mode")),0,7);
+    const int chunk=std::clamp(int(obs_data_get_int(settings,"chunk_ms")),2000,10000);
+    const int threads=std::clamp(int(obs_data_get_int(settings,"num_threads")),1,16);
+    unsigned mask=0;
+    const char* names[]={"include_drums","include_bass","include_other","include_vocals"};
+    for(unsigned i=0;i<4;++i)if(obs_data_get_bool(settings,names[i]))mask|=1u<<i;
+    const bool reload=path!=data->model_path || type!=data->model_type ||
+                      threads!=data->num_threads || backend!=data->backend;
+    if(!reload && mode==data->output_mode && chunk==data->chunk_ms && mask==data->include_mask)return;
 
-    bool reload = (new_path != data->model_path || new_type != data->model_type);
-
-    if (reload && !new_path.empty()) {
-        data->model_path = new_path;
-        data->model_type = new_type;
-
-        std::unique_ptr<stts::InferenceEngine> new_engine;
-        bool init_success = false;
-
-        if (data->model_type == "cpp") {
-            new_engine = std::make_unique<stts::DemucsCppEngine>();
-        } else {
-            new_engine = std::make_unique<stts::DemucsEngine>();
-        }
-
-        std::stringstream ss;
-        ss << data->model_path << "|";
-        switch (new_mode) {
-            case 0: ss << "vocals"; break;
-            case 1: ss << "instrumental"; break;
-            case 2: ss << "drums"; break;
-            case 3: ss << "bass"; break;
-            case 4: ss << "other"; break;
-            case 5: case 6: case 7: ss << "all"; break;
-        }
-        ss << "|" << data->num_threads;
-        std::string backend = safe_obs_data_get_string(settings, "backend");
-        ss << "|" << (backend.empty() ? "auto" : backend);
-
-        try {
-            if (new_engine->initialize(ss.str())) {
-                init_success = true;
-                blog(LOG_INFO, "[Demucs Filter] Model loaded: %s (type: %s, mode: %d, backend: %s)",
-                     data->model_path.c_str(), data->model_type.c_str(), new_mode, backend.c_str());
-            } else {
-                blog(LOG_ERROR, "[Demucs Filter] Failed to initialize model: %s", data->model_path.c_str());
-            }
-        } catch (const std::exception& e) {
-            blog(LOG_ERROR, "[Demucs Filter] Exception during init: %s", e.what());
-        }
-
-        if (init_success) {
-            std::lock_guard<std::mutex> e_lock(data->engine_mutex);
-            data->engine = std::move(new_engine);
-        }
-    } else if (data->engine) {
-        std::lock_guard<std::mutex> e_lock(data->engine_mutex);
-        if (data->model_type == "onnx") {
-            // Use dynamic_cast for type-safe downcast
-            auto* std_engine = dynamic_cast<stts::DemucsEngine*>(data->engine.get());
-            if (std_engine) {
-                switch (new_mode) {
-                    case 0: std_engine->set_output_stem(stts::DemucsEngine::Stem::VOCALS); break;
-                    case 1: std_engine->set_output_instrumental(true); break;
-                    case 2: std_engine->set_output_stem(stts::DemucsEngine::Stem::DRUMS); break;
-                    case 3: std_engine->set_output_stem(stts::DemucsEngine::Stem::BASS); break;
-                    case 4: std_engine->set_output_stem(stts::DemucsEngine::Stem::OTHER); break;
-                }
-            }
+    // Prepare a replacement off the callback and outside the worker lock.
+    // Continue using the previous published configuration until commit.
+    std::unique_ptr<stts::InferenceEngine> replacement;
+    if(reload && !path.empty()){
+        try{
+            if(type=="cpp")replacement=std::make_unique<stts::DemucsCppEngine>();
+            else replacement=std::make_unique<stts::DemucsEngine>();
+            const char* modes[]={"vocals","instrumental","drums","bass","other","all","all","all"};
+            std::stringstream ss;
+            ss<<path<<"|"<<modes[mode]<<"|"<<threads<<"|"<<backend;
+            if(!replacement->initialize(ss.str()))replacement.reset();
+        }catch(const std::exception& e){
+            blog(LOG_WARNING,"[Demucs] Model initialization error: %s",e.what());
+            replacement.reset();
         }
     }
+
+    std::lock_guard<std::mutex> lock(data->engine_mutex);
+    if(reload)data->engine=std::move(replacement);
+    if(auto* standard=dynamic_cast<stts::DemucsEngine*>(data->engine.get())){
+        switch(mode){
+            case 0:standard->set_output_stem(stts::DemucsEngine::Stem::VOCALS);break;
+            case 1:standard->set_output_instrumental(true);break;
+            case 2:standard->set_output_stem(stts::DemucsEngine::Stem::DRUMS);break;
+            case 3:standard->set_output_stem(stts::DemucsEngine::Stem::BASS);break;
+            case 4:standard->set_output_stem(stts::DemucsEngine::Stem::OTHER);break;
+        }
+    }
+    data->model_path=path;data->model_type=type;data->backend=backend;
+    data->num_threads=threads;data->chunk_ms=chunk;data->output_mode=mode;data->include_mask=mask;
+    const auto generation=(data->tag.load()>>3)+1;
+    data->tag.store((generation<<3)|uint64_t(mode),std::memory_order_release);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -313,18 +267,12 @@ static void *demucs_create(obs_data_t *settings, obs_source_t *context) {
     demucs_filter_data *data = new demucs_filter_data();
     data->context = context;
     data->stop_thread.store(false, std::memory_order_relaxed);
-    data->sample_rate = audio_output_get_sample_rate(obs_get_audio());
-    data->chunk_ms = 5000;
-    data->num_threads = 4;
-    data->output_mode = 0;
-    data->include_drums = true;
-    data->include_bass = true;
-    data->include_other = true;
-    data->include_vocals = true;
-
-    size_t ring_cap = data->sample_rate * demucs_filter_data::RING_CAPACITY_SECONDS;
-    data->input_ring = std::make_unique<stts::RingBuffer>(ring_cap);
-    data->output_ring = std::make_unique<stts::RingBuffer>(ring_cap);
+    auto* host_audio=obs_get_audio();
+    data->sample_rate=host_audio?audio_output_get_sample_rate(host_audio):0;
+    if(!data->sample_rate){delete data;return nullptr;}
+    const size_t ring_cap=size_t(data->sample_rate)*demucs_filter_data::RING_CAPACITY_SECONDS;
+    data->capture=std::make_unique<stts::DemucsCapture>(ring_cap);
+    data->output=std::make_unique<stts::DemucsFilterQueue>(size_t(data->sample_rate)*10);
 
     demucs_update(data, settings);
 
@@ -349,61 +297,11 @@ static struct obs_audio_data *demucs_filter_audio(void *data_ptr, struct obs_aud
         return audio;
     }
 
-    // Capture input (lock-free)
-    data->input_ring->write((const float *)audio->data[0], audio->frames);
-
-    if (data->output_mode == 5) {
-        // Multi-channel: each stem to its channel pair
-        std::lock_guard<std::mutex> lock(data->mix_mutex);
-        for (size_t i = 0; i < audio->frames; i++) {
-            for (int stem = 0; stem < 4; stem++) {
-                float sample = 0.0f;
-                if (!data->stem_buffers[stem].empty()) {
-                    sample = data->stem_buffers[stem].front();
-                    data->stem_buffers[stem].pop_front();
-                }
-                int left_ch = stem * 2;
-                if (left_ch < MAX_AUDIO_CHANNELS && audio->data[left_ch]) {
-                    ((float *)audio->data[left_ch])[i] = sample;
-                }
-                int right_ch = stem * 2 + 1;
-                if (right_ch < MAX_AUDIO_CHANNELS && audio->data[right_ch]) {
-                    ((float *)audio->data[right_ch])[i] = sample;
-                }
-            }
-        }
-    } else if (data->output_mode == 6 || data->output_mode == 7) {
-        // Custom mix / DMCA Safe
-        float *out_data = (float *)audio->data[0];
-        {
-            std::lock_guard<std::mutex> lock(data->mix_mutex);
-            for (size_t i = 0; i < audio->frames; i++) {
-                if (!data->custom_mix_buffer.empty()) {
-                    out_data[i] = data->custom_mix_buffer.front();
-                    data->custom_mix_buffer.pop_front();
-                } else {
-                    out_data[i] = 0.0f;
-                }
-            }
-        }
-        for (size_t c = 1; c < MAX_AUDIO_CHANNELS; c++) {
-            if (audio->data[c]) {
-                memcpy(audio->data[c], audio->data[0], audio->frames * sizeof(float));
-            }
-        }
-    } else {
-        // Single-stem mode (lock-free)
-        float *out_data = (float *)audio->data[0];
-        size_t read = data->output_ring->read(out_data, audio->frames);
-        if (read < audio->frames) {
-            memset(out_data + read, 0, (audio->frames - read) * sizeof(float));
-        }
-        for (size_t c = 1; c < MAX_AUDIO_CHANNELS; c++) {
-            if (audio->data[c]) {
-                memcpy(audio->data[c], audio->data[0], audio->frames * sizeof(float));
-            }
-        }
-    }
+    data->capture->push(reinterpret_cast<const float*>(audio->data[0]),audio->frames);
+    std::array<float*,MAX_AUDIO_CHANNELS> channels{};
+    for(size_t c=0;c<channels.size();++c)
+        channels[c]=reinterpret_cast<float*>(audio->data[c]);
+    data->output->render(data->tag.load(std::memory_order_acquire),channels.data(),channels.size(),audio->frames);
 
     return audio;
 }

@@ -72,4 +72,61 @@ public:
         std::fill_n(output+read,count-read,0.f);
     }
 };
+// Worker publishes complete planar batches into preallocated slots. The audio
+// reader owns the partial-block cursor and can discard stale generations in
+// bounded time without freeing or moving any storage.
+class DemucsFilterQueue {
+    static constexpr size_t slots=3;
+    struct Block {
+        uint64_t tag=0;
+        size_t frames=0,channels=0;
+        std::vector<float> samples;
+    };
+    const size_t max_frames_;
+    std::array<Block,slots> blocks_;
+    alignas(64) std::atomic<size_t> head_{0};
+    alignas(64) std::atomic<size_t> tail_{0};
+    size_t offset_=0; // audio consumer only
+public:
+    explicit DemucsFilterQueue(size_t max_frames):max_frames_(max_frames){
+        for(auto& b:blocks_)b.samples.resize(max_frames_*4);
+    }
+    bool publish(uint64_t tag,const float* const* data,size_t channels,size_t frames){
+        if(!data || (channels!=1 && channels!=4) || !frames || frames>max_frames_)return false;
+        for(size_t ch=0;ch<channels;++ch)if(!data[ch])return false;
+        const auto h=head_.load(std::memory_order_relaxed);
+        const auto t=tail_.load(std::memory_order_acquire);
+        if(h-t>=slots)return false;
+        auto& b=blocks_[h%slots];
+        b.tag=tag;b.frames=frames;b.channels=channels;
+        for(size_t ch=0;ch<channels;++ch)
+            std::memcpy(b.samples.data()+ch*max_frames_,data[ch],frames*sizeof(float));
+        head_.store(h+1,std::memory_order_release);
+        return true;
+    }
+    void render(uint64_t tag,float* const* output,size_t channels,size_t frames){
+        if(!output || !frames)return;
+        for(size_t ch=0;ch<channels;++ch)
+            if(output[ch])std::fill_n(output[ch],frames,0.f);
+        auto t=tail_.load(std::memory_order_relaxed);
+        const auto h=head_.load(std::memory_order_acquire);
+        size_t written=0;
+        const bool multi=(tag&7u)==5u;
+        while(t!=h && written<frames){
+            const auto& b=blocks_[t%slots];
+            if(b.tag==tag && b.channels==(multi?4u:1u)){
+                const size_t n=std::min(frames-written,b.frames-offset_);
+                for(size_t ch=0;ch<channels;++ch){
+                    const size_t plane=multi?ch/2:0;
+                    if(output[ch] && plane<b.channels)
+                        std::memcpy(output[ch]+written,b.samples.data()+plane*max_frames_+offset_,n*sizeof(float));
+                }
+                written+=n;offset_+=n;
+                if(offset_<b.frames)break;
+            }
+            offset_=0;++t;
+            tail_.store(t,std::memory_order_release);
+        }
+    }
+};
 }
