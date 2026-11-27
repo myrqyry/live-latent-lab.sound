@@ -76,6 +76,10 @@ for test in stt-capture stt-wake rt-wake; do
     "$work/$test"
     count=$((count+1))
 done
+# Compile the non-eventfd compatibility path on Linux as well.
+"$cxx" -std=c++17 -O2 -pthread -DSOUND_RT_WAKE_POLLING -Isrc tests/verify-rt-wake.cpp -o "$work/rt-wake-polling"
+"$work/rt-wake-polling"
+count=$((count+1))
 "$cxx" -std=c++17 -O2 -pthread -Isrc tests/verify-matchering-rt.cpp -o "$work/matchering-rt"
 "$work/matchering-rt"
 count=$((count+1))

@@ -27,6 +27,7 @@
 #include <sys/socket.h>
 #include <poll.h>
 #include "framework/same_resident.hpp"
+#include "framework/rt_wake.hpp"
 #include "framework/same_overlap.hpp"
 #include "framework/ring-buffer.hpp"
 #include <media-io/audio-resampler.h>
@@ -80,6 +81,9 @@ struct State {
     std::atomic<bool> resident_active{false};
     std::atomic<uint64_t> live_blocks{0},live_dropped{0},live_delay_ms{0};
     std::atomic<bool> live_running{false};
+#ifdef SOUND_WITH_SAME_MORPH
+    stts::RtWake live_wake;
+#endif
     // Session telemetry is protected by mutex. The cooperative finish flag
     // is also read by the native lookahead callback without taking a lock.
     std::atomic<bool> finish_requested{false};
@@ -783,16 +787,18 @@ struct LiveCapture {
     std::atomic<uint64_t> dropped{0},first{0};
     std::atomic_flag busy=ATOMIC_FLAG_INIT;
     uint64_t expected=0;
-    LiveCapture(unsigned r,unsigned c,bool m):hz(r),channels(c),capture_muted(m),ring(size_t(r)*16){}
+    stts::RtWake& wake;
+    LiveCapture(unsigned r,unsigned c,bool m,stts::RtWake& w):hz(r),channels(c),capture_muted(m),ring(size_t(r)*16),wake(w){}
+    void invalidate() noexcept {if(!invalid.exchange(true))wake.notify();}
 };
 void live_capture(void* opaque,obs_source_t*,const audio_data* a,bool muted){
     auto& c=*static_cast<LiveCapture*>(opaque);
     if(c.invalid||!a||!a->frames)return;
-    if(c.busy.test_and_set(std::memory_order_acquire)){c.invalid=true;return;}
+    if(c.busy.test_and_set(std::memory_order_acquire)){c.invalidate();return;}
     struct Unlock{std::atomic_flag& b;~Unlock(){b.clear(std::memory_order_release);}} unlock{c.busy};
-    if(!a->data[0]||(c.channels==2&&!a->data[1])){c.invalid=true;return;}
+    if(!a->data[0]||(c.channels==2&&!a->data[1])){c.invalidate();return;}
     if(c.expected&&((a->timestamp>c.expected?a->timestamp-c.expected:c.expected-a->timestamp)>80000000)){
-        c.invalid=true;return;
+        c.invalidate();return;
     }
     c.expected=a->timestamp+uint64_t(a->frames)*1000000000/c.hz;
     if(!c.first)c.first=a->timestamp;
@@ -801,13 +807,14 @@ void live_capture(void* opaque,obs_source_t*,const audio_data* a,bool muted){
         unsigned count=std::min<uint32_t>(1024,a->frames-i);
         for(unsigned j=0;j<count;++j)for(unsigned ch=0;ch<2;++ch){
             float v=muted&&!c.capture_muted?0.f:reinterpret_cast<const float*>(a->data[c.channels==1?0:ch])[i+j];
-            if(!std::isfinite(v)){c.invalid=true;return;}
+            if(!std::isfinite(v)){c.invalidate();return;}
             pcm[2*j+ch]=std::clamp(v,-1.f,1.f);
         }
         const auto n=c.ring.write(pcm.data(),count*2);
-        if(n!=count*2){c.dropped+=(a->frames-i)-n/2;c.invalid=true;return;}
+        if(n!=count*2){c.dropped+=(a->frames-i)-n/2;c.invalidate();return;}
         i+=count;
     }
+    c.wake.notify();
 }
 void live_texture(State& s,Config c,uint64_t epoch){
     constexpr size_t hop=16384,window=2*hop;
@@ -821,7 +828,7 @@ void live_texture(State& s,Config c,uint64_t epoch){
     auto* audio=obs_get_audio();
     unsigned hz=audio?audio_output_get_sample_rate(audio):0,ch=audio?audio_output_get_channels(audio):0;
     if((hz!=44100&&hz!=48000)||(ch!=1&&ch!=2)){fail("Live texture requires mono/stereo 44.1 or 48 kHz");return;}
-    LiveCapture capture(hz,ch,c.capture_muted);
+    LiveCapture capture(hz,ch,c.capture_muted,s.live_wake);
     s.live_running=true;
     struct End{State& s;LiveCapture& capture;~End(){s.live_running=false;s.live_dropped=capture.dropped.load();}} end{s,capture};
     obs_source_add_audio_capture_callback(raw,live_capture,&capture);
@@ -850,10 +857,14 @@ void live_texture(State& s,Config c,uint64_t epoch){
             auto last_input=std::chrono::steady_clock::now();
             while(token.current()&&!capture.invalid&&!obs_source_removed(raw)&&obs_source_enabled(raw)){
                 if(samples[0].size()<window){
+                    const auto ticket=capture.wake.sequence();
                     const auto count=capture.ring.read(incoming.data(),incoming.size());
                     if(!count){
                         if(std::chrono::steady_clock::now()-last_input>2s)throw std::runtime_error("Live input stalled");
-                        std::this_thread::sleep_for(4ms);continue;
+                        // Source removal/disable is external to this wake channel.
+                        // Keep a bounded watchdog; local cancellation signals immediately.
+                        if(token.current()&&!capture.invalid)capture.wake.wait(ticket,20);
+                        continue;
                     }
                     last_input=std::chrono::steady_clock::now();
                     if(count%2)throw std::runtime_error("Invalid stereo input framing");
@@ -901,7 +912,7 @@ void live_texture(State& s,Config c,uint64_t epoch){
         resident.close();
         std::lock_guard lock(s.mutex);done=true;s.cv.notify_all();
     });
-    struct StopProducer{State& s;uint64_t epoch;~StopProducer(){std::lock_guard lock(s.mutex);if(s.current(epoch))s.finish_requested=true;s.cv.notify_all();}} stop{s,epoch};
+    struct StopProducer{State& s;uint64_t epoch;~StopProducer(){std::lock_guard lock(s.mutex);if(s.current(epoch))s.finish_requested=true;s.live_wake.notify();s.cv.notify_all();}} stop{s,epoch};
     {
         std::unique_lock lock(s.mutex);
         s.cv.wait(lock,[&]{return !s.current(epoch)||done||ready.size()>=target;});
@@ -1053,6 +1064,9 @@ void worker(State* s){
 }
 void invalidate(State& s){
     ++s.epoch;s.pending=Job::None;s.progress=0;
+#ifdef SOUND_WITH_SAME_MORPH
+    s.live_wake.notify();
+#endif
     s.continuous_session=false;s.finish_requested=false;s.generating=false;
     s.buffer_frames=s.next_frames=0;s.stage="idle";
     s.adaptive_session=s.prefilling=false;s.queued_clips=s.target_clips=0;s.reserve_frames=0;s.cv.notify_all();

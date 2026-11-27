@@ -2,6 +2,7 @@
 #include "framework/live-stem-pipeline.hpp"
 #include "framework/ddsp_pipeline.hpp"
 #include "framework/rvc_window.hpp"
+#include "framework/deepfilter_transport.hpp"
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -32,12 +33,40 @@ int main(){
             assert(stems.input_ready()==(i==799));
         }
     }
+    // A generation acknowledgement is actionable even without a full block.
+    stts::DeepFilterTransport df(16,16);
+    float packet[4]={1,2,3,4},out[4]{};
+    assert(!df.worker_ready(4));
+    assert(!df.process(packet,2));
+    assert(df.worker_ready(4));
+    auto epoch=df.worker_prepare([]{});
+    assert(epoch && !df.worker_ready(4));
+    df.process(packet,2);
+    assert(!df.worker_ready(4));
+    df.process(packet+2,2);
+    assert(df.worker_ready(4));
+    assert(df.worker_read(epoch,out,4) && !df.worker_ready(4));
+    df.invalidate();
+    assert(!df.worker_ready(4));
+    assert(!df.process(packet,4) && df.worker_ready(4));
+    auto next=df.worker_prepare([]{});
+    assert(next!=epoch && !df.worker_ready(4));
     stts::RtWake wake;
     auto token=wake.sequence();
     wake.notify();
     assert(wake.wait(token,250));
     token=wake.sequence();
     assert(!wake.wait(token,25));
+    if constexpr(!stts::RtWake::event_driven){
+        // The compatibility path retains timed polling, not native signaling.
+        const auto observed=wake.sequence();
+        std::thread producer([&]{wake.notify();});
+        producer.join();
+        assert(wake.wait(observed,4));
+        assert(!wake.wait(wake.sequence(),4));
+        std::cout<<"SOUND_RT_WAKE_POLLING_PASS=1\n";
+        return 0;
+    }
     stts::StereoSpscQueue queue(64);
     constexpr size_t blocks=10000;
     std::atomic<bool> stop{false};

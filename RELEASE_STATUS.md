@@ -150,11 +150,50 @@ fixture missed the existing energy thresholds both before and after the
 first wake change, with identical measured audio energies. The fixture
 was replaced, not the acceptance thresholds.
 
-Remaining roadmap: migrate YAMNet, DeepFilter and live SAME-S worker
-polling without changing cancellation semantics; then implement
-generation-tagged recovery/hot reload using DeepFilter's existing
-transport as the reference, and benchmark DSP improvements before
-promoting them. No changes to supported platforms or release gates.
+### Remaining wake migration (2026-11-27)
+
+YAMNet, DeepFilter and live SAME-S now use the same Linux eventfd
+implementation, completing the seven targeted worker paths. YAMNet
+notifies on capture publication/overflow and shutdown. DeepFilter
+notifies for a complete 480-sample chunk or an acknowledged generation
+awaiting worker reset, as well as model changes and shutdown.
+Live SAME-S notifies on input, invalidation and local cancellation,
+retaining a 20 ms watchdog for externally removed/disabled input and
+the existing two-second stalled-input policy. Non-eventfd builds retain
+bounded polling; that alternative header path is exercised in CI, but
+native Windows/macOS builds were not qualified.
+
+Verification on yuzu-mint:
+- Real pinned MediaPipe/YAMNet at 44.1 and 48 kHz: classification,
+  unchanged stereo dry, 521-class signal catalog, missing-model behavior,
+  stale expiry, zero drops. 828 instrumented callbacks, zero observed
+  allocator/free/lock/wait violations.
+- DeepFilter actual ONNX Runtime transport with deterministic gain-model
+  fixtures: model reload, recovery and callback tests passed; 82 measured
+  callbacks, zero violations. This is not trained-model quality evidence.
+- Live SAME-S real CUDA model: both sample rates, stall/restart, and
+  40-second soak passed (106 blocks, zero drops/underruns on soak).
+  Competing generation initially missed its completion deadline despite
+  uninterrupted live output; pre-change baseline and unchanged post-change
+  repeat passed. Repeat produced 37 blocks, zero drops/underruns and a
+  completed competing job. Cause remains unresolved; do not claim this
+  is a fixed regression or a controlled performance comparison.
+- Across the new SAME-S runs, callback probes observed no allocations,
+  frees, locks or waits, and no callback exceeded 10 ms.
+- Shared wake, generation-readiness and transport tests passed; the
+  fallback polling header was compiled/exercised separately on Linux.
+  Seven-effect staged build SHA256:
+  36786fb1d6142db21acfa1c27855ef92a72687aaff4ed1d0821a8d4b1db4bb98.
+  DeepFilter was built and tested separately.
+
+The system partition was almost full and other OBS processes were
+running; existing runtime directories were reused in the isolated
+staging tree. No user profile changes or release promotion. Full expanded
+release acceptance remains outstanding.
+
+Next: generation-tagged recovery/hot reload using DeepFilter's existing
+transport as the reference, followed by measured DSP improvements.
+Retain current delay, stale-output rejection and failure policies.
 
 ## STT event-driven worker wakeups (2026-11-22)
 

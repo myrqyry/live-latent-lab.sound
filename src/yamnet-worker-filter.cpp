@@ -19,6 +19,7 @@
 #include <vector>
 #include "engines/mediapipe_audio_123.hpp"
 #include "framework/ring-buffer.hpp"
+#include "framework/rt_wake.hpp"
 
 #include "interop/sound_signal_client.hpp"
 namespace {
@@ -29,6 +30,7 @@ struct YamnetWorker {
         : sample_rate(rate),channels(channel_count),ring(size_t(rate)*3) {}
     const uint32_t sample_rate,channels;
     stts::RingBuffer ring;
+    stts::RtWake wake;
     std::string library,model,device="cpu",delegate;
     std::atomic<bool> stopping{false},overloaded{false},started{false};
     std::atomic<int64_t> dropped{0},callback_calls{0};
@@ -70,9 +72,11 @@ void run_worker(YamnetWorker* s) {
                   "classifier ready (%u Hz to 16000 Hz), requested=%s delegate=%s",s->sample_rate,s->device.c_str(),s->delegate.c_str());
     while(!s->stopping.load(std::memory_order_acquire) &&
           !s->overloaded.load(std::memory_order_acquire)){
+        const auto ticket=s->wake.sequence();
         const size_t count=s->ring.read(incoming.data(),incoming.size());
         if(!count){
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+            if(!s->stopping.load()&&!s->overloaded.load())
+                s->wake.wait(ticket,stts::RtWake::event_driven?100:4);
             continue;
         }
         const uint8_t* input[MAX_AUDIO_CHANNELS]{};
@@ -255,6 +259,7 @@ void destroy(void* ptr){
     auto* s=static_cast<YamnetWorker*>(ptr);
     if(!s)return;
     s->stopping.store(true,std::memory_order_release);
+    s->wake.notify();
     if(s->worker.joinable())s->worker.join();
     delete s;
 }
@@ -287,6 +292,7 @@ obs_audio_data* filter_audio(void* ptr,obs_audio_data* packet){
         }
         offset+=uint32_t(n);
     }
+    s->wake.notify();
     return packet;
 }
 } // namespace

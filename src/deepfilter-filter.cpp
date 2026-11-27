@@ -13,6 +13,7 @@
 
 #include <util/platform.h>
 #include "framework/deepfilter_transport.hpp"
+#include "framework/rt_wake.hpp"
 #include "engines/deepfilter_engine.hpp"
 #include "framework/obs_helpers.h"
 
@@ -34,6 +35,7 @@ struct df_filter_data {
     std::unique_ptr<stts::DeepFilterTransport> transport;
 
     // Threading
+    stts::RtWake wake;
     std::thread worker_thread;
     std::atomic<bool> stop_thread{false};
 
@@ -51,16 +53,18 @@ struct df_filter_data {
 /* Worker Thread                                                             */
 /* ------------------------------------------------------------------------- */
 
+static constexpr size_t CHUNK_SIZE = 480;
+
 static void df_process_thread(df_filter_data *data) {
     // Standard DeepFilterNet frame size is often 480 samples (10ms at 48k)
     // or 960 (20ms).
     // We'll process in chunks of 480 (approx 10ms at 48k, 10.8ms at 44.1k)
     // Ideally we should query the model or make it configurable.
     // Defaulting to 480 samples.
-    const size_t CHUNK_SIZE = 480;
 
     std::vector<float> input_chunk(CHUNK_SIZE);
     while (!data->stop_thread) {
+        const auto ticket=data->wake.sequence();
         bool processed=false;
         if(!data->bypass && data->active.load(std::memory_order_acquire)){
             std::lock_guard<std::mutex> lock(data->engine_mutex);
@@ -80,8 +84,9 @@ static void df_process_thread(df_filter_data *data) {
                 }
             }
         }
-        if(!processed)std::this_thread::sleep_for(std::chrono::milliseconds(
-            data->active.load(std::memory_order_acquire)?2:10));
+        if(!processed&&!data->stop_thread.load())
+            data->wake.wait(ticket,stts::RtWake::event_driven?100:
+                (data->active.load(std::memory_order_acquire)?2:10));
     }
 }
 
@@ -123,18 +128,21 @@ static void df_update(void *data_ptr, obs_data_t *settings) {
             data->engine=loaded?std::move(replacement):nullptr;
             data->active.store(loaded, std::memory_order_release);
         }
+        data->wake.notify();
         if (!loaded && !new_path.empty())
             blog(LOG_WARNING, "[Sound/DeepFilter] Model not ready; preserving original audio.");
     }
 }
 
 static void *df_create(obs_data_t *settings, obs_source_t *context) {
-    df_filter_data *data = new df_filter_data();
+    std::unique_ptr<df_filter_data> owner;
+    try {owner=std::make_unique<df_filter_data>();}catch(...){return nullptr;}
+    auto* data=owner.get();
     data->context = context;
     data->stop_thread = false;
     auto* host_audio=obs_get_audio();
     data->sample_rate=host_audio?audio_output_get_sample_rate(host_audio):0;
-    if(!data->sample_rate){delete data;return nullptr;}
+    if(!data->sample_rate)return nullptr;
     data->bypass = false;
     data->passthrough_on_underrun.store(true);
 
@@ -144,14 +152,15 @@ static void *df_create(obs_data_t *settings, obs_source_t *context) {
 
     df_update(data, settings);
 
-    data->worker_thread = std::thread(df_process_thread, data);
+    try {data->worker_thread = std::thread(df_process_thread, data);}catch(...){return nullptr;}
 
-    return data;
+    return owner.release();
 }
 
 static void df_destroy(void *data_ptr) {
     df_filter_data *data = (df_filter_data *)data_ptr;
     data->stop_thread = true;
+    data->wake.notify();
     if (data->worker_thread.joinable()) {
         data->worker_thread.join();
     }
@@ -195,6 +204,7 @@ static struct obs_audio_data *df_filter_audio(void *data_ptr, struct obs_audio_d
             if(audio->data[c])std::memset(audio->data[c],0,frames*sizeof(float));
     }
 
+    if(data->transport->worker_ready(CHUNK_SIZE))data->wake.notify();
     return audio;
 }
 

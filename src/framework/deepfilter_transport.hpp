@@ -53,6 +53,15 @@ public:
         return output_.read(mono,frames)==frames;
     }
 
+    // Audio actor: wake for a new acknowledged generation or a complete
+    // inference chunk. This snapshot never reserves or resets a queue.
+    bool worker_ready(size_t frames) const noexcept {
+        const auto generation=generation_.load(std::memory_order_acquire);
+        return audio_ack_.load(std::memory_order_acquire)==generation &&
+            (worker_ack_.load(std::memory_order_acquire)!=generation ||
+             input_.available()>=frames);
+    }
+
     // Worker actor. Acknowledge only after no old input can be published,
     // and after resetting recurrent model state. New input cannot arrive
     // until this acknowledgement is visible to the audio actor.
