@@ -85,7 +85,94 @@ def read_exact(stream:socket.socket,n:int)->bytes:
     return b"".join(chunks)
 
 
-def separate_window(sep, audio,rate:int, temporary:Path):
+def pcm16_compatible(audio):
+    # Match libsndfile's float -> signed PCM16 -> float conversion without
+    # serializing or touching storage. Keep the reference amplitude policy.
+    import numpy as np
+    return (np.clip(np.floor(np.clip(audio,-1,1)*32768),-32768,32767)
+            /32768).astype(np.float32)
+
+
+class ResidentDemucs:
+    """One local, pinned four-stem model per serial sidecar.
+
+    Use the installed Demucs inference implementation; do not invoke the
+    audio-separator file facade or download an alternate checkpoint.
+    """
+    def __init__(self, models:Path, device:str, quality:dict, precision:str):
+        import hashlib
+        import importlib.metadata
+        import sys
+        import torch
+        import yaml
+        from audio_separator.separator.uvr_lib_v5 import demucs
+        from audio_separator.separator.uvr_lib_v5.demucs.pretrained import get_model
+        from audio_separator.separator.uvr_lib_v5.demucs.apply import apply_model, demucs_segments
+
+        if importlib.metadata.version("audio-separator")!="0.47.0":
+            raise RuntimeError("Resident backend requires qualified audio-separator 0.47.0")
+        if yaml.safe_load((models/"htdemucs.yaml").read_text())!={"models":["955717e8"]}:
+            raise ValueError("Unexpected HTDemucs bag; use the qualified local model")
+        # LocalRepo resolves model signatures before bag names. Refuse an
+        # alternate .th with the bag name rather than verifying one file
+        # and inadvertently loading another.
+        weights=models/"955717e8-8726e21a.th"
+        if any(p.stem.split("-")[0]=="htdemucs" for p in models.glob("*.th")):
+            raise ValueError("Ambiguous HTDemucs local model name")
+        with weights.open("rb") as stream:
+            digest=hashlib.file_digest(stream,"sha256").hexdigest()
+        if digest!="8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4":
+            raise ValueError("HTDemucs weight checksum mismatch")
+        # Legacy serialization expects the installed demucs module alias.
+        runtime_dir=str(Path(demucs.__file__).resolve().parent.parent)
+        if runtime_dir not in sys.path:sys.path.insert(0,runtime_dir)
+        self.device=torch.device(("cuda" if torch.cuda.is_available() else "cpu") if device=="auto" else device)
+        require_device(device,self.device)
+        require_effective_precision(precision,precision,self.device)
+        if self.device.type=="cuda" and not torch.cuda.is_available():
+            raise RuntimeError("Explicit CUDA unavailable")
+        self.effective_precision=precision
+        self.quality=quality
+        self._apply=apply_model
+        self.model=demucs_segments(quality["segment_size"],get_model(name="htdemucs",repo=models))
+        names=tuple(str(name).capitalize() for name in self.model.sources)
+        if len(names)!=4 or set(names)!=set(STEMS) or self.model.samplerate!=44100 or self.model.audio_channels!=2:
+            raise ValueError("Unexpected resident HTDemucs shape or stem names")
+        self.names=names
+        if quality["segment_size"]!="Default" and any(
+                sub.segment!=int(quality["segment_size"])
+                for sub in getattr(self.model,"models",[self.model])):
+            raise RuntimeError("Resident model did not retain requested segment setting")
+        self.model.to(self.device).eval()
+        self.loads=1
+        self.windows=0
+        print(f"STEM_RESIDENT model_loads=1 device={self.device} names={','.join(names)}",flush=True)
+
+    def separate_pcm(self,audio):
+        import numpy as np
+        import torch
+        mix=torch.from_numpy(np.ascontiguousarray(audio)).to(self.device)
+        ref=mix.mean(0)
+        mean=ref.mean()
+        std=ref.std()
+        # Same normalization as the qualified file adapter, including
+        # silent input. Keep the host PCM array unmodified on CPU.
+        std=torch.where(torch.isfinite(std),std,torch.zeros_like(std))
+        normalized=(mix-mean)/std.clamp_min(torch.finfo(mix.dtype).eps)
+        with torch.no_grad(),torch.autocast(device_type=self.device.type,
+                enabled=self.effective_precision=="autocast"):
+            separated=self._apply(self.model,normalized[None],
+                shifts=self.quality["shifts"],split=True,overlap=self.quality["overlap"],
+                static_shifts=max(1,self.quality["shifts"]),device=self.device,progress=False)[0]
+        result=(separated*std+mean).float().cpu().numpy()
+        if result.shape!=(4,2,44100*WINDOW_SECONDS) or not np.isfinite(result).all():
+            raise ValueError("Invalid resident HTDemucs result")
+        self.windows+=1
+        print(f"STEM_RESIDENT model_loads={self.loads} windows={self.windows}",flush=True)
+        return dict(zip(self.names,result))
+
+
+def separate_window(sep, audio,rate:int, temporary:Path|None):
     import numpy as np
     import soundfile as sf
     from scipy.signal import resample_poly
@@ -96,6 +183,25 @@ def separate_window(sep, audio,rate:int, temporary:Path):
         model_audio=resample_poly(audio,147,160,axis=1).astype("float32")
     if model_audio.shape!=(2,44100*WINDOW_SECONDS):
         raise ValueError("Invalid 44.1 kHz resampling")
+    if callable(getattr(sep,"separate_pcm",None)):
+        by_name=sep.separate_pcm(pcm16_compatible(model_audio))
+        if set(by_name)!=set(STEMS):
+            raise ValueError("Missing expected resident stems")
+        output=[]
+        for name in STEMS:
+            y=np.asarray(by_name[name],dtype=np.float32)
+            if y.shape!=(2,44100*WINDOW_SECONDS) or not np.isfinite(y).all():
+                raise ValueError("Invalid resident stem content")
+            peak=np.max(np.abs(y))
+            if peak>.9:y=y*(.9/peak)
+            y=pcm16_compatible(y)
+            if rate==48000:
+                y=resample_poly(y,160,147,axis=1).astype("float32")
+            if y.shape!=(2,rate*WINDOW_SECONDS) or not np.isfinite(y).all():
+                raise ValueError("Invalid resident stem timing")
+            output.append(y)
+        return np.asarray(output,dtype="<f4")
+    if temporary is None:raise ValueError("File backend requires a temporary directory")
     input_path=temporary/"window.wav"
     sf.write(input_path,model_audio.T,44100,format="WAV",subtype="PCM_16")
     # The loaded audio-separator model snapshots output_dir at load time.
@@ -131,16 +237,17 @@ def separate_window(sep, audio,rate:int, temporary:Path):
 
 
 def warmup(separator, temporary: Path) -> float:
-    # Exercise the real separation before declaring the socket ready. This
-    # primes runtime/kernel and filesystem caches, not model residency:
-    # the installed audio-separator Demucs adapter reloads weights per call.
+    # Exercise real separation before declaring the socket ready.
     import numpy as np
     rate=48000
     t=np.arange(rate*WINDOW_SECONDS,dtype=np.float32)/rate
     pcm=np.stack((.03*np.sin(2*np.pi*220*t),.025*np.sin(2*np.pi*330*t)))
     started=time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="stem-warmup-",dir=temporary) as folder:
-        separate_window(separator,pcm,rate,Path(folder))
+    if callable(getattr(separator,"separate_pcm",None)):
+        separate_window(separator,pcm,rate,None)
+    else:
+        with tempfile.TemporaryDirectory(prefix="stem-warmup-",dir=temporary) as folder:
+            separate_window(separator,pcm,rate,Path(folder))
     return time.monotonic()-started
 
 
@@ -153,11 +260,14 @@ def serve_client(conn:socket.socket,separator,temporary:Path)->None:
         raw=read_exact(conn,frames*2*4)
         audio=np.frombuffer(raw,dtype="<f4").reshape(2,frames)
         if not np.isfinite(audio).all():raise ValueError("Non-finite input audio")
-        with tempfile.TemporaryDirectory(prefix="stem-window-",dir=temporary) as folder:
-            started=time.monotonic()
-            stems=separate_window(separator,audio,rate,Path(folder))
-            elapsed=time.monotonic()-started
-            print(f"STEM_WINDOW seq={seq} duration={WINDOW_SECONDS}s processing={elapsed:.3f}s stems=4",flush=True)
+        started=time.monotonic()
+        if callable(getattr(separator,"separate_pcm",None)):
+            stems=separate_window(separator,audio,rate,None)
+        else:
+            with tempfile.TemporaryDirectory(prefix="stem-window-",dir=temporary) as folder:
+                stems=separate_window(separator,audio,rate,Path(folder))
+        elapsed=time.monotonic()-started
+        print(f"STEM_WINDOW seq={seq} duration={WINDOW_SECONDS}s processing={elapsed:.3f}s stems=4",flush=True)
         header=REQUEST.pack(MAGIC,VERSION,rate,frames,2,seq,4,0)
         conn.sendall(header)
         conn.sendall(stems.tobytes(order="C"))
@@ -207,6 +317,8 @@ def main()->int:
     parser=argparse.ArgumentParser(description="Local-only buffered live HTDemucs worker")
     parser.add_argument("--model-dir",default=None)
     parser.add_argument("--socket",default=None)
+    parser.add_argument("--backend",choices=("resident","file"),default="file",
+                        help="Resident in-memory candidate or reference file adapter")
     parser.add_argument('--precision',choices=('fp32','autocast'),default='fp32',
                         help='FP32 reference (default), or measured experimental CUDA mixed FP16 autocast')
     parser.add_argument("--device",choices=("auto","cuda","cpu"),default="auto",
@@ -229,21 +341,26 @@ def main()->int:
     endpoint=socket_path(args.socket)
     os.environ["HF_HUB_OFFLINE"]="1"
     os.environ["TRANSFORMERS_OFFLINE"]="1"
-    from audio_separator.separator import Separator
-    print("STEM_MODEL_LOADING existing HTDemucs model only",flush=True)
-    sep=Separator(model_file_dir=str(models),output_format="WAV",use_soundfile=True,
-                  **precision_options(args.precision),
-                  demucs_params=quality)
-    require_device(args.device,sep.torch_device)
-    sep.load_model("htdemucs.yaml")
-    require_effective_precision(args.precision,sep.effective_precision,sep.torch_device)
-    actual=sep.model_instance
-    if actual.shifts!=quality["shifts"] or actual.overlap!=quality["overlap"] or not actual.segments_enabled:
-        raise RuntimeError("Demucs runtime did not retain requested quality settings")
-    if args.segment_seconds is not None and str(actual.segment_size)!=str(args.segment_seconds):
-        raise RuntimeError("Demucs runtime did not retain requested segment setting")
-    print(f"STEM_QUALITY device={sep.torch_device} shifts={actual.shifts} overlap={actual.overlap} segment={actual.segment_size}",flush=True)
-    print(f'STEM_PRECISION requested={args.precision} effective={sep.effective_precision} device={sep.torch_device}',flush=True)
+    if args.backend=="resident":
+        sep=ResidentDemucs(models,args.device,quality,args.precision)
+        print(f"STEM_QUALITY device={sep.device} shifts={quality['shifts']} overlap={quality['overlap']} segment={quality['segment_size']}",flush=True)
+        print(f"STEM_PRECISION requested={args.precision} effective={sep.effective_precision} device={sep.device}",flush=True)
+    else:
+        from audio_separator.separator import Separator
+        print("STEM_MODEL_LOADING existing HTDemucs model only",flush=True)
+        sep=Separator(model_file_dir=str(models),output_format="WAV",use_soundfile=True,
+                      **precision_options(args.precision),
+                      demucs_params=quality)
+        require_device(args.device,sep.torch_device)
+        sep.load_model("htdemucs.yaml")
+        require_effective_precision(args.precision,sep.effective_precision,sep.torch_device)
+        actual=sep.model_instance
+        if actual.shifts!=quality["shifts"] or actual.overlap!=quality["overlap"] or not actual.segments_enabled:
+            raise RuntimeError("Demucs runtime did not retain requested quality settings")
+        if args.segment_seconds is not None and str(actual.segment_size)!=str(args.segment_seconds):
+            raise RuntimeError("Demucs runtime did not retain requested segment setting")
+        print(f"STEM_QUALITY device={sep.torch_device} shifts={actual.shifts} overlap={actual.overlap} segment={actual.segment_size}",flush=True)
+        print(f'STEM_PRECISION requested={args.precision} effective={sep.effective_precision} device={sep.torch_device}',flush=True)
     with tempfile.TemporaryDirectory(prefix="lll-sound-stem-sidecar-") as work:
         elapsed=warmup(sep,Path(work))
         print(f"STEM_WARMUP processing={elapsed:.3f}s",flush=True)
@@ -251,7 +368,7 @@ def main()->int:
         try:
             with StreamServer(str(endpoint),Handler,sep,Path(work)) as server:
                 os.chmod(endpoint,0o600)
-                print(f"STEM_SIDECAR_READY socket={endpoint} model=htdemucs window=8s precision={sep.effective_precision}",flush=True)
+                print(f"STEM_SIDECAR_READY socket={endpoint} model=htdemucs window=8s backend={args.backend} precision={sep.effective_precision}",flush=True)
                 try:server.serve_forever(poll_interval=.2)
                 except KeyboardInterrupt:pass
         finally:

@@ -140,6 +140,46 @@ runtime installer, a sustained production performance test, or proof of
 redistribution rights. The existing test still depends on matching OBS
 development and text-source components being installed.
 
+### Resident HTDemucs (in-memory candidate)
+
+The sidecar now supports `--backend resident`, keeping one local
+four-stem model on the requested device across windows. It bypasses the
+file adapter, per-request model construction, GPU cache clearing and WAV
+writes/reads. The OBS wire protocol, eight-second windows, four-second
+inference allowance and twelve-second silent prefill remain unchanged.
+Stem order is verified against the model's named sources. The path
+preserves the reference PCM16 conversion and per-stem .9 peak limit in
+memory; this change is not a new float32-fidelity claim.
+
+Use the existing stem-splitter environment, with audio-separator 0.47.0
+and the exact local 955717e8-8726e21a.th checkpoint. The bag and full
+SHA-256 are validated before loading. No download or automatic fallback
+to a different backend occurs. CUDA FP32, shifts 0, overlap .1 and
+segment 4 are the measured configuration:
+
+```sh
+python tools/live_stem_sidecar.py --backend resident --device cuda \
+  --shifts 0 --overlap 0.1 --segment-seconds 4 --precision fp32
+```
+
+The default remains `--backend file` for compatibility with other
+installed runtimes and settings. CPU, autocast, additional quality
+settings and concurrent users of a resident model are not qualified
+by this comparison. Residency retains GPU allocations between requests;
+it is not a general VRAM governor or a shared multistem fanout.
+
+To reproduce the direct A/B comparison with an existing local 48 kHz
+interleaved stereo float32 fixture of at least 16 seconds:
+
+```sh
+python tests/verify-stem-resident-model.py --model-dir /path/to/models \
+  --fixture /path/to/stereo-f32.raw
+```
+
+Use `STEM_VERIFY_BACKEND=resident` with the existing real OBS runner
+and its required fixture/runtime variables to test the full protocol
+and recovery. See RELEASE_STATUS.md for measured results.
+
 ### Shared HTDemucs model controls
 
 Launch the existing local sidecar with the model-specific options

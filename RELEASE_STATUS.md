@@ -390,16 +390,66 @@ NOT qualified by this pass. Retry exhaustion for the actual stem
 worker, native model latency under contention and hardware-clock
 behavior remain to be qualified. No install or publication.
 
-Next: investigate resident in-memory HTDemucs. The actual installed
-audio-separator Demucs adapter reconstructs HDemucs, loads weights,
-moves them to the device and deletes the model/clears GPU cache on
-every call to separate(); the sidecar also writes/reads WAVs. Remove
-these repeated operations using a narrow pinned, validated resident
-backend, compare outputs and timings against the existing adapter,
-then rerun strict real recovery/normal acceptance. This is a concrete
-optimization target, not proven causation for all missed deadlines.
-After that, measured DSP optimization and remaining roadmap.
-System drive critically full; reuse assets and isolated stages.
+## Resident in-memory HTDemucs (2026-11-27)
+
+Added explicit `--backend resident` to the external sidecar. The file
+adapter remains the compatibility default; no automatic fallback,
+download, runtime installation or service change. The new backend
+loads the exact local 955717e8-8726e21a.th model (full SHA256 checked),
+validates the bag, source names and sample geometry, and requires
+audio-separator 0.47.0. The observed runtime was torch 2.14.1+cu130.
+One model stays on the selected device; input/output PCM16-equivalent
+conversion, .9 per-stem peak limit and resampling preserve the reference
+signal policy without file serialization. Named stem mapping avoids
+assuming library-specific source indexes. Protocol v1, 8-second
+windows, 12-second silent prefill and four-second deadline unchanged.
+
+Evidence on local CUDA FP32, shifts 0, overlap .1, segment 4, after
+closing existing OBS processes:
+- A/B direct inference used two different 48 kHz synthetic stereo
+  speech/tone windows, one converted 44.1 kHz window and 44.1 kHz
+  silence. Four named stems checked separately. All passed unchanged
+  numeric thresholds; maximum difference .0000351, RMS differences
+  below 6e-7, silence exactly zero. Model object and first CUDA
+  parameter address stable over warmup and all four requests.
+  First run medians 1.128 s file versus .360 s resident (3.13x);
+  resident model load .278 s, warmup .372 s; peak PyTorch CUDA
+  allocated tensor memory 385.3 MiB (not total VRAM).
+- Final code A/B repeated after asset ambiguity and effective segment
+  guards; all four cases passed again.
+- Closed-OBS file baseline live acceptance passed (1.350/1.152 s
+  windows). Resident sidecar passed actual libobs normal playback,
+  automatic same-socket recovery (one retry, three windows, zero
+  initial 20 s energy), and socket settings reload (zero fault and
+  fresh prefill energy, two new windows). Resident live processing
+  .382-.492 s across nine requests after warmup; one canceled
+  response at test teardown logged BrokenPipe as expected. Model
+  load counter stayed 1 across 10 windows including warmup.
+  10,600 instrumented callbacks across these three runs: zero observed
+  allocations/frees/locks/waits or >10 ms callbacks; maximum wall
+  36.317 microseconds. The OBS stage was unchanged c9de836, SHA256
+  4e9a3e241bf1c96fbfcb5e1bacbb95738620a2113ad7238352203dede65be859.
+- Red tests failed before implementation. Final 12 Python tests passed,
+  including PCM16 parity against libsndfile, stable named stereo
+  ordering at both rates, missing/invalid/nonfinite outputs, and
+  actual resident socket protocol with temp-directory/file writes
+  prohibited. Stem-only wrapper/registration passed with the first
+  11 tests; final twelfth test executed separately. Runner accepts
+  STEM_VERIFY_BACKEND=resident; equivalent real OBS cases executed
+  with existing isolated combined stage (not full expanded release).
+  Reproducible direct test: tests/verify-stem-resident-model.py.
+
+Scope: the real recovery qualification gap from the previous pass is
+closed for this particular local FP32 configuration under reduced
+desktop load. CPU, autocast, other quality settings, sustained music
+quality, multi-client contention, long-run VRAM residency, retry
+exhaustion and clean-host qualification remain open. No latency
+reduction claim, no cross-window overlap-add/fanout or GPU governor.
+No installation or push. System drive now has about 18 GiB free
+after the user's requested cache/backup cleanup.
+
+Next: shared multistem fanout/overlap-add and measured DSP optimization;
+preserve original roadmap and real-time callback contract.
 
 ## STT event-driven worker wakeups (2026-11-22)
 

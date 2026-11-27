@@ -57,7 +57,7 @@ chmod 700 "$socket_dir"
 "$work/client" "$socket_dir/fake.sock" | tee "$work/client.log"
 venv="${STEM_SPLITTER_PYTHON:?Set STEM_SPLITTER_PYTHON to the installed stem worker Python}"
 test -x "$venv"
-"$venv" -m unittest discover -s "$root/tests" -p test_live_stem_sidecar.py -v \
+"$venv" -m unittest discover -s "$root/tests" -p "test_live_stem*.py" -v \
     >"$work/python.log" 2>&1
 grep -E 'Ran [0-9]+ tests|^OK$' "$work/python.log"
 stt_args=()
@@ -149,7 +149,7 @@ QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
     >"$work/offline.log" 2>&1
 grep -F 'expect_silence=1' "$work/offline.log" | grep -F 'pass=1'
 # Then run the *real cached* model through the plugin's actual OBS callback.
-quality=(--device "${STEM_VERIFY_DEVICE:-auto}" --shifts "${STEM_VERIFY_SHIFTS:-1}" --overlap "${STEM_VERIFY_OVERLAP:-0.25}")
+quality=(--backend "${STEM_VERIFY_BACKEND:-file}" --device "${STEM_VERIFY_DEVICE:-auto}" --shifts "${STEM_VERIFY_SHIFTS:-1}" --overlap "${STEM_VERIFY_OVERLAP:-0.25}")
 if [[ -n "${STEM_VERIFY_SEGMENT:-}" ]]; then quality+=(--segment-seconds "$STEM_VERIFY_SEGMENT"); fi
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 "$venv" "$root/tools/live_stem_sidecar.py" \
     "${quality[@]}" --precision "$precision" --socket "$socket_dir/model.sock" >"$work/model.log" 2>&1 &
