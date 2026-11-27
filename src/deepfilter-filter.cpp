@@ -7,12 +7,12 @@
 #include <vector>
 #include <thread>
 #include <mutex>
-#include <deque>
 #include <memory>
 #include <atomic>
+#include <cmath>
 
 #include <util/platform.h>
-#include "framework/ring-buffer.hpp"
+#include "framework/deepfilter_transport.hpp"
 #include "engines/deepfilter_engine.hpp"
 #include "framework/obs_helpers.h"
 
@@ -31,14 +31,14 @@ struct df_filter_data {
     // Buffering
     // DeepFilterNet often requires fixed chunk sizes (e.g. 480 samples @ 48kHz = 10ms)
     // We use ring buffers to adapt OBS chunk sizes to model chunk sizes.
-    std::unique_ptr<stts::RingBuffer> input_ring;
-    std::unique_ptr<stts::RingBuffer> output_ring;
+    std::unique_ptr<stts::DeepFilterTransport> transport;
 
     // Threading
     std::thread worker_thread;
     std::atomic<bool> stop_thread{false};
 
     std::mutex engine_mutex;
+    std::mutex control_mutex; // settings writers only
     uint32_t sample_rate;
 
     // Config
@@ -59,34 +59,29 @@ static void df_process_thread(df_filter_data *data) {
     // Defaulting to 480 samples.
     const size_t CHUNK_SIZE = 480;
 
+    std::vector<float> input_chunk(CHUNK_SIZE);
     while (!data->stop_thread) {
-        if (data->bypass || !data->active.load(std::memory_order_acquire)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
-
-        size_t available = data->input_ring->available();
-        if (available < CHUNK_SIZE) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            continue;
-        }
-
-        std::vector<float> input_chunk(CHUNK_SIZE);
-        data->input_ring->read(input_chunk.data(), CHUNK_SIZE);
-
-        std::vector<float> output_chunk;
-        {
-            // Protect engine access
+        bool processed=false;
+        if(!data->bypass && data->active.load(std::memory_order_acquire)){
             std::lock_guard<std::mutex> lock(data->engine_mutex);
-            if (data->engine && data->engine->is_ready()) {
-                output_chunk = data->engine->process(input_chunk, data->sample_rate);
+            if(data->active.load(std::memory_order_acquire) && data->engine && data->engine->is_ready()){
+                const auto generation=data->transport->worker_prepare([&]{
+                    data->engine->reset_stream();
+                });
+                if(data->transport->worker_read(generation,input_chunk.data(),CHUNK_SIZE)){
+                    auto output_chunk=data->engine->process(input_chunk,data->sample_rate);
+                    if(output_chunk.size()!=CHUNK_SIZE ||
+                       !std::all_of(output_chunk.begin(),output_chunk.end(),[](float v){return std::isfinite(v);})){
+                        data->transport->worker_fault(generation);
+                    }else{
+                        data->transport->worker_publish(generation,output_chunk.data(),output_chunk.size());
+                    }
+                    processed=true;
+                }
             }
         }
-
-        if (output_chunk.empty()) output_chunk = input_chunk; // Fallback
-
-        // Write to output ring
-        data->output_ring->write(output_chunk.data(), output_chunk.size());
+        if(!processed)std::this_thread::sleep_for(std::chrono::milliseconds(
+            data->active.load(std::memory_order_acquire)?2:10));
     }
 }
 
@@ -101,6 +96,7 @@ static const char *df_get_name(void *) {
 static void df_update(void *data_ptr, obs_data_t *settings) {
     df_filter_data *data = (df_filter_data *)data_ptr;
 
+    std::lock_guard<std::mutex> control(data->control_mutex);
     std::string new_path = safe_obs_data_get_string(settings, "model_path");
     data->attenuation = (float)obs_data_get_double(settings, "attenuation");
     data->passthrough_on_underrun.store(
@@ -110,15 +106,23 @@ static void df_update(void *data_ptr, obs_data_t *settings) {
 
     if (new_path != data->model_path) {
         data->active.store(false, std::memory_order_release);
-        std::lock_guard<std::mutex> lock(data->engine_mutex);
-        data->model_path = new_path;
+        data->transport->invalidate();
+        std::unique_ptr<stts::DeepFilterEngine> replacement;
         bool loaded = false;
         if (!new_path.empty()) {
-            if (!data->engine)
-                data->engine = std::make_unique<stts::DeepFilterEngine>();
-            loaded = data->engine->initialize(new_path) && data->engine->is_ready();
+            try {
+                replacement=std::make_unique<stts::DeepFilterEngine>();
+                loaded=replacement->initialize(new_path) && replacement->is_ready();
+            } catch (const std::exception& e) {
+                blog(LOG_WARNING,"[Sound/DeepFilter] Model initialization error: %s",e.what());
+            }
         }
-        data->active.store(loaded, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(data->engine_mutex);
+            data->model_path = new_path;
+            data->engine=loaded?std::move(replacement):nullptr;
+            data->active.store(loaded, std::memory_order_release);
+        }
         if (!loaded && !new_path.empty())
             blog(LOG_WARNING, "[Sound/DeepFilter] Model not ready; preserving original audio.");
     }
@@ -128,13 +132,15 @@ static void *df_create(obs_data_t *settings, obs_source_t *context) {
     df_filter_data *data = new df_filter_data();
     data->context = context;
     data->stop_thread = false;
-    data->sample_rate = audio_output_get_sample_rate(obs_get_audio());
+    auto* host_audio=obs_get_audio();
+    data->sample_rate=host_audio?audio_output_get_sample_rate(host_audio):0;
+    if(!data->sample_rate){delete data;return nullptr;}
     data->bypass = false;
     data->passthrough_on_underrun.store(true);
 
-    // Buffer: 5 seconds
-    data->input_ring = std::make_unique<stts::RingBuffer>(data->sample_rate * 5);
-    data->output_ring = std::make_unique<stts::RingBuffer>(data->sample_rate * 5);
+    // Bounded transport; an overflow invalidates both queues and recurrent state.
+    const size_t capacity=size_t(data->sample_rate)*5;
+    data->transport=std::make_unique<stts::DeepFilterTransport>(capacity,capacity);
 
     df_update(data, settings);
 
@@ -175,62 +181,18 @@ static obs_properties_t *df_properties(void *data_ptr) {
 static struct obs_audio_data *df_filter_audio(void *data_ptr, struct obs_audio_data *audio) {
     df_filter_data *data = (df_filter_data *)data_ptr;
 
-    // Quick check to bypass if not ready, but safe check requires locking if engine can be nullified.
-    // However, locking here blocks audio thread.
-    // Ideally use a flag 'is_active' or similar.
-    // For now, we will just proceed to push to ring buffer. Ring buffer writes are thread-safe (lock-free usually).
-    // The worker thread handles the engine lock.
-
-    // But we check `data->engine` for `is_ready()`?
-    // Let's remove this check or make it safe.
-    // If the engine is not ready, the worker thread will just sleep.
-    // We still need to pass audio through or silence it.
-
     // Unconfigured or failed models cannot mute an otherwise healthy source.
-    if (!audio || !audio->data[0] || data->bypass ||
-        !data->active.load(std::memory_order_acquire)) return audio;
+    if(!audio || !audio->data[0] || !audio->frames || data->bypass ||
+       !data->active.load(std::memory_order_acquire))return audio;
 
-    uint32_t frames = audio->frames;
-
-    // 1. Push to Input Ring
-    // We assume channel 0 is main mono source (or left).
-    // If stereo, we might need two engines or interleave?
-    // DeepFilterNet is usually Mono.
-    // For now, process Ch 0 and copy to Ch 1.
-
-    if (audio->data[0]) {
-        data->input_ring->write((float*)audio->data[0], frames);
-    }
-
-    // 2. Read from Output Ring
-    // We try to read 'frames' amount. If not enough available (latency), we output silence or wait?
-    // In real-time, we can't wait too long.
-    // Latency handling: We might need to pre-fill buffer or accept initial delay.
-
-    size_t available = data->output_ring->available();
-
-    if (available >= frames) {
-        data->output_ring->read((float*)audio->data[0], frames);
-
-        // Copy to other channels
-        for (size_t c = 1; c < MAX_AUDIO_CHANNELS; c++) {
-            if (audio->data[c]) {
-                memcpy(audio->data[c], audio->data[0], frames * sizeof(float));
-            }
-        }
-    } else {
-        // Not enough data yet (initial latency) - user can choose behavior
-        if (data->passthrough_on_underrun.load(std::memory_order_relaxed)) {
-            // Leave audio unchanged - better UX during warmup
-            return audio;
-        }
-        // Silence mode (original behavior)
-        memset(audio->data[0], 0, frames * sizeof(float));
-        for (size_t c = 1; c < MAX_AUDIO_CHANNELS; c++) {
-            if (audio->data[c]) {
-                memset(audio->data[c], 0, frames * sizeof(float));
-            }
-        }
+    const size_t frames=audio->frames;
+    if(data->transport->process(reinterpret_cast<float*>(audio->data[0]),frames)){
+        // Preserve the existing mono wet routing.
+        for(size_t c=1;c<MAX_AUDIO_CHANNELS;++c)
+            if(audio->data[c])std::memcpy(audio->data[c],audio->data[0],frames*sizeof(float));
+    }else if(!data->passthrough_on_underrun.load(std::memory_order_relaxed)){
+        for(size_t c=0;c<MAX_AUDIO_CHANNELS;++c)
+            if(audio->data[c])std::memset(audio->data[c],0,frames*sizeof(float));
     }
 
     return audio;

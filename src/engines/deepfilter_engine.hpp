@@ -42,6 +42,7 @@ public:
             input_name_ptrs_.clear();
             output_name_ptrs_.clear();
             state_buffers_.clear();
+            state_shapes_.clear();
 
             // 1. Inputs
             for (size_t i = 0; i < num_inputs; i++) {
@@ -88,6 +89,11 @@ public:
 
     std::string get_name() const override { return "DeepFilterNet Engine"; }
     bool is_ready() const override { return is_loaded_; }
+
+    // Worker-only reset after a transport discontinuity.
+    void reset_stream() noexcept {
+        for(auto& state:state_buffers_)std::fill(state.begin(),state.end(),0.f);
+    }
 
     std::vector<float> process(const std::vector<float>& input, uint32_t sample_rate) override {
         if (!is_loaded_ || input.empty()) return input;

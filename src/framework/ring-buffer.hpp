@@ -74,6 +74,26 @@ public:
         return count;
     }
 
+    // All-or-nothing publication. Only the producer may call this method.
+    bool write_exact(const float* data, size_t samples)
+    {
+        if (!data || !samples || samples > usable_) return false;
+        const size_t head = head_.load(std::memory_order_relaxed);
+        const size_t tail = tail_.load(std::memory_order_acquire);
+        if (head - tail > usable_ - samples) return false;
+        return write(data, samples) == samples;
+    }
+
+    // Only the consumer may call this method. Discard a snapshot of the
+    // unread prefix without copying or resetting the producer's cursor.
+    size_t discard_available()
+    {
+        const size_t tail = tail_.load(std::memory_order_relaxed);
+        const size_t head = head_.load(std::memory_order_acquire);
+        tail_.store(head, std::memory_order_release);
+        return head - tail;
+    }
+
     // Only the consumer may call this method.
     size_t read(float* output, size_t samples)
     {
