@@ -33,6 +33,49 @@ operations. A full queue rejects new data rather than overwriting unread data.
   Standard model configuration changes and clearing a reference invalidate
   previous output. Single-stem delayed dry fallback is retained.
 
+## Second pass (2026-11-27)
+
+- DDSP and native RVC read wet samples into bounded 256-sample stack
+  blocks, eliminating the per-sample queue read and cursor publication.
+  Startup delay, mix ramp and delayed-dry fallback are preserved.
+  An underrun consumes the available prefix and latches failure; a worker
+  fault is observed at block boundaries (at most 256 samples already read).
+  Local Ryzen 7 7700 microbenchmark, median of three paired runs for
+  480-sample packets: DDSP 2621.0 -> 2517.4 ns; RVC 3141.6 -> 2694.7 ns.
+  These include simulated queue service, not neural inference. Output
+  checksums matched the old implementation.
+- STT writes downmixed samples directly into unpublished preallocated queue
+  slots, copies only the valid prefix on consumption, reuses the worker's
+  packet and coalesces notification per OBS packet. Epoch and timestamp
+  semantics are retained; a full slot does not invoke the writer.
+- DeepFilter uses a generation handshake between audio and worker actors.
+  Overflow and model changes invalidate the stream. Each queue's consumer
+  discards the old backlog; neither actor resets the other actor's cursor.
+  The worker resets recurrent state before acknowledging the new generation.
+  While recovering, the callback uses the existing dry/silence preference.
+  Model clearing or failed initialization always returns dry. Invalid-sized
+  or nonfinite inference output requests recovery instead of being queued.
+  Model initialization remains synchronous on the control path, not audio.
+
+### Additional local evidence
+
+- Combined seven-effect module (stem_live, yamnet, tts, stt, diffusion,
+  ddsp, rvc) built and staged against local libobs 32.0.1.
+- DDSP full native-model and OBS tests: 44.1 and 48 kHz passed, including
+  missing-model recovery. Local LiteRT used its CPU delegate.
+- Native RVC real OBS/model test: 44.1 and 48 kHz passed, 16 processed
+  hops each; existing local helper v3 used.
+- Unified STT real OBS/Whisper CPU test at 48 kHz: 1,296,000 captured
+  frames; expected speech recognized, caption routing, unchanged dry audio,
+  muted input handling, hot update, stopped-source flush, disable and
+  missing-model recovery all passed; zero reported dropped samples.
+- DeepFilter: 200 concurrent transport generation changes passed. Separate
+  real libobs/ONNX Runtime integration test used synthetic gain graphs
+  (.25 and .75), verified wet output, model replacement and clearing.
+  This is transport qualification, not actual DeepFilterNet noise reduction.
+- All 12 focused C++ model-free checks, legacy Whisper source guard,
+  public URL tests, Demucs no-fake-stems guard and quarantine build passed.
+
 ## Repeatable tests
 
 Model-free queue and DSP checks are included in the public CI verification
@@ -43,6 +86,11 @@ script. Additional local checks:
     bash tests/verify-demucs-filter-rt-obs.sh /path/to/build/_deps
     bash tests/verify-demucs-no-fake-stems.sh
     bash tests/verify-quarantine.sh
+    bash tests/verify-deepfilter-obs.sh /path/to/onnxruntime-src
+
+The DeepFilter integration script requires Python onnx to generate synthetic
+models. It does not download models or install into the user's OBS profile.
+Existing DDSP, RVC and STT model qualification instructions remain applicable.
 
 The Demucs direct callback tests use synthetic separated samples and real OBS
 packet/mix structures. They prove transport and routing, not model inference.
@@ -59,7 +107,11 @@ in the tested paths, not arbitrary malloc or all third-party operations.
   does not consume, its batch drops can differ from the other children.
   Advanced Demucs single-stem model selection remains a separate correctness
   issue; transport changes do not qualify every engine output.
-- DDSP/RVC per-sample wet-queue reads, STT packet copying and wake coalescing,
-  DeepFilter overflow handling, and third-party allocator/lock instrumentation
-  remain optimization/verification candidates.
+- Actual DeepFilterNet model compatibility, noise suppression quality and
+  sustained latency remain unqualified. Current transport recovery has been
+  tested, but a real noise suppression model was not available locally.
+- STT model qualification for other backends and the 44.1 kHz full pipeline
+  was not repeated in this pass. Third-party allocator/lock instrumentation,
+  callback p99/max timing under concurrent load and further worker-side
+  tensor allocation improvements remain candidates.
 - Public hosted CI and other platforms have not been run for this checkpoint.
