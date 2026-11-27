@@ -1,3 +1,4 @@
+#include "audio-dispatch-timing.hpp"
 #include <obs.h>
 #include <obs-module.h>
 #include <callback/proc.h>
@@ -74,6 +75,7 @@ int main(int argc,char** argv){
     if(fixture_pcm.size()<rate)return 8;
     uint64_t timestamp=os_gettime_ns();uint64_t sent=0;uint32_t n=rate/100;
     auto wall=std::chrono::steady_clock::now();
+    AudioDispatchTiming timing;
     auto stream=[&](Stats& stats,bool tone,int rounds){
         obs_source_add_audio_capture_callback(source,capture,&stats);
         for(int k=0;k<rounds;++k){
@@ -82,7 +84,7 @@ int main(int argc,char** argv){
             obs_source_audio a{};a.data[0]=reinterpret_cast<uint8_t*>(l.data());a.data[1]=reinterpret_cast<uint8_t*>(rr.data());
             a.frames=n;a.speakers=SPEAKERS_STEREO;a.format=AUDIO_FORMAT_FLOAT_PLANAR;a.samples_per_sec=rate;
             a.timestamp=timestamp+sent*1000000000ULL/rate;
-            obs_source_output_audio(source,&a);sent+=n;
+            timing.measure(uint64_t(n)*1000000000ULL/rate,[&]{obs_source_output_audio(source,&a);});sent+=n;
             std::this_thread::sleep_until(wall+std::chrono::nanoseconds(sent*1000000000ULL/rate));
         }
         obs_source_remove_audio_capture_callback(source,capture,&stats);
@@ -99,6 +101,7 @@ int main(int argc,char** argv){
     if(missing)ok=ok&&last.status=="error"&&last.hops==0&&wet_stereo>.005;
     else ok=ok&&last.status=="ready"&&last.hops>=16&&wet_stereo<.005&&dry_stereo>.005&&rms(wet,rate)>.005;
     printf("RVC_OBS rate=%u status=%s hops=%lld last_ms=%.1f wet_rms=%.5f wet_stereo=%.5f dry_stereo=%.5f pass=%d\n",rate,last.status.c_str(),last.hops,last.ms,rms(wet,rate),wet_stereo,dry_stereo,ok);
+    timing.report("rvc-native");
     obs_source_filter_remove(source,filter);obs_source_release(filter);obs_data_release(d);
     obs_set_output_source(1,nullptr);obs_source_dec_active(source);obs_source_release(source);obs_wait_for_destroy_queue();obs_shutdown();
     return ok?0:1;

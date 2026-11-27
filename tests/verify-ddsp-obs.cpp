@@ -1,3 +1,4 @@
+#include "audio-dispatch-timing.hpp"
 #include <obs.h>
 #include <obs-module.h>
 #include <callback/proc.h>
@@ -74,6 +75,7 @@ int main(int argc,char** argv){
     if(r.status!=(missing?"error":"ready")){printf("DDSP init=%s\n",r.status.c_str());return 7;}
     uint64_t timestamp=os_gettime_ns();uint64_t sent=0;uint32_t n=rate/100;
     auto wall=std::chrono::steady_clock::now();
+    AudioDispatchTiming timing;
     auto stream=[&](Stats& stats,bool tone,int rounds){
         obs_source_add_audio_capture_callback(source,capture,&stats);
         for(int k=0;k<rounds;++k){
@@ -82,7 +84,7 @@ int main(int argc,char** argv){
             obs_source_audio a{};a.data[0]=reinterpret_cast<uint8_t*>(l.data());a.data[1]=reinterpret_cast<uint8_t*>(rr.data());
             a.frames=n;a.speakers=SPEAKERS_STEREO;a.format=AUDIO_FORMAT_FLOAT_PLANAR;a.samples_per_sec=rate;
             a.timestamp=timestamp+sent*1000000000ULL/rate;
-            obs_source_output_audio(source,&a);sent+=n;
+            timing.measure(uint64_t(n)*1000000000ULL/rate,[&]{obs_source_output_audio(source,&a);});sent+=n;
             std::this_thread::sleep_until(wall+std::chrono::nanoseconds(sent*1000000000ULL/rate));
         }
         obs_source_remove_audio_capture_callback(source,capture,&stats);
@@ -127,6 +129,7 @@ int main(int argc,char** argv){
         printf("DDSP_OBS rate=%u hops=%lld pitch=%.3f last_ms=%.3f a_rms=%.5f b_rms=%.5f morph_distance=%.5f switch_distance=%.5f shifted440=%.5f shifted220=%.5f noise_rms=%.6f dry_rms=%.5f silence=%.7f pass=%d\n",
            rate,last.hops,result.pitch,last.ms,a_rms,b_rms,shape,switch_shape,shift440,shift220,rms(noise,rate),dry_rms,silent_rms,ok);
     }
+    timing.report("ddsp");
     obs_source_filter_remove(source,filter);obs_source_release(filter);obs_data_release(d);
     obs_set_output_source(1,nullptr);obs_source_dec_active(source);obs_source_release(source);obs_wait_for_destroy_queue();obs_shutdown();
     return ok?0:1;
