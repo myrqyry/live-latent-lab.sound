@@ -23,8 +23,12 @@ with wave.open(sys.argv[1], "wb") as f:
                                       int(8000*math.cos(i*.07))) for i in range(44100)))
 PY
 inc="$(pkg-config --variable=includedir libobs)/obs"
+probe_flags=()
+if [[ "${SOUND_RT_PROBE:-0}" == 1 ]]; then
+    probe_flags=(-DSOUND_RT_PROBE -rdynamic -ldl)
+fi
 "${CXX:-c++}" -std=gnu++17 -O2 -I"$inc" tests/verify-matchering-obs.cpp \
     -Wl,--no-as-needed -lobs-frontend-api $(pkg-config --libs libobs) \
-    -Wl,--as-needed -o "$work/check"
+    -Wl,--as-needed "${probe_flags[@]}" -o "$work/check"
 QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 30 "$work/check" \
     "$work/stage/bin/64bit/live-latent-lab-sound.so" "$work/stage/data" "$work/reference.wav"

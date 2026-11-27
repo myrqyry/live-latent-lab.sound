@@ -30,9 +30,13 @@ for name,gain in [('quarter',.25),('three_quarters',.75)]:
     save(model,str(Path(sys.argv[1])/(name+'.onnx')))
 PY
 inc="$(pkg-config --variable=includedir libobs)/obs"
+probe_flags=()
+if [[ "${SOUND_RT_PROBE:-0}" == 1 ]]; then
+    probe_flags=(-DSOUND_RT_PROBE -rdynamic -ldl)
+fi
 "${CXX:-c++}" -std=gnu++17 -O2 -I"$inc" tests/verify-deepfilter-obs.cpp \
     -Wl,--no-as-needed -lobs-frontend-api $(pkg-config --libs libobs) \
-    -Wl,--as-needed -o "$work/check"
+    -Wl,--as-needed "${probe_flags[@]}" -o "$work/check"
 QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 30 "$work/check" \
     "$work/stage/bin/64bit/live-latent-lab-sound.so" "$work/stage/data" \
     "$work/quarter.onnx" "$work/three_quarters.onnx"

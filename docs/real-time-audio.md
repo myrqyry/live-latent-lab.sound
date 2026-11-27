@@ -210,6 +210,25 @@ profile were modified. Reproduce using
 specified in the script. The stem worker uses a temporary private
 socket and is stopped by the test runner.
 
+## Sixth pass: optional Matchering and DeepFilter callback checks
+
+The test-only interposer also supports Matchering and DeepFilter. Run
+`SOUND_RT_PROBE=1 bash tests/verify-matchering-obs.sh` and
+`SOUND_RT_PROBE=1 bash tests/verify-deepfilter-obs.sh /path/to/onnxruntime-src`.
+The ordinary model-free test remains unchanged when the flag is absent.
+
+| Filter | Calls | Wall p99 us | CPU p99 us | CPU max us |
+| --- | ---: | ---: | ---: | ---: |
+| Matchering | 203 | 132.502 | 24.205 | 27.762 |
+| DeepFilter | 82 | 9.940 | 6.362 | 6.362 |
+
+Both functional fixtures passed with zero intercepted allocations, frees,
+blocking locks or waits. Matchering used a generated WAV reference and
+200 additional wet packets. DeepFilter used synthetic ONNX gain graphs,
+including model replacement and clearing, not a real noise suppression
+model. All three Matchering wall-time spikes over 100 us spent most of
+their duration off CPU. No production code changed.
+
 ## Repeatable tests
 
 Model-free queue and DSP checks are included in the public CI verification

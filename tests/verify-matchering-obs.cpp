@@ -1,3 +1,6 @@
+#ifdef SOUND_RT_PROBE
+#include "rt-callback-probe.hpp"
+#endif
 // Real libobs source/filter/capture path using a generated WAV reference.
 #include <obs.h>
 #include <obs-module.h>
@@ -65,6 +68,9 @@ int main(int argc,char** argv){
     obs_data_set_double(settings,"mix",1.0);obs_source_update(filter,settings);
     feed();
     assert(got.l!=l && got.r!=r);
+#ifdef SOUND_RT_PROBE
+    for(int i=0;i<200;++i){feed();for(float v:got.l)assert(std::isfinite(v));}
+#endif
     for(size_t i=0;i<N;++i)assert(std::isfinite(got.l[i]) && std::isfinite(got.r[i]));
     obs_data_set_string(settings,"reference_path","");obs_source_update(filter,settings);
     feed();assert(got.l==l && got.r==r);
@@ -72,4 +78,7 @@ int main(int argc,char** argv){
     obs_source_filter_remove(input,filter);
     obs_source_release(filter);obs_source_release(input);obs_data_release(settings);obs_shutdown();
     puts("MATCHERING_OBS_REAL_AUDIO_PASS=1");
+#ifdef SOUND_RT_PROBE
+    if(!rt_probe::report(203,{5}))return 1;
+#endif
 }

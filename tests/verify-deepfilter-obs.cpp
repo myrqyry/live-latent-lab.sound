@@ -1,3 +1,6 @@
+#ifdef SOUND_RT_PROBE
+#include "rt-callback-probe.hpp"
+#endif
 // Real libobs + ONNX Runtime + deterministic synthetic gain graphs.
 // Verifies transport and model switch behavior, not noise suppression quality.
 #include <obs.h>
@@ -83,4 +86,7 @@ int main(int argc,char** argv){
     obs_source_filter_remove(input,filter);
     obs_source_release(filter);obs_source_release(input);obs_data_release(settings);obs_shutdown();
     puts("DEEPFILTER_OBS_REAL_ORT_TRANSPORT_PASS=1");
+#ifdef SOUND_RT_PROBE
+    if(!rt_probe::report(82,{6}))return 1;
+#endif
 }
