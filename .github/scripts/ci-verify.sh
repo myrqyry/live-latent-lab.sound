@@ -57,6 +57,8 @@ count=$((count+1))
 "$cxx" -std=c++17 -O2 -Isrc tests/verify-stt-config.cpp -o "$work/stt-config"
 "$work/stt-config"
 count=$((count+1))
+python3 tests/verify-legacy-whisper-rt.py
+count=$((count+1))
 python3 tests/test_public_repo_urls.py
 count=$((count+1))
 # Test the optional Qt bridge separately; keep the distributed baseline Qt-free.

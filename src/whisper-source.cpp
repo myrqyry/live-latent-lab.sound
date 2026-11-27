@@ -76,7 +76,7 @@ struct whisper_source_data {
     // Safety
     std::mutex engine_mutex;   // Protects engine pointer during reloads
     std::mutex renderer_mutex; // Protects render-facing state and TextRenderer
-    std::mutex audio_mutex;    // Serializes audio callback teardown
+    std::mutex audio_mutex;    // Control path only; never acquired by capture
     os_event_t *work_signal;
 };
 
@@ -91,16 +91,13 @@ static void whisper_audio_callback(void *param, obs_source_t *source,
     
     whisper_source_data *data = (whisper_source_data *)param;
     if (!data) return;
-    std::lock_guard<std::mutex> audio_lock(data->audio_mutex);
     if (!data->audio_ring || !audio_data || !audio_data->data[0]) return;
     
     // Lock-free write to pre-allocated ring buffer (no allocation, no mutex)
     data->audio_ring->write((const float *)audio_data->data[0], audio_data->frames);
 
-    // Wake the worker once there is enough audio for transcription.
-    if (data->audio_ring->available() >= data->sample_rate) {
-        os_event_signal(data->work_signal);
-    }
+    // OBS os_event_signal takes a mutex on POSIX. The worker polls the
+    // preallocated queue instead; the event is reserved for shutdown.
 }
 
 /* ------------------------------------------------------------------------- */
@@ -109,7 +106,7 @@ static void whisper_audio_callback(void *param, obs_source_t *source,
 
 static void whisper_process_thread(whisper_source_data *data) {
     while (!data->stop_thread) {
-        os_event_wait(data->work_signal);
+        os_event_timedwait(data->work_signal, 20);
         if (data->stop_thread) {
             break;
         }
@@ -607,11 +604,11 @@ static void *whisper_create(obs_data_t *settings, obs_source_t *context) {
     return data;
 }
 
-static void whisper_destroy(void *data_ptr) {
-    whisper_source_data *data = (whisper_source_data *)data_ptr;
-    
+// OBS serializes callback removal with in-flight dispatch. Capture uses only
+// immutable state and the SPSC queue, so taking the control lock here cannot
+// invert the OBS callback lock. Keep the state alive until removal returns.
+static void whisper_detach_capture(whisper_source_data *data) {
     std::lock_guard<std::mutex> audio_lock(data->audio_mutex);
-    // Remove callback before joining so the audio thread stops touching the ring buffer.
     if (data->audio_source) {
         obs_source_t *source = obs_weak_source_get_source(data->audio_source);
         if (source) {
@@ -621,6 +618,11 @@ static void whisper_destroy(void *data_ptr) {
         obs_weak_source_release(data->audio_source);
         data->audio_source = nullptr;
     }
+}
+
+static void whisper_destroy(void *data_ptr) {
+    whisper_source_data *data = (whisper_source_data *)data_ptr;
+    whisper_detach_capture(data);
 
     data->stop_thread = true;
     os_event_signal(data->work_signal);
@@ -664,25 +666,16 @@ static void whisper_activate(void *data_ptr) {
     
     if (audio_source) {
         std::lock_guard<std::mutex> audio_lock(data->audio_mutex);
-        data->audio_source = obs_source_get_weak_source(audio_source);
-        obs_source_add_audio_capture_callback(audio_source, whisper_audio_callback, data);
+        if (!data->audio_source) {
+            data->audio_source = obs_source_get_weak_source(audio_source);
+            obs_source_add_audio_capture_callback(audio_source, whisper_audio_callback, data);
+        }
         obs_source_release(audio_source);
     }
 }
 
 static void whisper_deactivate(void *data_ptr) {
-    whisper_source_data *data = (whisper_source_data *)data_ptr;
-    
-    std::lock_guard<std::mutex> audio_lock(data->audio_mutex);
-    if (data->audio_source) {
-        obs_source_t *source = obs_weak_source_get_source(data->audio_source);
-        if (source) {
-            obs_source_remove_audio_capture_callback(source, whisper_audio_callback, data);
-            obs_source_release(source);
-        }
-        obs_weak_source_release(data->audio_source);
-        data->audio_source = nullptr;
-    }
+    whisper_detach_capture(static_cast<whisper_source_data *>(data_ptr));
 }
 
 /* ------------------------------------------------------------------------- */
