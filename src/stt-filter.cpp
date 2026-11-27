@@ -263,6 +263,7 @@ void run(State& s){
         s.publication_epoch=e;s.observed=std::chrono::steady_clock::now();
         s.inference_ms=std::chrono::duration_cast<std::chrono::milliseconds>(s.observed-begin).count();
     };
+    stts::SttBlock b;
     while(!s.stopping){
         // Snapshot before checking state/queue, so a producer notification
         // between either check and parking cannot be missed.
@@ -313,7 +314,6 @@ void run(State& s){
             {std::lock_guard lock(s.result);expired=std::chrono::steady_clock::now()-(s.partial_text.empty()?s.observed:s.partial_observed)>std::chrono::milliseconds(c.hold);}
             if(expired)clear_caption();
         }
-        stts::SttBlock b;
         if(!s.capture.pop(b)){
             // The producer and control handlers wake this worker on change.
             // Timed waits are only needed to flush a stopped source or
@@ -422,21 +422,25 @@ obs_audio_data* audio(void* ptr,obs_audio_data* packet){
         if(!packet->data[ch]){++s->epoch;s->wake.notify();return packet;}
         planes[ch]=reinterpret_cast<float*>(packet->data[ch]);
     }
-    stts::SttBlock b;b.epoch=e;
+    bool notify=false;
     for(uint32_t offset=0;offset<packet->frames;){
         if(!s->accept||s->epoch!=e)break;
-        b.count=std::min<uint32_t>(b.samples.size(),packet->frames-offset);
-        b.timestamp=packet->timestamp+uint64_t(offset)*1000000000ULL/s->rate;
-        for(uint32_t i=0;i<b.count;++i){
-            float sum=0;for(size_t ch=0;ch<s->channels;++ch)sum+=planes[ch][offset+i];
-            b.samples[i]=std::isfinite(sum)?std::clamp(sum/float(s->channels),-1.f,1.f):0.f;
+        const uint32_t count=std::min<uint32_t>(stts::SttBlock::capacity,packet->frames-offset);
+        const auto timestamp=packet->timestamp+uint64_t(offset)*1000000000ULL/s->rate;
+        if(!s->capture.emplace(e,timestamp,count,[&](float* dst){
+            for(uint32_t i=0;i<count;++i){
+                float sum=0;for(size_t ch=0;ch<s->channels;++ch)sum+=planes[ch][offset+i];
+                dst[i]=std::isfinite(sum)?std::clamp(sum/float(s->channels),-1.f,1.f):0.f;
+            }
+        })){
+            s->dropped+=packet->frames-offset;++s->epoch;notify=true;break;
         }
-        if(!s->capture.push(b)){
-            s->dropped+=packet->frames-offset;++s->epoch;s->wake.notify();break;
-        }
-        s->wake.notify();
-        offset+=b.count;
+        notify=true;
+        offset+=count;
     }
+    // One notification for the entire OBS packet, including discontinuities.
+    // The worker's sequence check still closes the check/park race.
+    if(notify)s->wake.notify();
     return packet;
 }
 void defaults(obs_data_t* d){
