@@ -158,6 +158,32 @@ for live deadlines. Shifts 0–2, overlap 0.05–0.5 and segment seconds
 defaults are one shift and 0.25 overlap. A synthetic warmup runs
 before the socket accepts audio. High quality settings can exceed
 the fixed four-second inference allowance; missed deadlines mute.
+The filter now starts a fresh capture generation after a queue fault,
+socket failure or deadline miss. Each recovered stream has its own
+12-second silent prefill and discards the old queued audio. It never
+substitutes unseparated music for a stem.
+
+The existing worker is external and user-owned: the OBS filter
+reconnects to its socket, rather than spawning or terminating it.
+Three automatic attempts use 250/500/1000 ms backoff; four successful
+eight-second windows replenish the budget. A missing endpoint
+remains silent while attempting recovery. Changes to the socket or
+selected stem reload live and start a new silent prefill. **Retry
+worker** explicitly resets the budget after exhaustion. The read-only
+`sound_stem_live_v1` procedure reports status (buffering, ready, error),
+cumulative successful windows, automatic retries and delay_ms. Ready
+means a valid window has been queued, not necessarily that the silent
+prefill has elapsed. The delay is counted in received samples; this is
+not hardware-clock-drift correction.
+
+A request is cancellable on the worker thread if its generation
+becomes obsolete, with nonblocking socket I/O, 20 ms poll intervals
+and one 12-second transfer deadline. The audio deadline still governs
+output: the longer transfer cap is not permission to play late stems.
+Closing the socket does not cancel an ongoing model call inside the
+external sidecar. The next request may contend with that old work.
+No dry bypass, shared multistem fanout or in-memory inference has been
+added by this recovery change.
 The worker CLI can be changed before launching/restarting it.
 A global OBS graphical worker manager remains future work.
 
@@ -170,3 +196,14 @@ test. For example, with the required fixture/environment configured:
 STEM_VERIFY_DEVICE=cuda STEM_VERIFY_SHIFTS=0 STEM_VERIFY_OVERLAP=0.1 \
   STEM_VERIFY_SEGMENT=4 ./tests/verify-stem-live.sh --with-model
 ```
+
+
+For a deterministic real-libobs lifecycle test without the model:
+```sh
+SOUND_STEM_STAGE=/path/to/staged-sound SOUND_RT_PROBE=1 \
+  bash tests/verify-stem-recovery-obs.sh
+```
+This uses a test-only protocol peer, not HTDemucs. The real-model runner
+adds strict recovery checks without changing the audio deadline.
+See RELEASE_STATUS.md for the distinction between verified transport
+and outstanding sustained model qualification.

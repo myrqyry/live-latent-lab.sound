@@ -335,8 +335,71 @@ instances, real microphone/hardware-clock behavior and full expanded
 release qualification are not established. No installation/publication.
 The system partition is still critically full; reused staged runtimes.
 
-Next: HTDemucs recovery with its own buffered-silence contract, then
-measured DSP optimization and the remaining roadmap.
+## HTDemucs generation recovery (2026-11-27)
+
+The live stem filter now uses an acknowledged stereo capture/output
+generation. Every restart starts a fresh 12 s silent prefill, clears
+obsolete queued input and output using their respective consumer
+cursors, and never emits dry music. Changing the selected stem or
+socket invalidates the old generation. The client reconnects to the
+user-owned external sidecar with three bounded attempts, reset after
+four healthy eight-second windows or explicit Retry worker/settings
+changes. No sidecar process ownership was added. Requests use a single
+12 s transfer cap, 20 ms nonblocking poll/cancellation checks and a
+worker-reused response buffer; the existing four-second audio deadline
+still governs output. A canceled socket cannot cancel a model call
+already executing inside the external sidecar.
+
+Verified combined seven-effect staged module SHA256:
+4e9a3e241bf1c96fbfcb5e1bacbb95738620a2113ad7238352203dede65be859.
+
+- Model-free generation transport at 44.1/48 kHz passed exact silent
+  prefill, distinct stereo wet, queue discard and old-result rejection.
+  UBSan, existing stem pipeline, shared wake and DDSP/RVC recovery
+  tests passed. Socket protocol and stalled-peer cancellation passed.
+- Isolated stem-only build/registration and all eight Python sidecar
+  contract tests passed via tests/verify-stem-live.sh (without model).
+- Actual libobs transport integration using a deterministic TEST ONLY
+  protocol peer passed both same-socket automatic recovery (one retry,
+  three windows, zero energy in first 20 s) and socket settings reload
+  (zero energy during fault and fresh 12 s prefill, two new windows).
+  These are not model-inference tests. 8,200 measured callbacks in
+  these two cases, zero observed allocations/frees/locks/waits or
+  >10 ms callbacks. The separate reproducibility wrapper is
+  tests/verify-stem-recovery-obs.sh (syntax checked; equivalent
+  individual commands executed). An unavailable real endpoint also
+  produced all-zero audio for 14 s (1,400 instrumented callbacks).
+- Real CUDA HTDemucs FP32, shifts 0, overlap .1, segment 4: initial
+  settings-reload run produced valid wet after recovery, with zero
+  energy during fault and prefill, but later 4.819 s separation
+  missed the four-second audio deadline. Same-socket repeat reconnected
+  and emitted real separated audio (3.417 s window), then muted on
+  an 8.642 s window. Subsequent settings-reload and normal runs
+  failed sustained wet acceptance under current load; logged
+  10.860, 6.191, 4.658 and 4.104 s windows. Late replies were
+  rejected/canceled. No timing thresholds relaxed.
+- Across the four real-model runs (15,500 callbacks), zero observed
+  callback allocations/frees/locks/waits; one wall-time callback
+  29.627 ms, corresponding run CPU maximum 21.220 microseconds.
+  Multiple existing OBS processes were active; not interrupted.
+  No controlled before/after performance comparison.
+
+Qualification boundary: generation recovery and reconnect transport
+are verified; sustained real CUDA recovery and normal playback are
+NOT qualified by this pass. Retry exhaustion for the actual stem
+worker, native model latency under contention and hardware-clock
+behavior remain to be qualified. No install or publication.
+
+Next: investigate resident in-memory HTDemucs. The actual installed
+audio-separator Demucs adapter reconstructs HDemucs, loads weights,
+moves them to the device and deletes the model/clears GPU cache on
+every call to separate(); the sidecar also writes/reads WAVs. Remove
+these repeated operations using a narrow pinned, validated resident
+backend, compare outputs and timings against the existing adapter,
+then rerun strict real recovery/normal acceptance. This is a concrete
+optimization target, not proven causation for all missed deadlines.
+After that, measured DSP optimization and remaining roadmap.
+System drive critically full; reuse assets and isolated stages.
 
 ## STT event-driven worker wakeups (2026-11-22)
 

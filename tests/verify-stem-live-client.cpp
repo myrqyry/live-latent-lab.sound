@@ -61,6 +61,30 @@ int main(int argc,char**argv){
  assert(chmod(path.c_str(),0666)==0);
  assert(!client.exchange(path,48000,46,l.data(),r.data(),384000,3,outl.data(),outr.data()));
  assert(chmod(path.c_str(),0600)==0);
+ // A superseded generation cancels an outstanding request without waiting
+ // for a hung sidecar or publishing its response.
+ std::atomic<bool> current{true},received{false},finished{false};
+ std::thread stalled([&]{
+    int s=accept(server,nullptr,nullptr);assert(s>=0);
+    unsigned char hdr[36];std::vector<float> input(2*384000);
+    assert(stts::read_fully(s,hdr,sizeof hdr));
+    assert(stts::read_fully(s,input.data(),input.size()*sizeof(float)));
+    received=true;char byte;
+    assert(recv(s,&byte,1,0)==0);close(s);
+ });
+ std::fill(outl.begin(),outl.end(),.99f);
+ std::thread request([&]{
+    assert(!client.exchange(path,48000,47,l.data(),r.data(),384000,3,outl.data(),outr.data(),[&]{return current.load();}));
+    finished=true;
+ });
+ auto limit=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+ while(!received&&std::chrono::steady_clock::now()<limit)std::this_thread::yield();
+ assert(received);auto cancelled=std::chrono::steady_clock::now();current=false;
+ limit=cancelled+std::chrono::milliseconds(500);
+ while(!finished&&std::chrono::steady_clock::now()<limit)std::this_thread::yield();
+ assert(finished);request.join();stalled.join();
+ assert(outl[0]==.99f);
+ puts("SOUND_STEM_CANCEL_PASS=1");
  close(server);unlink(path.c_str());
  assert(worker_ok);
  puts("SOUND_LIVE_STEM_SOCKET_CONTRACT_PASS=1");

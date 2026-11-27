@@ -46,6 +46,9 @@ cxx="${CXX:-c++}"
     "$root/tests/verify-stem-live-pipeline.cpp" -o "$work/pipeline"
 "$work/pipeline" | tee "$work/pipeline.log"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
+    "$root/tests/verify-stem-recovery.cpp" -o "$work/recovery"
+"$work/recovery"
+"$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-live-client.cpp" -o "$work/client"
 # The fake protocol server is self-contained and does not use the GPU.
 : "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is needed for private socket tests}"
@@ -135,8 +138,10 @@ fixture=np.tile(data,(2,1))[:24*48000]
 assert fixture.shape==(24*48000,2)
 fixture.tofile(os.environ['STEM_PRIVATE_TARGET'])
 PY
+probe_flags=()
+if [[ "${SOUND_RT_PROBE:-0}" == 1 ]];then probe_flags=(-DSOUND_RT_PROBE -rdynamic -ldl);fi
 "$cxx" -std=gnu++17 -O2 -pthread -I"$inc" \
-    "$root/tests/verify-stem-live-obs-audio.cpp" "${libs[@]}" -o "$work/obs-audio"
+    "$root/tests/verify-stem-live-obs-audio.cpp" "${libs[@]}" "${probe_flags[@]}" -o "$work/obs-audio"
 # First, an unavailable backend must mute instead of silently passing music.
 QT_QPA_PLATFORM=offscreen xvfb-run -a -s '-screen 0 1280x720x24' \
     timeout 22 "$work/obs-audio" "$module" "$work/stage/data" \
@@ -164,6 +169,13 @@ grep -F 'STEM_QUALITY' "$work/model.log"
 grep -F 'STEM_WARMUP' "$work/model.log"
 grep -F 'STEM_WINDOW seq=0' "$work/model.log"
 grep -F 'STEM_WINDOW seq=1' "$work/model.log"
+for mode in AUTO_RECOVER RECOVER;do
+    env "SOUND_STEM_$mode"=1 QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 80 \
+        "$work/obs-audio" "$module" "$work/stage/data" "$work/input-f32-stereo.bin" "$socket_dir/model.sock" \
+        >"$work/stem-$mode.log" 2>&1 || { tail -45 "$work/stem-$mode.log";exit 1; }
+    grep "STEM_LIVE_$mode.*pass=1" "$work/stem-$mode.log"
+    grep '^RT_CALLBACK ' "$work/stem-$mode.log" || true
+done
 echo "SOUND_STEM_LIVE_REAL_GPU_OBS_PASS=1"
 if [[ "$tts" == true ]]; then
     "$root/tests/verify-tiktok-native.sh"

@@ -6,6 +6,9 @@
 // the fixture nor its generated stems enter the source repository.
 #include <obs.h>
 #include <obs-module.h>
+#include <callback/proc.h>
+#include <cstdlib>
+#include <unistd.h>
 #include <util/platform.h>
 #include <atomic>
 #include <array>
@@ -18,7 +21,9 @@
 #include <vector>
 
 struct Measure {
+    uint64_t silent_until=12*48000;
     std::atomic<uint64_t> frames{0};
+    std::atomic<double> total_energy{0},prefill_energy{0};
     std::atomic<double> early_energy{0},late_energy_l{0},late_energy_r{0};
     std::atomic<double> late_stereo_diff{0};
     std::atomic<uint64_t> late_nonzero{0};
@@ -33,10 +38,12 @@ static void capture(void* param,obs_source_t*,const audio_data* packet,bool){
     const float* r=reinterpret_cast<const float*>(packet->data[1]);
     if(!l || !r)return;
     const uint64_t initial=s.frames.fetch_add(packet->frames);
-    double early=0,late_l=0,late_r=0,diff=0;
+    double early=0,late_l=0,late_r=0,diff=0,total=0,prefill=0;
     uint64_t nonzero=0;
     for(uint32_t i=0;i<packet->frames;++i){
         const uint64_t time=initial+i;
+        total+=double(l[i])*l[i]+double(r[i])*r[i];
+        if(time<s.silent_until)prefill+=double(l[i])*l[i]+double(r[i])*r[i];
         if(time<11*48000)early+=double(l[i])*l[i]+double(r[i])*r[i];
         if(time>=13*48000 && time<23*48000){
             late_l+=double(l[i])*l[i];
@@ -45,6 +52,7 @@ static void capture(void* param,obs_source_t*,const audio_data* packet,bool){
             if(std::abs(l[i])>.0001f || std::abs(r[i])>.0001f)++nonzero;
         }
     }
+    add(s.total_energy,total);add(s.prefill_energy,prefill);
     add(s.early_energy,early);add(s.late_energy_l,late_l);
     add(s.late_energy_r,late_r);add(s.late_stereo_diff,diff);
     s.late_nonzero+=nonzero;
@@ -85,7 +93,19 @@ int main(int argc,char**argv){
     const bool properties=props&&selection&&obs_property_list_item_count(selection)==4;
     if(props)obs_properties_destroy(props);
     auto* settings=obs_data_create();
-    obs_data_set_string(settings,"socket_path",model_socket.c_str());
+    // Private hard link to the test sidecar socket. Never rename or
+    // remove the actual sidecar endpoint; create only our own alias.
+    struct Alias{
+        std::string dir,path;
+        ~Alias(){if(!path.empty())unlink(path.c_str());if(!dir.empty())rmdir(dir.c_str());}
+    } alias;
+    const bool auto_recover=std::getenv("SOUND_STEM_AUTO_RECOVER")!=nullptr;
+    if(auto_recover){
+        std::string pattern=model_socket+".test-XXXXXX";
+        if(!mkdtemp(pattern.data()))return 8;
+        alias.dir=pattern;alias.path=pattern+"/endpoint.sock";
+    }
+    obs_data_set_string(settings,"socket_path",auto_recover?alias.path.c_str():model_socket.c_str());
     obs_data_set_int(settings,"stem",3); // Vocal stem; no dry duplication
     auto* filter=obs_source_create("stem_live_buffered_filter","live-vocal-test",settings,nullptr);
     if(!input || !filter)return 7;
@@ -95,26 +115,85 @@ int main(int argc,char**argv){
     obs_source_inc_active(input);
     obs_source_set_audio_active(input,true);
     obs_source_set_async_unbuffered(input,true);
-    Measure stats;
-    obs_source_add_audio_capture_callback(input,capture,&stats);
+    uint64_t initial=os_gettime_ns(),sent=0;
     std::array<float,480> l{},r{};
-    const uint64_t initial=os_gettime_ns();
-    for(size_t round=0;round<total_frames/480;++round){
-        for(size_t i=0;i<480;++i){
-            const auto at=(round*480+i)*2;
-            l[i]=pcm[at];r[i]=pcm[at+1];
+    auto stream=[&](Measure& stats,size_t seconds){
+        obs_source_add_audio_capture_callback(input,capture,&stats);
+        auto wall=std::chrono::steady_clock::now();
+        for(size_t round=0;round<seconds*100;++round){
+            for(size_t i=0;i<480;++i){
+                const auto at=((sent*480+i)%(pcm.size()/2))*2;
+                l[i]=pcm[at];r[i]=pcm[at+1];
+            }
+            obs_source_audio audio{};
+            audio.data[0]=reinterpret_cast<uint8_t*>(l.data());
+            audio.data[1]=reinterpret_cast<uint8_t*>(r.data());
+            audio.frames=480;audio.speakers=SPEAKERS_STEREO;
+            audio.format=AUDIO_FORMAT_FLOAT_PLANAR;audio.samples_per_sec=48000;
+            audio.timestamp=initial+sent++*10000000ULL;
+            obs_source_output_audio(input,&audio);
+            std::this_thread::sleep_until(wall+std::chrono::milliseconds((round+1)*10));
         }
-        obs_source_audio audio{};
-        audio.data[0]=reinterpret_cast<uint8_t*>(l.data());
-        audio.data[1]=reinterpret_cast<uint8_t*>(r.data());
-        audio.frames=480;audio.speakers=SPEAKERS_STEREO;
-        audio.format=AUDIO_FORMAT_FLOAT_PLANAR;audio.samples_per_sec=48000;
-        audio.timestamp=initial+round*10000000ULL;
-        obs_source_output_audio(input,&audio);
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        obs_source_remove_audio_capture_callback(input,capture,&stats);
+    };
+    struct Status{std::string status;long long windows=0,retries=0;};
+    auto snapshot=[&]{
+        Status out;calldata_t d{};
+        if(proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_live_v1",&d)){
+            if(auto* name=calldata_string(&d,"status"))out.status=name;
+            out.windows=calldata_int(&d,"windows");out.retries=calldata_int(&d,"automatic_retries");
+        }
+        calldata_free(&d);return out;
+    };
+    if(auto_recover){
+        Measure stats;stats.silent_until=20*48000;
+        stream(stats,9);auto fault=snapshot();
+        bool attached=link(model_socket.c_str(),alias.path.c_str())==0;
+        stream(stats,24);auto last=snapshot();
+        bool pass=properties&&fault.retries==1&&attached&&
+            stats.frames>=32*48000&&stats.prefill_energy==0&&
+            stats.late_energy_l>5&&stats.late_energy_r>5&&stats.late_stereo_diff>1&&
+            last.status=="ready"&&last.retries==1&&last.windows>=2;
+        printf("STEM_LIVE_AUTO_RECOVER attached=%d retries=%lld silent_20s_energy=%g recovered_windows=%lld wet=%g,%g pass=%d\n",
+            attached,last.retries,stats.prefill_energy.load(),last.windows,stats.late_energy_l.load(),stats.late_energy_r.load(),pass);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(input);
+        obs_source_filter_remove(input,filter);obs_source_release(filter);obs_source_release(input);
+        obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        pass=rt_probe::report(1400,{4})&&pass;
+#endif
+        return pass?0:1;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    obs_source_remove_audio_capture_callback(input,capture,&stats);
+    if(std::getenv("SOUND_STEM_RECOVER")){
+        Measure before,failed,recovered;
+        stream(before,15);
+        auto first=snapshot();
+        obs_data_set_string(settings,"socket_path","/sound-stem-test-absent.sock");
+        obs_source_update(filter,settings);
+        stream(failed,10);
+        auto fault=snapshot();
+        obs_data_set_string(settings,"socket_path",model_socket.c_str());
+        obs_source_update(filter,settings);
+        stream(recovered,24);
+        auto last=snapshot();
+        bool pass=properties&&first.status=="ready"&&first.windows>=1&&before.total_energy>5&&
+            failed.frames>=10*48000&&failed.total_energy==0&&fault.retries>=1&&
+            recovered.frames>=23*48000&&recovered.prefill_energy==0&&
+            recovered.late_energy_l>5&&recovered.late_energy_r>5&&recovered.late_stereo_diff>1&&
+            last.status=="ready"&&last.windows>=first.windows+2;
+        printf("STEM_LIVE_RECOVER first=%s before_windows=%lld fault_retries=%lld muted_energy=%g prefill_energy=%g recovered_windows=%lld wet=%g,%g pass=%d\n",
+            first.status.c_str(),first.windows,fault.retries,failed.total_energy.load(),recovered.prefill_energy.load(),
+            last.windows,recovered.late_energy_l.load(),recovered.late_energy_r.load(),pass);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(input);
+        obs_source_filter_remove(input,filter);obs_source_release(filter);obs_source_release(input);
+        obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        pass=rt_probe::report(1400,{4})&&pass;
+#endif
+        return pass?0:1;
+    }
+    Measure stats;
+    stream(stats,expect_silence?14:24);
     const auto n=stats.frames.load();
     const double early=stats.early_energy.load();
     const double late_l=stats.late_energy_l.load();

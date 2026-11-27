@@ -63,7 +63,7 @@ count=$((count+1))
 "$cxx" -std=gnu++17 -O2 -pthread -rdynamic -I"$inc" tests/verify-rt-probe.cpp $(pkg-config --libs libobs) -ldl -o "$work/rt-probe"
 "$work/rt-probe" "$work/rt-probe-fixture.so"
 count=$((count+1))
-for test in ddsp-pipeline ddsp-recovery classifier-capture rvc-recovery rvc-window wet-queue-blocks worker-reuse; do
+for test in ddsp-pipeline ddsp-recovery classifier-capture stem-recovery rvc-recovery rvc-window wet-queue-blocks worker-reuse; do
     "$cxx" -std=c++17 -O2 -pthread -Isrc "tests/verify-$test.cpp" -o "$work/$test"
     "$work/$test"
     count=$((count+1))

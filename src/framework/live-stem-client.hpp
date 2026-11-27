@@ -3,6 +3,8 @@
 // The Python sidecar owns HTDemucs; OBS must never call Python or the socket
 // from its audio callback.
 #include <atomic>
+#include <chrono>
+#include <poll.h>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -55,10 +57,11 @@ public:
         std::lock_guard<std::mutex> lock(socket_mutex_);
         if(socket_>=0)::shutdown(socket_,SHUT_RDWR);
     }
+    template<class Current>
     bool exchange(const std::string& path,uint32_t rate,uint32_t seq,
                   const float* in_l,const float* in_r,size_t frames,
-                  int stem,float* out_l,float* out_r){
-        if(stopping_.load() || (rate!=44100 && rate!=48000)
+                  int stem,float* out_l,float* out_r,Current&& current){
+        if(stopping_.load() || !current() || (rate!=44100 && rate!=48000)
            || frames!=size_t(rate)*8 || stem<0 || stem>3
            || !in_l || !in_r || !out_l || !out_r ||
            path.empty() || path.size()>=sizeof(sockaddr_un{}.sun_path))
@@ -68,28 +71,52 @@ public:
         if(::lstat(path.c_str(),&statbuf) || !S_ISSOCK(statbuf.st_mode)
            || statbuf.st_uid!=::geteuid() || (statbuf.st_mode & 077))
             return false;
-        int fd=::socket(AF_UNIX,SOCK_STREAM,0);
+        response_.resize(size_t(4)*2*frames);
+        int fd=::socket(AF_UNIX,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
         if(fd<0)return false;
         {
             std::lock_guard<std::mutex> lock(socket_mutex_);
             if(stopping_.load()){::close(fd);return false;}
             socket_=fd;
         }
-        const bool success=exchange_fd(fd,path,rate,seq,in_l,in_r,frames,stem,out_l,out_r);
+        const bool success=exchange_fd(fd,path,rate,seq,in_l,in_r,frames,stem,out_l,out_r,current);
         {
             std::lock_guard<std::mutex> lock(socket_mutex_);
             if(socket_==fd)socket_=-1;
             ::close(fd);
         }
-        return success && !stopping_.load();
+        return success && !stopping_.load() && current();
+    }
+    bool exchange(const std::string& path,uint32_t rate,uint32_t seq,
+                  const float* in_l,const float* in_r,size_t frames,
+                  int stem,float* out_l,float* out_r){
+        return exchange(path,rate,seq,in_l,in_r,frames,stem,out_l,out_r,[]{return true;});
     }
 private:
+    template<class Current>
     bool exchange_fd(int fd,const std::string& path,uint32_t rate,uint32_t seq,
                      const float* in_l,const float* in_r,size_t frames,
-                     int stem,float* out_l,float* out_r){
-        timeval timeout{};timeout.tv_sec=12;
-        if(::setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout)) ||
-           ::setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout)))return false;
+                     int stem,float* out_l,float* out_r,Current& current){
+        // One absolute request deadline, not a fresh timeout for each
+        // partial transfer. Check generation and shutdown every poll.
+        using Clock=std::chrono::steady_clock;
+        auto deadline=Clock::now()+std::chrono::seconds(12);
+        auto transfer=[&](void* raw,size_t size,bool sending){
+            auto* p=static_cast<unsigned char*>(raw);
+            while(size&&!stopping_.load()&&current()&&Clock::now()<deadline){
+                pollfd event{fd,short(sending?POLLOUT:POLLIN),0};
+                int ready=::poll(&event,1,20);
+                if(ready<0&&errno==EINTR)continue;
+                if(ready<0)return false;
+                if(!ready)continue;
+                if(!(event.revents&(sending?POLLOUT:POLLIN)))return false;
+                auto n=sending?::send(fd,p,size,MSG_NOSIGNAL) : ::recv(fd,p,size,0);
+                if(n<0&&(errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK))continue;
+                if(n<=0)return false;
+                p+=n;size-=size_t(n);
+            }
+            return size==0&&!stopping_.load()&&current();
+        };
         sockaddr_un address{};address.sun_family=AF_UNIX;
         std::memcpy(address.sun_path,path.c_str(),path.size()+1);
         if(::connect(fd,reinterpret_cast<const sockaddr*>(&address),sizeof(address)))return false;
@@ -98,18 +125,18 @@ private:
         put_le32(request+8,1);put_le32(request+12,rate);
         put_le32(request+16,uint32_t(frames));
         put_le32(request+20,2);put_le32(request+24,seq);
-        if(!write_fully(fd,request,sizeof request)
-           || !write_fully(fd,in_l,frames*sizeof(float))
-           || !write_fully(fd,in_r,frames*sizeof(float)))return false;
+        if(!transfer(request,sizeof request,true)
+           || !transfer(const_cast<float*>(in_l),frames*sizeof(float),true)
+           || !transfer(const_cast<float*>(in_r),frames*sizeof(float),true))return false;
         unsigned char response[36]{};
-        if(!read_fully(fd,response,sizeof response)
+        if(!transfer(response,sizeof response,false)
            || std::memcmp(response,"LLSTEM01",8)
            || get_le32(response+8)!=1 || get_le32(response+12)!=rate
            || get_le32(response+16)!=frames || get_le32(response+20)!=2
            || get_le32(response+24)!=seq || get_le32(response+28)!=4
            || get_le32(response+32)!=0)return false;
-        std::vector<float> data(size_t(4)*2*frames);
-        if(!read_fully(fd,data.data(),data.size()*sizeof(float)))return false;
+        auto& data=response_;
+        if(!transfer(data.data(),data.size()*sizeof(float),false))return false;
         for(float value:data)if(!std::isfinite(value))return false;
         const size_t offset=size_t(stem)*2*frames;
         std::memcpy(out_l,data.data()+offset,frames*sizeof(float));
@@ -119,5 +146,6 @@ private:
     std::atomic<bool>& stopping_;
     std::mutex socket_mutex_;
     int socket_{-1};
+    std::vector<float> response_; // worker-owned reusable response buffer
 };
 } // namespace stts
