@@ -27,7 +27,7 @@
 #include <unordered_map>
 
 #include "engines/demucs_engine.hpp"
-#include "framework/ring-buffer.hpp"
+#include "framework/demucs_rt.hpp"
 #include "framework/stem_output_guard.hpp"
 
 /* ------------------------------------------------------------------------- */
@@ -57,12 +57,6 @@ static void unregister_parent(const std::string& name) {
     g_parent_registry.erase(name);
 }
 
-static demucs_source_data* find_parent(const std::string& name) {
-    std::lock_guard<std::mutex> lock(g_parent_registry_mutex);
-    auto it = g_parent_registry.find(name);
-    return (it != g_parent_registry.end()) ? it->second : nullptr;
-}
-
 /* ------------------------------------------------------------------------- */
 /* Data Structure                                                            */
 /* ------------------------------------------------------------------------- */
@@ -78,11 +72,11 @@ struct demucs_source_data {
     // Audio capture
     obs_weak_source_t *audio_source;
     std::string audio_source_name;
-    std::vector<float> input_buffer;
-    std::mutex input_mutex;
+    std::unique_ptr<stts::DemucsCapture> capture;
+    std::mutex capture_control_mutex; // never acquired by the capture callback
     
     // Stem output buffers (lock-free SPSC ring for each stem)
-    std::array<std::unique_ptr<stts::RingBuffer>, NUM_STEMS> stem_buffers;
+    std::array<std::shared_ptr<stts::DemucsStemOutput>, NUM_STEMS> stem_buffers;
     
     // Child sources for each stem
     std::array<obs_source_t*, NUM_STEMS> stem_sources;
@@ -91,12 +85,24 @@ struct demucs_source_data {
     std::thread worker_thread;
     std::atomic<bool> stop_thread{false};
     uint32_t sample_rate;
-    int chunk_ms;
+    std::atomic<int> chunk_ms{5000};
     int num_threads;
     
     // Safety
     std::mutex engine_mutex; // Protects engine pointer during reloads
 };
+
+// Bind once while the parent registry guarantees lifetime. The private child
+// source then owns only the output queue, not the parent or inference engine.
+static std::shared_ptr<stts::DemucsStemOutput> bind_stem(const std::string& name,int index) {
+    if(index<0 || index>=NUM_STEMS)return {};
+    std::lock_guard<std::mutex> lock(g_parent_registry_mutex);
+    auto it=g_parent_registry.find(name);
+    if(it==g_parent_registry.end())return {};
+    auto output=it->second->stem_buffers[index];
+    if(!output || !output->claim())return {};
+    return output;
+}
 
 /* ------------------------------------------------------------------------- */
 /* Stem Source Data                                                          */
@@ -106,6 +112,7 @@ struct stem_source_data {
     std::string parent_name;
     int stem_index;
     obs_source_t *context;
+    std::shared_ptr<stts::DemucsStemOutput> output;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -121,18 +128,7 @@ static void demucs_audio_capture(void *param, obs_source_t *source,
     
     if (!audio_data || !audio_data->data[0]) return;
     
-    const float *samples = (const float *)audio_data->data[0];
-    size_t num_samples = audio_data->frames;
-    
-    std::lock_guard<std::mutex> lock(data->input_mutex);
-    data->input_buffer.insert(data->input_buffer.end(), samples, samples + num_samples);
-    
-    // Limit buffer size (30 seconds max)
-    const size_t max_samples = data->sample_rate * 30;
-    if (data->input_buffer.size() > max_samples) {
-        data->input_buffer.erase(data->input_buffer.begin(),
-                                  data->input_buffer.begin() + (data->input_buffer.size() - max_samples));
-    }
+    data->capture->push(reinterpret_cast<const float*>(audio_data->data[0]),audio_data->frames);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -140,23 +136,12 @@ static void demucs_audio_capture(void *param, obs_source_t *source,
 /* ------------------------------------------------------------------------- */
 
 static void demucs_process_thread(demucs_source_data *data) {
+    std::vector<float> current_chunk;
+    uint64_t capture_epoch=0;
     while (!data->stop_thread) {
-        std::vector<float> current_chunk;
-        
-        {
-            std::lock_guard<std::mutex> lock(data->input_mutex);
-            size_t chunk_size = (data->sample_rate * data->chunk_ms) / 1000;
-            chunk_size = std::max(chunk_size, (size_t)(data->sample_rate * 2));
-            
-            if (data->input_buffer.size() >= chunk_size) {
-                current_chunk.assign(data->input_buffer.begin(), 
-                                    data->input_buffer.begin() + chunk_size);
-                data->input_buffer.erase(data->input_buffer.begin(), 
-                                        data->input_buffer.begin() + chunk_size);
-            }
-        }
-
-        if (current_chunk.empty()) {
+        const size_t chunk_size=size_t(data->sample_rate)*data->chunk_ms.load()/1000;
+        current_chunk.resize(chunk_size);
+        if(!data->capture->read_chunk(current_chunk.data(),chunk_size,capture_epoch)){
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
@@ -176,10 +161,11 @@ static void demucs_process_thread(demucs_source_data *data) {
         }
         // Validate the *whole* batch before touching any stem ring. A missing
         // model, partial output or invalid samples result in no new stems.
-        stts::publish_stems_if_valid(stems, NUM_STEMS, current_chunk.size(),
-            [data](size_t stem, const float* samples, size_t count) {
-                data->stem_buffers[stem]->write(samples, count);
-            });
+        if(data->capture->epoch()==capture_epoch)
+            stts::publish_stems_if_valid(stems, NUM_STEMS, current_chunk.size(),
+                [data](size_t stem, const float* samples, size_t count) {
+                    data->stem_buffers[stem]->publish(samples, count);
+                });
     }
 }
 
@@ -244,35 +230,40 @@ static void demucs_source_update(void *data_ptr, obs_data_t *settings) {
     
     std::string new_model = obs_data_get_string(settings, "model_path");
     std::string new_audio_source = obs_data_get_string(settings, "audio_source");
-    data->chunk_ms = (int)obs_data_get_int(settings, "chunk_ms");
+    data->chunk_ms = std::clamp((int)obs_data_get_int(settings, "chunk_ms"),2000,10000);
     data->num_threads = (int)obs_data_get_int(settings, "num_threads");
     
-    // Update audio source capture
-    if (new_audio_source != data->audio_source_name) {
-        // Remove old capture callback
-        if (data->audio_source) {
-            obs_source_t *old_source = obs_weak_source_get_source(data->audio_source);
-            if (old_source) {
-                obs_source_remove_audio_capture_callback(old_source, demucs_audio_capture, data);
-                obs_source_release(old_source);
+    // Serialize source replacement with activation (control path only).
+    {
+        std::lock_guard<std::mutex> capture_lock(data->capture_control_mutex);
+        if (new_audio_source != data->audio_source_name || (!new_audio_source.empty() && !data->audio_source)) {
+            // Remove old capture callback
+            if (data->audio_source) {
+                obs_source_t *old_source = obs_weak_source_get_source(data->audio_source);
+                if (old_source) {
+                    obs_source_remove_audio_capture_callback(old_source, demucs_audio_capture, data);
+                    obs_source_release(old_source);
+                }
+                obs_weak_source_release(data->audio_source);
+                data->audio_source = nullptr;
             }
-            obs_weak_source_release(data->audio_source);
-            data->audio_source = nullptr;
-        }
         
-        // Add new capture callback
-        if (!new_audio_source.empty()) {
-            obs_source_t *source = obs_get_source_by_name(new_audio_source.c_str());
-            if (source) {
-                data->audio_source = obs_source_get_weak_source(source);
-                obs_source_add_audio_capture_callback(source, demucs_audio_capture, data);
-                obs_source_release(source);
-                data->audio_source_name = new_audio_source;
-                blog(LOG_INFO, "[Demucs Source] Capturing from: %s", new_audio_source.c_str());
+            data->capture->mark_gap();
+            data->audio_source_name = new_audio_source;
+            // Add new capture callback
+            if (!new_audio_source.empty()) {
+                obs_source_t *source = obs_get_source_by_name(new_audio_source.c_str());
+                if (source) {
+                    data->audio_source = obs_source_get_weak_source(source);
+                    obs_source_add_audio_capture_callback(source, demucs_audio_capture, data);
+                    obs_source_release(source);
+                    blog(LOG_INFO, "[Demucs Source] Capturing from: %s", new_audio_source.c_str());
+                }
             }
         }
-    }
     
+    }
+
     // Reload model if changed
     if (new_model != data->model_path && !new_model.empty()) {
         data->model_path = new_model;
@@ -304,9 +295,9 @@ static void *stem_source_create(obs_data_t *settings, obs_source_t *context) {
     data->context = context;
     data->stem_index = (int)obs_data_get_int(settings, "stem_index");
     data->parent_name = obs_data_get_string(settings, "parent_name");
-    
-    blog(LOG_INFO, "[Demucs Stem] Created stem %d (%s) for parent: %s",
-         data->stem_index, STEM_NAMES[data->stem_index], data->parent_name.c_str());
+    data->output=bind_stem(data->parent_name,data->stem_index);
+    blog(LOG_INFO, "[Demucs Stem] Created stem %d for parent: %s (bound=%d)",
+         data->stem_index,data->parent_name.c_str(),int(bool(data->output)));
     
     return data;
 }
@@ -315,6 +306,7 @@ static void stem_source_destroy(void *data_ptr) {
     stem_source_data *data = (stem_source_data *)data_ptr;
     if (data) {
         blog(LOG_INFO, "[Demucs Stem] Destroying stem %d", data->stem_index);
+        if(data->output)data->output->release();
         delete data;
     }
 }
@@ -323,47 +315,26 @@ static bool stem_source_audio_render(void *data_ptr, uint64_t *ts_out,
                                       struct obs_source_audio_mix *audio_output,
                                       uint32_t mixers, size_t channels,
                                       size_t sample_rate) {
-    UNUSED_PARAMETER(mixers);
-    UNUSED_PARAMETER(channels);
     UNUSED_PARAMETER(sample_rate);
-    
-    stem_source_data *data = (stem_source_data *)data_ptr;
-    if (!data) return false;
-    
-    // Find parent
-    demucs_source_data *parent = find_parent(data->parent_name);
-    if (!parent) {
-        *ts_out = os_gettime_ns();
-        return true; // Silent output
-    }
-    
-    *ts_out = os_gettime_ns();
-    size_t frames = AUDIO_OUTPUT_FRAMES;
-    
-    for (size_t mixer = 0; mixer < MAX_AUDIO_MIXES; mixer++) {
-        if (!audio_output->output[mixer].data[0]) continue;
-        
-        float *output = audio_output->output[mixer].data[0];
-        size_t available = parent->stem_buffers[data->stem_index]->available();
-        size_t to_read = std::min(available, frames);
-        
-        for (size_t i = 0; i < to_read; i++) {
-            float sample;
-            parent->stem_buffers[data->stem_index]->read(&sample, 1);
-            output[i] = sample;
-        }
-        for (size_t i = to_read; i < frames; i++) {
-            output[i] = 0.0f;
-        }
-        
-        // Copy to all channels
-        for (size_t ch = 1; ch < channels && ch < MAX_AV_PLANES; ch++) {
-            if (audio_output->output[mixer].data[ch]) {
-                memcpy(audio_output->output[mixer].data[ch], output, frames * sizeof(float));
-            }
-        }
-    }
-    
+    auto* data=static_cast<stem_source_data*>(data_ptr);
+    if(!data || !ts_out || !audio_output)return false;
+    *ts_out=os_gettime_ns();
+    std::array<float,AUDIO_OUTPUT_FRAMES> block{};
+    bool requested=false;
+    for(size_t mixer=0;mixer<MAX_AUDIO_MIXES;++mixer)
+        if(mixers&(1u<<mixer))
+            for(size_t ch=0;ch<channels && ch<MAX_AV_PLANES;++ch)
+                requested|=audio_output->output[mixer].data[ch]!=nullptr;
+    if(!requested)return true;
+    if(data->output)data->output->render(block.data(),block.size());
+    // One queue read per time block; every enabled mixer receives the same
+    // samples. Never consume a separate block for each destination.
+    for(size_t mixer=0;mixer<MAX_AUDIO_MIXES;++mixer)
+        if(mixers&(1u<<mixer))
+            for(size_t ch=0;ch<channels && ch<MAX_AV_PLANES;++ch)
+                if(auto* out=audio_output->output[mixer].data[ch])
+                    std::memcpy(out,block.data(),block.size()*sizeof(float));
+
     return true;
 }
 
@@ -395,23 +366,17 @@ static bool demucs_source_audio_render(void *data_ptr, uint64_t *ts_out,
                                        struct obs_source_audio_mix *audio_output,
                                        uint32_t mixers, size_t channels,
                                        size_t sample_rate) {
-    UNUSED_PARAMETER(mixers);
-    UNUSED_PARAMETER(channels);
+    UNUSED_PARAMETER(data_ptr);
     UNUSED_PARAMETER(sample_rate);
-    
-    demucs_source_data *data = (demucs_source_data *)data_ptr;
-    
-    *ts_out = os_gettime_ns();
-    
-    // The main source outputs silence - individual stems have their own sources
-    // This prevents double-output of samples
-    size_t frames = AUDIO_OUTPUT_FRAMES;
-    
-    for (size_t mixer = 0; mixer < MAX_AUDIO_MIXES; mixer++) {
-        if (!audio_output->output[mixer].data[0]) continue;
-        memset(audio_output->output[mixer].data[0], 0, frames * sizeof(float));
-    }
-    
+    if(!ts_out || !audio_output)return false;
+    *ts_out=os_gettime_ns();
+    // The parent is silent; child sources produce the individual stems.
+    for(size_t mixer=0;mixer<MAX_AUDIO_MIXES;++mixer)
+        if(mixers&(1u<<mixer))
+            for(size_t ch=0;ch<channels && ch<MAX_AV_PLANES;++ch)
+                if(auto* out=audio_output->output[mixer].data[ch])
+                    std::fill_n(out,AUDIO_OUTPUT_FRAMES,0.f);
+
     return true;
 }
 
@@ -433,10 +398,11 @@ static void *demucs_source_create(obs_data_t *settings, obs_source_t *context) {
     data->num_threads = 4;
     data->audio_source = nullptr;
     
-    // Initialize lock-free stem buffers (5 seconds each)
-    size_t ring_cap = data->sample_rate * 5;
+    data->capture=std::make_unique<stts::DemucsCapture>(size_t(data->sample_rate)*30);
+    // Support the maximum 10s inference chunk plus one queued batch.
+    const size_t ring_cap=size_t(data->sample_rate)*20;
     for (int i = 0; i < NUM_STEMS; i++) {
-        data->stem_buffers[i] = std::make_unique<stts::RingBuffer>(ring_cap);
+        data->stem_buffers[i] = std::make_shared<stts::DemucsStemOutput>(ring_cap);
     }
     
     // Register this parent for stem sources to find
@@ -487,6 +453,16 @@ static void demucs_source_destroy(void *data_ptr) {
     
     // Unregister from parent registry
     unregister_parent(data->source_name);
+    for(auto& output:data->stem_buffers)output->close();
+    // Remove capture before waiting for the worker. OBS waits for dispatch.
+    if (data->audio_source) {
+        obs_source_t *source = obs_weak_source_get_source(data->audio_source);
+        if (source) {
+            obs_source_remove_audio_capture_callback(source, demucs_audio_capture, data);
+            obs_source_release(source);
+        }
+        obs_weak_source_release(data->audio_source);
+    }
     
     data->stop_thread = true;
     if (data->worker_thread.joinable()) {
@@ -502,16 +478,6 @@ static void demucs_source_destroy(void *data_ptr) {
         }
     }
     
-    // Clean up audio capture
-    if (data->audio_source) {
-        obs_source_t *source = obs_weak_source_get_source(data->audio_source);
-        if (source) {
-            obs_source_remove_audio_capture_callback(source, demucs_audio_capture, data);
-            obs_source_release(source);
-        }
-        obs_weak_source_release(data->audio_source);
-    }
-    
     delete data;
 }
 
@@ -519,6 +485,7 @@ static void demucs_source_activate(void *data_ptr) {
     demucs_source_data *data = (demucs_source_data *)data_ptr;
     
     // Re-establish audio capture if needed
+    std::lock_guard<std::mutex> capture_lock(data->capture_control_mutex);
     if (!data->audio_source && !data->audio_source_name.empty()) {
         obs_source_t *source = obs_get_source_by_name(data->audio_source_name.c_str());
         if (source) {
