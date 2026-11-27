@@ -1,6 +1,12 @@
 # Sound licensing and attribution
 
-Sound's source is distributed under the GPL terms in [LICENSE](LICENSE).
+Copyright © 2026 myrqyry.
+
+Sound's original software in this revision is licensed under the GNU General
+Public License, version 3 or (at your option) any later version
+(GPL-3.0-or-later); see [LICENSE](LICENSE). Previously granted licenses
+for earlier revisions are unaffected. The corresponding source is available
+at https://github.com/myrqyry/live-latent-lab.sound.
 The OBS plugin-support template contains a GPL-2.0-or-later notice.
 Sound is an independent plugin for [OBS Studio](https://github.com/obsproject/obs-studio).
 Developed in collaboration with a trusted AI colleague; this voluntary

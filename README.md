@@ -121,6 +121,6 @@ expanded installer. Actual classification requires the external assets above.
 
 ## License and distribution
 
-See [LICENSE](LICENSE), [NOTICE](NOTICE.md) and the [dependency/distribution inventory](docs/distribution.md). External model and runtime terms are separate. Full expanded redistribution and clean-machine provisioning remain unqualified.
+GPL-3.0-or-later for original project software. See [LICENSE](LICENSE), [NOTICE](NOTICE.md) and the [dependency/distribution inventory](docs/distribution.md). External model and runtime terms are separate. Full expanded redistribution and clean-machine provisioning remain unqualified.
 
 See the [model settings coverage audit](docs/model-settings-audit.md) for backend-specific controls, fixed runtime contracts and remaining gaps.
