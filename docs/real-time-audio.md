@@ -121,6 +121,49 @@ The combined seven-effect module rebuilt and staged locally. All 13
 focused C++ checks, SOLA deterministic tests, legacy Whisper source
 guard, Demucs no-fake-stems guard and quarantine build passed.
 
+## Fourth pass: isolated callback measurement in a shared OBS chain
+
+Linux/glibc test-only instrumentation wraps registered production
+filter_audio callbacks and intercepts malloc/calloc/realloc/free,
+aligned_alloc/posix_memalign, pthread mutex and read-write lock acquisition,
+and condition-variable waits on the callback's calling thread.
+The shared-library positive control detected five allocation calls, four
+frees, three locks and one wait. Hidden libc symbols, custom allocators,
+other synchronization APIs, kernel internal locks and other threads are
+not covered. No instrumented code ships in the plugin.
+
+Two 36-second tests used the same staged seven-effect build, a 48 kHz
+stereo source, and actual CPU Whisper, CPU DDSP and CUDA native RVC in
+one OBS filter chain (STT first). Each processed 3,600 ten-millisecond
+packets, 1,728,000 audio frames, 1,800 DDSP hops, 70 RVC hops and two
+recognized speech sequences, with no STT sample drops and finite nonzero
+output. All 21,600 instrumented callback invocations across both runs
+recorded zero intercepted allocations, frees, blocking locks or waits.
+
+| Run | Effect | Wall p99 us | Wall max us | Thread CPU p99 us | Thread CPU max us |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | STT | 720.859 | 9261.277 | n/a | n/a |
+| 1 | DDSP | 10.000 | 191.798 | n/a | n/a |
+| 1 | RVC | 9.610 | 188.010 | n/a | n/a |
+| 2 | STT | 159.079 | 4076.972 | 17.362 | 29.055 |
+| 2 | DDSP | 14.910 | 6948.111 | 11.311 | 21.992 |
+| 2 | RVC | 19.479 | 1075.587 | 11.561 | 24.696 |
+
+Run 1 full OBS dispatch p99/max was 740.782/9279.134 us; run 2
+380.234/6972.931 us. Zero of 7,200 dispatches exceeded the 10 ms
+packet budget. In run 2, all 63 callbacks with wall duration >=100 us
+spent more than half that duration off CPU (43 STT, 10 DDSP, 10 RVC).
+This distinguishes elapsed time from executing CPU time but does not
+identify the scheduler/kernel cause. System load was uncontrolled
+(roughly 26 one-minute load average during the first test).
+The CPU clock adds measurement overhead. These are short paced tests
+in isolated libobs, not a deadline guarantee or an active-profile test.
+
+Reproduce with tests/verify-rt-filter-chain.sh and the local assets
+specified in its environment variables. It builds the shared-library
+positive control and chain runner, then launches a bounded test.
+No changes to production callbacks were needed in this pass.
+
 ## Repeatable tests
 
 Model-free queue and DSP checks are included in the public CI verification
@@ -156,8 +199,7 @@ in the tested paths, not arbitrary malloc or all third-party operations.
   sustained latency remain unqualified. Current transport recovery has been
   tested, but a real noise suppression model was not available locally.
 - STT model qualification for other backends and the 44.1 kHz full pipeline
-  was not repeated in this pass. Third-party allocator/lock instrumentation,
-  isolated callback timing in a shared OBS filter chain, longer sustained
-  measurements and further worker-side tensor allocation improvements
-  remain candidates.
+  was not repeated in this pass. Extend callback instrumentation to other
+  filters, longer sustained measurements and additional allocator/lock
+  APIs; further worker-side tensor allocation improvements remain candidates.
 - Public hosted CI and other platforms have not been run for this checkpoint.
