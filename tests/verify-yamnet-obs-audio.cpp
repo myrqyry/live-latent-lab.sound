@@ -9,6 +9,7 @@
 #include <callback/proc.h>
 #include <util/platform.h>
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -71,7 +72,7 @@ static Result snapshot(obs_source_t* filter) {
     return out;
 }
 static void stream(obs_source_t* source,int rounds,bool sine,uint32_t hz,
-                   Stats* stats=nullptr) {
+                   Stats* stats=nullptr,bool burst=false) {
     const uint32_t frames=hz/100;
     std::array<float,480> l{},r{};
     uint64_t start=os_gettime_ns();
@@ -91,7 +92,7 @@ static void stream(obs_source_t* source,int rounds,bool sine,uint32_t hz,
         audio.samples_per_sec=hz;
         audio.timestamp=start+uint64_t(k)*10000000ULL;
         obs_source_output_audio(source,&audio);
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if(!burst)std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if(stats)obs_source_remove_audio_capture_callback(source,capture,stats);
 }
@@ -166,6 +167,31 @@ int main(int argc,char** argv){
         obs_set_output_source(1,nullptr);obs_source_dec_active(source);obs_source_release(source);obs_wait_for_destroy_queue();obs_shutdown();
         return ok?0:1;
     }
+    if(std::getenv("SOUND_YAMNET_INITIAL_RECOVER")){
+        // Initial bad path remains unavailable until corrected explicitly.
+        if(ready.status!="error"||ready.available||ready.windows!=0)return 7;
+        Stats dry;stream(source,40,true,hz,&dry);
+        if(auto* valid=std::getenv("SOUND_YAMNET_RECOVER_MODEL")){
+            obs_data_set_string(settings,"yamnet_model",valid);obs_source_update(filter,settings);
+        }else return 7;
+        Result loaded;
+        for(int i=0;i<300;++i){loaded=snapshot(filter);if(loaded.status=="ready")break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+        auto empty=snapshot(filter);
+        stream(source,240,true,hz,&dry);auto recovered=await(filter,2);
+        calldata_t r{};proc_handler_call(obs_source_get_proc_handler(filter),"sound_yamnet_recovery_v1",&r);
+        auto retries=calldata_int(&r,"automatic_retries");calldata_free(&r);
+        bool ok=props&&!empty.available&&loaded.status=="ready"&&retries==0&&
+            recovered.available&&recovered.label=="Sine wave"&&dry.frames>hz*2;
+        printf("YAMNET_INITIAL_RECOVER recovered=%s retries=%lld pass=%d\n",recovered.label.c_str(),(long long)retries,ok);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(source);
+        obs_source_filter_remove(source,filter);obs_source_release(filter);
+        obs_source_release(source);obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        ok=rt_probe::report(100,{3})&&ok;
+#endif
+        return ok?0:1;
+    }
     if(ready.status!="ready"||!backend_ok)return 7;
     Stats silence_audio;
     stream(source,115,false,hz,&silence_audio);
@@ -209,6 +235,111 @@ int main(int argc,char** argv){
     const bool catalog=listed&&categories==521&&sine_class&&silence_class;
     std::printf("SOUND_YAMNET_CATEGORY_SIGNAL catalog=%d count=%zu scores=%d sine=%g silence=%g\n",
         int(catalog),categories,int(class_scores),sine_score,silence_score);
+    if(std::getenv("SOUND_YAMNET_RETRY_LIMIT")){
+        auto retries=[&]{
+            calldata_t r{};proc_handler_call(obs_source_get_proc_handler(filter),"sound_yamnet_recovery_v1",&r);
+            auto count=calldata_int(&r,"automatic_retries");calldata_free(&r);return count;
+        };
+        bool ok=props&&catalog&&class_scores;
+        for(int i=0;i<4;++i){
+            auto before=snapshot(filter);
+            stream(source,1800,true,hz,nullptr,true);
+            auto fault=snapshot(filter);double old=123;
+            bool invalid=fault.dropped>before.dropped&&!fault.available&&
+                !score("Sine wave",old)&&old==0;
+            Result state;
+            for(int j=0;j<180;++j){
+                state=snapshot(filter);
+                if(i<3&&state.status=="ready")break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if(i<3){stream(source,125,false,hz);state=await(filter,before.windows+1);}
+            bool bounded=invalid&&retries()==std::min(i+1,3)&&
+                (i<3?(state.available&&state.label=="Silence"):(!state.available&&state.status=="overload"));
+            printf("YAMNET_RETRY_STEP fault=%d retries=%lld status=%s pass=%d\n",i+1,(long long)retries(),state.status.c_str(),bounded);
+            ok=ok&&bounded;if(!bounded)break;
+        }
+        auto* props=obs_source_properties(filter);
+        auto* button=obs_properties_get(props,"retry_models");
+        bool present=button!=nullptr;
+        if(present)obs_property_button_clicked(button,filter);
+        obs_properties_destroy(props);
+        auto before=snapshot(filter);Result loaded;
+        for(int j=0;j<300;++j){loaded=snapshot(filter);if(loaded.status=="ready")break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+        stream(source,240,false,hz);auto recovered=await(filter,before.windows+2);
+        bool manual=present&&loaded.status=="ready"&&recovered.available&&recovered.label=="Silence"&&retries()==3;
+        ok=ok&&manual;
+        printf("YAMNET_RETRY_LIMIT manual_recovered=%d retries=%lld pass=%d\n",manual,(long long)retries(),ok);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(source);
+        obs_source_filter_remove(source,filter);obs_source_release(filter);
+        obs_source_release(source);obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        ok=rt_probe::report(350,{3})&&ok;
+#endif
+        return ok?0:1;
+    }
+    if(std::getenv("SOUND_YAMNET_AUTO_RECOVER")){
+        auto before=snapshot(filter);
+        Stats dry;stream(source,1800,true,hz,&dry,true);
+        auto fault=snapshot(filter);double old_score=123;
+        bool rejected=fault.dropped>before.dropped&&!fault.available&&fault.label.empty()&&
+            !score("Sine wave",old_score)&&old_score==0;
+        Result ready_again;
+        for(int i=0;i<300;++i){ready_again=snapshot(filter);if(ready_again.status=="ready")break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+        auto empty=snapshot(filter);
+        bool no_stale=!empty.available&&empty.label.empty();
+        Stats fresh;stream(source,240,false,hz,&fresh);
+        auto recovered=await(filter,ready_again.windows+2);
+        calldata_t r{};proc_handler_call(obs_source_get_proc_handler(filter),"sound_yamnet_recovery_v1",&r);
+        auto retries=calldata_int(&r,"automatic_retries");calldata_free(&r);
+        bool ok=props&&catalog&&class_scores&&rejected&&no_stale&&retries==1&&
+            ready_again.status=="ready"&&recovered.available&&recovered.label=="Silence"&&
+            recovered.windows>=ready_again.windows+2&&fresh.frames>=hz*2&&fresh.l2.load()==0&&fresh.r2.load()==0;
+        printf("YAMNET_AUTO_RECOVER stale_rejected=%d no_stale=%d dropped=%lld retries=%lld recovered=%s windows=%lld pass=%d\n",
+            rejected,no_stale,fault.dropped,(long long)retries,recovered.label.c_str(),recovered.windows,ok);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(source);
+        obs_source_filter_remove(source,filter);obs_source_release(filter);
+        obs_source_release(source);obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        ok=rt_probe::report(350,{3})&&ok;
+#endif
+        return ok?0:1;
+    }
+    if(std::getenv("SOUND_YAMNET_HOT_RELOAD")){
+        const auto before=snapshot(filter);
+        obs_data_set_string(settings,"yamnet_model","/sound-yamnet-test-missing.tflite");
+        obs_source_update(filter,settings);
+        auto invalidated=snapshot(filter);
+        double old_score=123;
+        bool rejected=!invalidated.available&&invalidated.label.empty()&&
+            !score("Sine wave",old_score)&&old_score==0;
+        Result failure;
+        for(int i=0;i<200;++i){failure=snapshot(filter);if(failure.status=="error")break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+        Stats dry;stream(source,35,true,hz,&dry);
+        obs_data_set_string(settings,"yamnet_model",argv[4]);obs_source_update(filter,settings);
+        Result loading;
+        for(int i=0;i<300;++i){loading=snapshot(filter);if(loading.status=="ready")break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+        auto empty=snapshot(filter);double empty_score=123;
+        bool no_stale=!empty.available&&!score("Sine wave",empty_score)&&empty_score==0;
+        stream(source,240,false,hz,&dry);
+        auto recovered=await(filter,before.windows+2);
+        bool ok=props&&catalog&&class_scores&&rejected&&no_stale&&failure.status=="error"&&
+            loading.status=="ready"&&recovered.available&&recovered.label=="Silence"&&
+            recovered.windows>=before.windows+2&&dry.frames>hz*2&&dry.l2.load()>.001&&dry.r2.load()>.001;
+        printf("YAMNET_HOT_RELOAD stale_rejected=%d no_stale=%d error=%s recovered=%s windows=%lld pass=%d\n",
+            rejected,no_stale,failure.status.c_str(),recovered.label.c_str(),recovered.windows,ok);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(source);
+        obs_source_filter_remove(source,filter);obs_source_release(filter);
+        obs_source_release(source);obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        ok=rt_probe::report(350,{3})&&ok;
+#endif
+        return ok?0:1;
+    }
     // Failure path through the actual OBS filter: bad model cannot
     // classify or silence/bend the original microphone signal.
     auto* invalid_settings=obs_data_create();

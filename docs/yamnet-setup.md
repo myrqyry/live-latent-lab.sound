@@ -43,9 +43,11 @@ user plugin directory, normally
 Do not overwrite a working installation without a backup.
 Restart OBS, add **LLL.sound Native YAMNet (experimental)** to an audio
 source's filter list and specify the two files and CPU delegate.
-If you change model/runtime/delegate, recreate the filter (the settings
-are applied on creation). Missing or incompatible assets fail closed
-while the original audio is preserved.
+Model/runtime/delegate changes reload live. Missing or incompatible
+assets leave classification unavailable while the original audio is
+preserved. Use **Retry models** to explicitly retry the current paths.
+Runtime faults retry up to three times; fresh successful classification
+replenishes the retry budget after 30 windows.
 
 ## Reproduce acceptance
 
@@ -57,6 +59,7 @@ SOUND_YAMNET_DEVICE=cpu ./tests/verify-public-linux.sh
 
 The isolated real-model runner checks registration, silence and sine-wave
 classification, all 521 category signals, stale expiry, missing-model
-fallback and stereo passthrough at both supported sample rates. It does
+fallback, live reload, automatic overflow recovery and stereo passthrough
+at both supported sample rates, plus retry exhaustion and manual recovery. It does
 not modify OBS scenes or install the module. GPU/Auto delegation,
 multi-filter load and sustained hardware-clock tests are separate.

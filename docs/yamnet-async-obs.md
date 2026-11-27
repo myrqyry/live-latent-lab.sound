@@ -25,12 +25,14 @@ source procedure sound_yamnet_read_v1. That procedure returns category,
 score, count, dropped samples, inference timing, callback count,
 status and availability.
 
-The queue is bounded to approximately three seconds. A queue overflow
-invalidates inference rather than splicing discontinuous audio samples.
+The capture queue requests three seconds of samples; the power-of-two
+ring allocation provides 262143 usable samples at either supported rate.
+A queue overflow invalidates inference rather than splicing discontinuous
+audio samples.
 Missing or invalid model files produce a visible error status without
 affecting the upstream audio. Labels expire after 2.5 seconds of no
-new classification. Model/runtime paths are fixed during filter
-creation; changing them requires filter recreation.
+new classification. Model/runtime/delegate changes now reload on the
+worker without recreating the filter.
 
 A native crash was caught and reproduced by gdb during OBS shutdown.
 After closing a classifier, XNNPACK/native thread-local cleanup still
@@ -79,7 +81,8 @@ successful inference, `sound_yamnet_list_v1(in ptr inventory)` fills a
 caller-owned OBS data object with version=1 and a categories array
 (label and model index). This uses actual returned model labels, not a
 hardcoded AudioSet catalog. Empty before first inference; names remain
-discoverable if the result later expires.
+discoverable if the result later expires within the same generation.
+A reload or fault invalidates the old inventory until fresh inference.
 
 `sound_yamnet_score_v1(in string category, out float score, out bool available)`
 returns the exact category's latest finite score (including valid zero).
@@ -93,9 +96,9 @@ This is classification, not a precise sound onset detector.
 ## Remaining before real user acceptance
 
 This has no GUI text display, captions or text-file writer yet.
-The read-only procedure requires a consumer. Sustained callback deadline
-and overflow/recovery behavior, multiple concurrent filters, a real
-microphone, and full OBS GUI sessions have not been verified.
+The read-only procedure requires a consumer. Sustained callback deadlines, multiple concurrent filters, a real
+microphone, and full OBS GUI sessions remain to be qualified.
+Targeted overflow/recovery is now covered below.
 
 The live multi-stem separation work remains a separate accepted goal;
 YAMNet is not a substitute. Do not install or push this candidate as
@@ -107,8 +110,8 @@ collections, plugins, model weights and installed Sound quarantined.
 
 The filter now exposes **Compute delegate** with CPU (default), Auto
 (GPU then CPU) and explicit experimental GPU (no fallback). Model,
-runtime and delegate are chosen at creation; recreate the filter to
-change them. CPU is the recommended mode on the qualified Linux setup.
+runtime and delegate can reload live. CPU is the recommended mode
+on the qualified Linux setup.
 The read-only `sound_yamnet_device_v1` procedure reports requested,
 selected and status separately from the existing result ABI.
 A failed explicit GPU request publishes an error, not a CPU result.
@@ -130,3 +133,36 @@ MODULE DATA LIB MODEL. Set SOUND_YAMNET_DEVICE=auto to test fallback
 on this environment, or SOUND_YAMNET_DEVICE=gpu and
 SOUND_YAMNET_EXPECT_GPU_FAILURE=1 to verify dry error handling on a
 known-unsupported GPU configuration.
+
+## Generation-safe recovery (2026-11-27)
+
+Every classifier, resampler, partial window and published result
+belongs to one capture epoch. A control change or overflow invalidates
+that epoch immediately. The callback acknowledges the new epoch before
+the worker discards the old unread ring prefix. Only the consumer
+advances the read cursor; no cross-thread queue reset or mutex occurs
+in the audio callback.
+
+Both top-category and per-category scores are unavailable while the
+generation is invalid or until a new one-second classification completes.
+The category inventory is cleared on reload or fault; ordinary 2.5-second
+expiry keeps the current model's category names available. Window and
+dropped-sample counters remain cumulative across attempts.
+
+A worker that has initialized successfully may retry up to three times
+after a fault, with 250/500/1000 ms backoff. Thirty successful one-second
+windows replenish the retry budget. An initial configuration failure
+waits for correction. Changed settings or **Retry models** reset the
+budget and reload the assets. The separate read-only
+`sound_yamnet_recovery_v1` reports cumulative automatic retries.
+The existing read/list/score/device procedure signatures are unchanged.
+Explicit GPU selection never silently falls back to CPU; Auto retains
+its existing GPU-then-CPU behavior.
+
+The public Linux runner includes reload, real queue overflow and stale
+score tests at both rates, plus retry exhaustion and initial bad-path
+correction. Use SOUND_RT_PROBE=1 for Linux/glibc callback instrumentation.
+The tests use actual pinned MediaPipe/YAMNet assets and synthetic audio,
+not a mocked classifier. They do not establish hard-real-time timing,
+GPU recovery, native library crash containment or hardware clock-drift
+handling.

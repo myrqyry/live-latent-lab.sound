@@ -286,8 +286,57 @@ release acceptance were not rerun in this pass. No installation or
 publication. System disk remains critically full; existing runtime
 assets reused in isolated staging.
 
-Next: YAMNet/HTDemucs recovery, preserving their distinct fail-closed
-contracts; then DSP optimization and the remaining roadmap.
+## YAMNet generation recovery (2026-11-27)
+
+The native MediaPipe classifier now uses an acknowledged capture epoch.
+The callback remains bit-preserving pass-through and does not block,
+allocate or touch model state. Old ring data is discarded only by the
+consumer after acknowledgement; the resampler, partial classification
+window and classifier are rebuilt on the worker. Published labels and
+per-category scores are invalidated immediately on overflow or settings
+change. The category inventory remains discoverable after ordinary expiry
+but is invalidated on reload/fault. Existing procedure signatures and
+cumulative window/drop counters are retained.
+
+Model, runtime and delegate reload live. Runtime failures receive the
+shared three-attempt bounded retry policy; 30 successful classifications
+replenish the budget. Invalid initial configuration requires correction.
+Retry models explicitly resets the budget; sound_yamnet_recovery_v1
+reports cumulative automatic retries. Explicit GPU selection retains
+its no-fallback contract; Auto retains GPU-then-CPU behavior.
+
+Verified on yuzu-mint with the pinned native MediaPipe and YAMNet CPU
+assets. Final staged seven-effect module SHA256:
+456fc354352301f633fad6d625162c60e3dbe60f5edd19c58194402f417ccdb4.
+
+- The previous module failed the live model-path regression: an obsolete
+  Sine wave score was still available. The new module rejects the old
+  top label and per-category score and resumes on fresh input.
+- Full isolated YAMNet-only public Linux runner passed, including exact
+  registry, ordinary inference at both rates, both-rate live reload
+  and forced overflow recovery, four successive overloads (three
+  retries then unavailable), manual retry and initial bad-path
+  correction. Native classifier and resampler used actual model assets.
+- Final public-profile probe measured 15303 callbacks across those
+  scenarios, zero observed allocation/free/lock/wait violations and
+  no callback above 10 ms (largest observed 6.248 ms). An earlier
+  combined-build ordinary 48 kHz run had one 10.641 ms wall-time
+  callback despite a 28.053 microsecond CPU maximum. This is not a
+  hard-real-time guarantee.
+- Explicit GPU failure preserved dry on this host in the combined
+  build before the final snapshot-read tightening. GPU recovery is not
+  qualified. Ring, classifier capture, wake, DDSP/RVC recovery and
+  DeepFilter transport regressions passed; capture UBSan passed.
+- The final snapshot reads one capture epoch for consistent availability
+  and status. A stale result is not a valid new-generation result.
+
+Remaining: native-library crash containment, concurrent classifier
+instances, real microphone/hardware-clock behavior and full expanded
+release qualification are not established. No installation/publication.
+The system partition is still critically full; reused staged runtimes.
+
+Next: HTDemucs recovery with its own buffered-silence contract, then
+measured DSP optimization and the remaining roadmap.
 
 ## STT event-driven worker wakeups (2026-11-22)
 
