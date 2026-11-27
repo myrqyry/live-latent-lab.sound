@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace stts {
@@ -22,9 +23,13 @@ public:
         const size_t head=head_.load(std::memory_order_relaxed);
         const size_t tail=tail_.load(std::memory_order_acquire);
         if(head-tail>capacity_-frames)return false;
-        for(size_t i=0;i<frames;++i){
-            left_[(head+i)%capacity_]=l[i];
-            right_[(head+i)%capacity_]=r[i];
+        const size_t offset=head%capacity_;
+        const size_t first=std::min(frames,capacity_-offset);
+        std::memcpy(left_.data()+offset,l,first*sizeof(float));
+        std::memcpy(right_.data()+offset,r,first*sizeof(float));
+        if(first<frames){
+            std::memcpy(left_.data(),l+first,(frames-first)*sizeof(float));
+            std::memcpy(right_.data(),r+first,(frames-first)*sizeof(float));
         }
         head_.store(head+frames,std::memory_order_release);
         return true;
@@ -34,9 +39,13 @@ public:
         const size_t tail=tail_.load(std::memory_order_relaxed);
         const size_t head=head_.load(std::memory_order_acquire);
         if(head-tail<frames)return false;
-        for(size_t i=0;i<frames;++i){
-            l[i]=left_[(tail+i)%capacity_];
-            r[i]=right_[(tail+i)%capacity_];
+        const size_t offset=tail%capacity_;
+        const size_t first=std::min(frames,capacity_-offset);
+        std::memcpy(l,left_.data()+offset,first*sizeof(float));
+        std::memcpy(r,right_.data()+offset,first*sizeof(float));
+        if(first<frames){
+            std::memcpy(l+first,left_.data(),(frames-first)*sizeof(float));
+            std::memcpy(r+first,right_.data(),(frames-first)*sizeof(float));
         }
         tail_.store(tail+frames,std::memory_order_release);
         return true;

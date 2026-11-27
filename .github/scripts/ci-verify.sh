@@ -54,6 +54,9 @@ count=$((count+1))
 "$cxx" -std=c++17 -O2 -pthread -Isrc tests/verify-ring-buffer.cpp -o "$work/ring"
 "$work/ring"
 count=$((count+1))
+"$cxx" -std=c++17 -O2 -Isrc tests/verify-rt-queues.cpp -o "$work/rt-queues"
+"$work/rt-queues"
+count=$((count+1))
 "$cxx" -std=c++17 -O2 -Isrc tests/verify-stt-config.cpp -o "$work/stt-config"
 "$work/stt-config"
 count=$((count+1))

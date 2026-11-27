@@ -17,6 +17,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 
 namespace stts {
 
@@ -58,8 +59,16 @@ public:
         const size_t occupied = head - tail;
         const size_t count = std::min(samples, occupied < usable_ ? usable_ - occupied : size_t(0));
 
-        for (size_t i = 0; i < count; ++i)
-            buffer_[(head + i) & mask_] = data[i];
+        if (!count) return 0;
+        const size_t offset = head & mask_;
+        if (count == 1) {
+            buffer_[offset] = *data;
+        } else {
+            const size_t first = std::min(count, buffer_.size() - offset);
+            std::memcpy(buffer_.data() + offset, data, first * sizeof(float));
+            if (first < count)
+                std::memcpy(buffer_.data(), data + first, (count - first) * sizeof(float));
+        }
 
         head_.store(head + count, std::memory_order_release);
         return count;
@@ -74,8 +83,16 @@ public:
         const size_t head = head_.load(std::memory_order_acquire);
         const size_t count = std::min(samples, head - tail);
 
-        for (size_t i = 0; i < count; ++i)
-            output[i] = buffer_[(tail + i) & mask_];
+        if (!count) return 0;
+        const size_t offset = tail & mask_;
+        if (count == 1) {
+            *output = buffer_[offset];
+        } else {
+            const size_t first = std::min(count, buffer_.size() - offset);
+            std::memcpy(output, buffer_.data() + offset, first * sizeof(float));
+            if (first < count)
+                std::memcpy(output + first, buffer_.data(), (count - first) * sizeof(float));
+        }
 
         tail_.store(tail + count, std::memory_order_release);
         return count;
