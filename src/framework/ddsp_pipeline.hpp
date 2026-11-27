@@ -27,19 +27,32 @@ public:
         if(!l||!n)return;
         if(!r)r=l;
         if(!failed()&&!input_.push(l,r,n))fail();
-        const float step=1.f/float(rate_/100); // 10 ms smooth change
-        for(size_t i=0;i<n;++i){
-            float x=std::isfinite(l[i])?l[i]:0,y=std::isfinite(r[i])?r[i]:0;
-            float a=dry_l_[cursor_],b=dry_r_[cursor_];
-            dry_l_[cursor_]=x;dry_r_[cursor_]=y;cursor_=(cursor_+1)%delay_;
-            float wet=0;
-            bool valid=count_>=delay_&&!failed();
-            if(valid&&wet_.read(&wet,1)!=1){fail();valid=false;}
-            if(valid){
-                previous_mix_+=std::clamp(mix-previous_mix_,-step,step);
-                l[i]=a+(wet-a)*previous_mix_;r[i]=b+(wet-b)*previous_mix_;
-            }else{previous_mix_=0;l[i]=a;r[i]=b;}
-            ++count_;
+        const float step=1.f/float(rate_/100);
+        // A bounded stack block replaces per-sample atomic queue operations.
+        // Do not consume wet audio during warmup; preserve a valid prefix
+        // on underrun, then permanently fall back to delayed dry.
+        std::array<float,256> wet_block;
+        for(size_t offset=0;offset<n;){
+            size_t block=std::min(wet_block.size(),n-offset);
+            const bool warmup=count_<delay_;
+            if(warmup)block=std::min(block,delay_-size_t(count_));
+            const bool can_read=!warmup&&!failed();
+            size_t valid=can_read?wet_.read(wet_block.data(),block):0;
+            if(can_read&&failed())valid=0;
+            if(can_read&&valid<block)fail();
+            for(size_t j=0;j<block;++j){
+                const size_t i=offset+j;
+                const float a=dry_l_[cursor_],b=dry_r_[cursor_];
+                dry_l_[cursor_]=std::isfinite(l[i])?l[i]:0;
+                dry_r_[cursor_]=std::isfinite(r[i])?r[i]:0;
+                if(++cursor_==delay_)cursor_=0;
+                if(j<valid){
+                    previous_mix_+=std::clamp(mix-previous_mix_,-step,step);
+                    const float wet=wet_block[j];
+                    l[i]=a+(wet-a)*previous_mix_;r[i]=b+(wet-b)*previous_mix_;
+                }else{previous_mix_=0;l[i]=a;r[i]=b;}
+            }
+            count_+=block;offset+=block;
         }
     }
 };

@@ -57,6 +57,11 @@ count=$((count+1))
 "$cxx" -std=c++17 -O2 -Isrc tests/verify-rt-queues.cpp -o "$work/rt-queues"
 "$work/rt-queues"
 count=$((count+1))
+for test in ddsp-pipeline rvc-window wet-queue-blocks; do
+    "$cxx" -std=c++17 -O2 -Isrc "tests/verify-$test.cpp" -o "$work/$test"
+    "$work/$test"
+    count=$((count+1))
+done
 "$cxx" -std=c++17 -O2 -Isrc tests/verify-stt-config.cpp -o "$work/stt-config"
 "$work/stt-config"
 count=$((count+1))
