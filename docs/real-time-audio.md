@@ -76,6 +76,51 @@ operations. A full queue rejects new data rather than overwriting unread data.
 - All 12 focused C++ model-free checks, legacy Whisper source guard,
   public URL tests, Demucs no-fake-stems guard and quarantine build passed.
 
+## Third pass: worker reuse and real dispatch timing (2026-11-27)
+
+- DDSP analysis sanitizes/downmixes each input sample once into a reusable
+  buffer, including the 48-sample FIR history. Exact output comparison
+  against the prior implementation passed at both rates, with clipping,
+  NaN/Inf and multiple hops. Isolated analysis timings: 44.1 kHz
+  32.827 -> 7.553 us/hop; 48 kHz 29.428 -> 7.610 us/hop.
+- Native RVC reuses the validated helper response and SOLA hop buffer.
+  SOLA precomputes its fade coefficients; its alignment search and tie
+  break are unchanged. Exact old/new comparisons and deterministic
+  shifted-window tests passed. The reuse test guards ordinary C++
+  new/delete after construction. SOLA's search remains the dominant
+  CPU cost of stitching; measured changes were modest
+  (48 kHz 1534.526 -> 1506.042 us per hop).
+- Test-only dispatch recorder measures synchronous obs_source_output_audio
+  including libobs and fixture capture, not individual callback duration.
+  Fixed storage avoids heap growth in the measurement loop. Existing
+  DDSP and RVC real-model tests print p50/p95/p99/max and packet-budget
+  exceedances. No production telemetry or pass threshold was added.
+
+### Concurrent real model dispatch measurements
+
+Ryzen 7 7700, RTX 2070 SUPER, Linux Mint, separate isolated libobs test
+processes using real CPU DDSP and CUDA RVC. System load was already high
+(around 19-21 one-minute load average, not controlled); GPU utilization
+was sampled once per second (83% peak before, 75% peak after at 48 kHz).
+The 10 ms packet budget is not a hard real-time guarantee.
+
+| Rate | Version | Effect | Calls | p50 us | p95 us | p99 us | max us | >=10 ms |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 48 kHz | Before | DDSP | 1190 | 10.168 | 18.204 | 31.017 | 849.819 | 0 |
+| 48 kHz | Before | RVC | 900 | 10.269 | 17.212 | 24.716 | 61.913 | 0 |
+| 48 kHz | After | DDSP | 1190 | 10.630 | 17.652 | 26.609 | 1119.804 | 0 |
+| 48 kHz | After | RVC | 900 | 10.379 | 16.710 | 23.864 | 801.119 | 0 |
+| 44.1 kHz | After | DDSP | 1190 | 8.816 | 16.831 | 25.176 | 43.230 | 0 |
+| 44.1 kHz | After | RVC | 900 | 8.827 | 13.875 | 21.669 | 28.081 | 0 |
+
+All six real-model runs passed their existing functional checks.
+The maximum 48 kHz dispatch time increased in the after run; the data
+does not establish a reduction in worst-case latency. Test processes
+overlap but are not a same-scene OBS filter-chain benchmark.
+The combined seven-effect module rebuilt and staged locally. All 13
+focused C++ checks, SOLA deterministic tests, legacy Whisper source
+guard, Demucs no-fake-stems guard and quarantine build passed.
+
 ## Repeatable tests
 
 Model-free queue and DSP checks are included in the public CI verification
@@ -112,6 +157,7 @@ in the tested paths, not arbitrary malloc or all third-party operations.
   tested, but a real noise suppression model was not available locally.
 - STT model qualification for other backends and the 44.1 kHz full pipeline
   was not repeated in this pass. Third-party allocator/lock instrumentation,
-  callback p99/max timing under concurrent load and further worker-side
-  tensor allocation improvements remain candidates.
+  isolated callback timing in a shared OBS filter chain, longer sustained
+  measurements and further worker-side tensor allocation improvements
+  remain candidates.
 - Public hosted CI and other platforms have not been run for this checkpoint.
