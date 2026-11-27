@@ -16,9 +16,10 @@ monophonic source. The default runtime and model paths on Linux are
 variables SOUND_DDSP_LIBRARY and SOUND_DDSP_MODELS can override the
 defaults. The model folder contains all 11 instruments and the
 feature extractor. Correct missing runtime/model paths in the
-properties to retry an initial failed load; once successfully loaded,
-asset paths are fixed for that filter instance. Save the new paths and
-reload the scene to change them.
+properties to retry an initial failed load or change the model/runtime
+while the filter is running. Use **Retry models** to explicitly reload the
+current paths and reset the automatic retry budget, even if the settings
+have not changed.
 
 - Timbre A and B: Bassoon, Clarinet, Flute, Melodica, Saxophone, Sitar,
   Trombone, Trumpet, Tuba, Violin, Vowels. Switch live; all decoders are
@@ -40,8 +41,14 @@ the original signal passes through immediately. The transition to the
 delayed pipeline initially inserts 200 ms of silence; it is not
 seamless latency compensation. If a worker deadline is missed or
 inference fails after activation, the filter stays at the fixed
-delay and falls back to delayed dry audio; recreate the filter to
-recover. No automatic dropped-hop or stale-wet substitution.
+delay and falls back to delayed dry audio. The worker retries after
+250, 500 and 1000 ms, with a limit of three consecutive recovery attempts;
+30 seconds of successful inference hops replenish the budget. Bad initial
+paths wait for correction instead of repeatedly loading. After the retry
+limit, dry audio continues until settings are changed or **Retry models**
+is pressed. New wet output is prefetched against the same dry timeline
+and ramps in over 10 ms. Old queued inference results are not substituted
+for new audio. The transition to dry on a fault is not guaranteed clickless.
 A/V sync compensation, disable/re-enable discontinuities, lengthy
 hardware-clock drift and subjective quality remain to be qualified.
 Do not use the first version as a zero-latency monitoring filter.
@@ -67,7 +74,16 @@ SPSC queues and preallocated dry delay storage only; no inference,
 filesystem, mutex, or heap allocation. The read-only procedure
 `sound_ddsp_status_v1` reports status, processed hops, detected input
 pitch, power dB, last processing time in milliseconds and delay_ms.
-Properties display status on opening, not a continuous live meter.
+The separate read-only `sound_ddsp_recovery_v1` procedure reports cumulative
+`automatic_retries`. Properties display status on opening, not a continuous
+live meter.
+
+On reload or fault, the worker and audio callback coordinate through an
+atomic generation handshake. Each SPSC consumer discards only its own
+queue, after the other actor has acknowledged the fresh generation.
+Model/recurrent state and wet prefill restart independently of the dry
+delay line. The audio callback continues the existing fixed delay and
+never resets the worker's queue cursor or loads a model.
 
 ## Pinned assets and build
 

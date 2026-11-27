@@ -34,6 +34,13 @@ public:
         head_.store(head+frames,std::memory_order_release);
         return true;
     }
+    // Consumer only: discard a snapshot after the producer is quiescent.
+    size_t discard_available(){
+        const auto tail=tail_.load(std::memory_order_relaxed);
+        const auto head=head_.load(std::memory_order_acquire);
+        tail_.store(head,std::memory_order_release);
+        return head-tail;
+    }
     bool pop(float* l,float* r,size_t frames){
         if(!l || !r || !frames || frames>capacity_)return false;
         const size_t tail=tail_.load(std::memory_order_relaxed);

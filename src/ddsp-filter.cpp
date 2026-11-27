@@ -14,6 +14,7 @@
 #include <openssl/evp.h>
 #include "framework/ddsp_pipeline.hpp"
 #include "framework/rt_wake.hpp"
+#include "framework/worker_recovery.hpp"
 #include "engines/ddsp_litert.hpp"
 #include "engines/ddsp_manifest.hpp"
 
@@ -27,7 +28,7 @@ struct Filter{
     std::atomic<int> status{Loading};
     std::atomic<float> mix{1},morph{0},pitch{0},harmonics{1},noise{1},expression{1},gate{-60},gain{1};
     std::atomic<float> hz{0},db{-80},inference_ms{0};
-    std::atomic<uint64_t> hops{0};
+    std::atomic<uint64_t> hops{0}, retries{0};
     bool started=false; // audio thread only
     std::mutex config_mutex; // settings and worker only
     std::string lib,models;
@@ -55,19 +56,24 @@ int instrument(const std::string& name){
     return -1;
 }
 void run(Filter* f){
-    // Failed initial asset selection can be corrected in the property dialog.
-    // Once ready, the asset root is fixed for this filter lifetime. The 11
-    // preloaded models are shared across the two lanes; each live lane has
-    // its own recurrent state, except identical A/B uses one evaluation.
+    // Each attempt owns its models and recurrent state. Never reuse a
+    // decoder, synthesis phase or analysis history across a transport epoch.
+    stts::WorkerRecovery budget(1500); // 30 seconds of successful 20 ms hops
+    uint64_t attempt_revision=0;
     while(!f->stop.load(std::memory_order_acquire)){
         std::string lib,models;uint64_t revision;
         {
             std::lock_guard<std::mutex> lock(f->config_mutex);
             lib=f->lib;models=f->models;revision=f->config_revision;
         }
+        if(attempt_revision!=revision){attempt_revision=revision;budget.reset();}
         bool initialized=false;
         try{
-            f->status.store(Loading,std::memory_order_release);
+            {
+                std::lock_guard<std::mutex> lock(f->config_mutex);
+                if(revision!=f->config_revision)continue;
+                f->status.store(Loading,std::memory_order_release);
+            }
             auto path=verified(lib,ddsp::runtime_asset);
             auto root=std::filesystem::path(models);
             auto pf=verified(root/"extract_features_micro.tflite",ddsp::feature_asset);
@@ -77,6 +83,7 @@ void run(Filter* f){
             std::array<float,1024> zero{};auto first=features.run(zero);
             for(size_t i=0;i<decoders.size();++i){
                 if(f->stop.load())return;
+                {std::lock_guard<std::mutex> lock(f->config_mutex);if(revision!=f->config_revision)break;}
                 auto& asset=ddsp::instruments[i];
                 auto p=verified(root/(std::string(asset.name)+".tflite"),asset);
                 decoders[i]=std::make_unique<ddsp::Decoder>(runtime,p);
@@ -88,13 +95,18 @@ void run(Filter* f){
             {
                 std::lock_guard<std::mutex> lock(f->config_mutex);
                 if(revision!=f->config_revision)continue;
+                if(f->pipeline.failed()&&!f->pipeline.restart())
+                    throw std::runtime_error("DDSP recovery epoch unavailable");
                 initialized=true;
                 f->status.store(Ready,std::memory_order_release);
             }
             int old_a=-1,old_b=-1;
             while(!f->stop.load(std::memory_order_acquire)&&!f->pipeline.failed()){
                 const auto ticket=f->wake.sequence();
-                if(!f->pipeline.read(l.data(),r.data())){if(!f->stop.load()&&!f->pipeline.failed())f->wake.wait(ticket,100);continue;}
+                if(!f->pipeline.worker_prepare()||!f->pipeline.read(l.data(),r.data())){
+                    if(!f->stop.load()&&!f->pipeline.failed())f->wake.wait(ticket,100);
+                    continue;
+                }
                 auto start=std::chrono::steady_clock::now();
                 auto feature=features.run(analysis.push(l.data(),r.data()));
                 f->hz.store(feature.db>f->gate.load()?feature.hz:0);
@@ -114,20 +126,38 @@ void run(Filter* f){
                 for(auto& v:out)v=std::clamp(v*gain,-.95f,.95f);
                 f->inference_ms.store(float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()));
                 if(!f->pipeline.write(out.data()))break;
-                ++f->hops;
+                ++f->hops;budget.on_success();
             }
-            if(f->pipeline.failed())f->status.store(Error);
-            return;
+            if(f->stop.load())return;
         }catch(const std::exception& e){
-            blog(LOG_WARNING,"[Sound DDSP] %s",e.what());f->status.store(Error);
-            if(initialized){f->pipeline.fail();return;}
+            blog(LOG_WARNING,"[Sound DDSP] %s",e.what());
         }catch(...){
-            f->status.store(Error);if(initialized){f->pipeline.fail();return;}
+            blog(LOG_WARNING,"[Sound DDSP] Unknown worker failure");
         }
-        // Wait for an explicit settings change, not an endless load loop.
+        bool retry=false;
+        {
+            std::lock_guard<std::mutex> lock(f->config_mutex);
+            if(revision!=f->config_revision)continue;
+            f->pipeline.fail();
+            f->hz=0;f->db=-80;
+            f->status.store(Error,std::memory_order_release);
+            // Bad initial configuration waits for correction. A running
+            // model fault gets a bounded burst of retries, including a
+            // failed reload during that burst. Explicit retry resets it.
+            budget.on_fault();
+            retry=budget.can_retry(initialized);
+        }
+        const auto until=std::chrono::steady_clock::now()+
+            std::chrono::milliseconds(retry?budget.delay_ms():0);
         while(!f->stop.load()){
             const auto ticket=f->wake.sequence();
-            {std::lock_guard<std::mutex> lock(f->config_mutex);if(revision!=f->config_revision)break;}
+            {
+                std::lock_guard<std::mutex> lock(f->config_mutex);
+                if(revision!=f->config_revision)break;
+                if(retry&&std::chrono::steady_clock::now()>=until){
+                    budget.on_retry();++f->retries;break;
+                }
+            }
             if(!f->stop.load())f->wake.wait(ticket,100);
         }
     }
@@ -158,9 +188,18 @@ void update(void* data,obs_data_t* d){
     if(a>=0)f->a.store(a);if(b>=0)f->b.store(b);
     std::lock_guard<std::mutex> lock(f->config_mutex);
     std::string lib=obs_data_get_string(d,"runtime"),models=obs_data_get_string(d,"models");
-    if(f->status.load()!=Ready&&(lib!=f->lib||models!=f->models)){
-        f->lib=std::move(lib);f->models=std::move(models);++f->config_revision;f->wake.notify();
+    if(lib!=f->lib||models!=f->models){
+        if(f->config_revision)f->pipeline.fail();
+        f->lib=std::move(lib);f->models=std::move(models);++f->config_revision;
+        f->status.store(Loading,std::memory_order_release);f->wake.notify();
     }
+}
+bool retry_models(obs_properties_t*,obs_property_t*,void* data){
+    auto* f=static_cast<Filter*>(data);if(!f)return false;
+    std::lock_guard<std::mutex> lock(f->config_mutex);
+    f->pipeline.fail();++f->config_revision;
+    f->status.store(Loading,std::memory_order_release);f->wake.notify();
+    return true;
 }
 obs_properties_t* properties(void* data){
     auto* p=obs_properties_create();
@@ -170,10 +209,11 @@ obs_properties_t* properties(void* data){
         auto* list=obs_properties_add_list(p,key,std::strcmp(key,"instrument_a")==0?"Timbre A":"Timbre B",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
         for(auto& a:ddsp::instruments)obs_property_list_add_string(list,a.name,a.name);
     }
-    obs_properties_add_text(p,"note","Monophonic input; 200 ms fixed delay after loading. Timbres switch live. Runtime and model folder can be corrected before a successful load; changing them after load requires reopening the scene. A missed deadline falls back to aligned delayed dry until recreated.",OBS_TEXT_INFO);
+    obs_properties_add_text(p,"note","Monophonic input; 200 ms fixed delay after loading. Timbres and model paths can change live. Worker faults fall back to aligned delayed dry and retry up to three times. Retry models to reset the retry limit.",OBS_TEXT_INFO);
+    obs_properties_add_button2(p,"retry_models","Retry models",retry_models,data);
     if(auto* f=static_cast<Filter*>(data)){
         auto status=f->status.load();
-        obs_properties_add_text(p,"status",f->pipeline.failed()?"Processing stopped; delayed dry":status==Ready?"Ready: CPU / 11 timbres":status==Loading?"Loading models; dry audio":"Model error: correct paths; dry audio",OBS_TEXT_INFO);
+        obs_properties_add_text(p,"status",status==Loading?"Loading models; dry audio":status==Ready&&!f->pipeline.failed()?"Ready: CPU / 11 timbres":"Model error or worker fault; dry audio (retry models)",OBS_TEXT_INFO);
     }
     obs_properties_add_float_slider(p,"morph","Timbre morph (A → B)",0,1,.01);
     obs_properties_add_float_slider(p,"pitch","Pitch (semitones)",-24,24,1);
@@ -187,10 +227,14 @@ obs_properties_t* properties(void* data){
 }
 void snapshot(void* data,calldata_t* out){
     auto* f=static_cast<Filter*>(data);int status=f->status.load();
-    if(f->pipeline.failed())status=Error;
+    if(status==Ready&&f->pipeline.failed())status=Error;
     calldata_set_string(out,"status",status==Ready?"ready":status==Loading?"loading":"error");
     calldata_set_int(out,"hops",f->hops.load());calldata_set_float(out,"pitch_hz",f->hz.load());calldata_set_float(out,"power_db",f->db.load());
     calldata_set_float(out,"inference_ms",f->inference_ms.load());calldata_set_int(out,"delay_ms",200);
+}
+void recovery_snapshot(void* data,calldata_t* out){
+    auto* f=static_cast<Filter*>(data);
+    calldata_set_int(out,"automatic_retries",f->retries.load());
 }
 void* create(obs_data_t* d,obs_source_t* source){
     auto* audio=obs_get_audio();if(!audio)return nullptr;
@@ -201,6 +245,7 @@ void* create(obs_data_t* d,obs_source_t* source){
         update(f.get(),d);
         f->worker=std::thread(run,f.get());
         proc_handler_add(obs_source_get_proc_handler(source),"void sound_ddsp_status_v1(out string status, out int hops, out float pitch_hz, out float power_db, out float inference_ms, out int delay_ms)",snapshot,f.get());
+        proc_handler_add(obs_source_get_proc_handler(source),"void sound_ddsp_recovery_v1(out int automatic_retries)",recovery_snapshot,f.get());
         return f.release();
     }catch(...){return nullptr;}
 }
@@ -212,7 +257,7 @@ obs_audio_data* filter_audio(void* data,obs_audio_data* p){
     if(!f->started){if(f->status.load(std::memory_order_acquire)!=Ready)return p;f->started=true;}
     const bool was_failed=f->pipeline.failed();
     f->pipeline.process(reinterpret_cast<float*>(p->data[0]),reinterpret_cast<float*>(p->data[1]),p->frames,f->mix.load());
-    if(!was_failed&&(f->pipeline.failed()||f->pipeline.input_ready()))f->wake.notify();
+    if((!was_failed&&f->pipeline.failed())||f->pipeline.input_ready())f->wake.notify();
     return p;
 }
 }

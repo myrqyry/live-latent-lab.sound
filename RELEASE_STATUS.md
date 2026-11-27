@@ -191,9 +191,57 @@ running; existing runtime directories were reused in the isolated
 staging tree. No user profile changes or release promotion. Full expanded
 release acceptance remains outstanding.
 
-Next: generation-tagged recovery/hot reload using DeepFilter's existing
-transport as the reference, followed by measured DSP improvements.
-Retain current delay, stale-output rejection and failure policies.
+## DDSP generation-tagged recovery (2026-11-27)
+
+The worker and callback now exchange generation acknowledgements before
+discarding their respective SPSC queues. The dry delay line never
+resets after activation; the wet timeline starts a fresh 200 ms prefill
+against the current capture position and ramps in over 10 ms. Obsolete
+worker results cannot enter the newly acknowledged generation. On a
+fault, the transition to dry retains the prior immediate-fallback
+behavior (not guaranteed clickless).
+
+Model/runtime changes are now live, including correction after a bad
+initial load. Worker faults use 250/500/1000 ms backoff and rebuild the
+native runtime, all decoders, analysis, synthesis and resampler state.
+Three failed/repeated recovery attempts exhaust the budget; 1500
+successful hops replenish it. Explicit Retry models or changed paths
+reset the budget. Initial configuration errors do not auto-retry.
+The existing status procedure is preserved and a separate
+sound_ddsp_recovery_v1 reports cumulative automatic retries.
+
+Verified on yuzu-mint, staged seven-effect Linux module SHA256:
+866b6840d7bc2d019068e1dc66c671bd51df9e6a41ad136ad235a8ca2dd1fe14.
+
+- Model-free recovery tests cover both rates, in-flight obsolete
+  results with deterministic thread barriers, repeated invalidation,
+  sample-level alignment with uneven packets and retry-budget policy.
+  Allocation guards and UBSan passed. TSan failed to initialize on
+  this host (unexpected memory mapping), not a race-detector pass.
+- Full DDSP verification passed with the actual pinned CPU LiteRT
+  models and Linux callback probe enabled: both rates, existing
+  timbre/morph/pitch/dry/silence behavior, real burst-induced fault
+  recovery (one retry at each rate), live invalid/valid model reload,
+  initial invalid path correction, three retries followed by dry
+  fallback on the fourth forced fault and manual Retry models recovery.
+  The instrumented callback tests passed their allocation/free/lock/
+  wait assertions. No test threshold was relaxed.
+- Concurrent real Whisper/DDSP/CUDA RVC chain passed all 3600 packets
+  with zero STT drops, 1800 DDSP hops, 70 RVC hops and zero observed
+  callback allocation/free/lock/wait violations. Dispatch p99 was
+  1.249 ms; two packets exceeded 10 ms wall time (maximum 31.127 ms).
+  Callback CPU maxima were below 30 microseconds, consistent with
+  scheduler interference rather than measured blocking in the callbacks.
+  This is not proof of a hard real-time deadline guarantee.
+- Existing model-free wet-block, RVC-window, stem pipeline, wake and
+  DeepFilter transport tests passed. This does not qualify recovery in
+  RVC or stems; their longer windows and failure policies differ.
+
+Next: extend generation-tagged recovery to native RVC, then evaluate
+YAMNet/HTDemucs using their own timing and fail-closed contracts.
+Do not reset dry latency or replay stale wet output. DSP optimization
+and the remaining roadmap follow. No installation, publication or
+release promotion; entire expanded release acceptance remains open.
 
 ## STT event-driven worker wakeups (2026-11-22)
 

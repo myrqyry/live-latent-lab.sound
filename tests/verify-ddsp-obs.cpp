@@ -1,3 +1,6 @@
+#ifdef SOUND_RT_PROBE
+#include "rt-callback-probe.hpp"
+#endif
 #include "audio-dispatch-timing.hpp"
 #include <obs.h>
 #include <obs-module.h>
@@ -76,7 +79,7 @@ int main(int argc,char** argv){
     uint64_t timestamp=os_gettime_ns();uint64_t sent=0;uint32_t n=rate/100;
     auto wall=std::chrono::steady_clock::now();
     AudioDispatchTiming timing;
-    auto stream=[&](Stats& stats,bool tone,int rounds){
+    auto stream=[&](Stats& stats,bool tone,int rounds,bool burst=false){
         obs_source_add_audio_capture_callback(source,capture,&stats);
         for(int k=0;k<rounds;++k){
             std::array<float,480> l{},rr{};
@@ -85,11 +88,11 @@ int main(int argc,char** argv){
             a.frames=n;a.speakers=SPEAKERS_STEREO;a.format=AUDIO_FORMAT_FLOAT_PLANAR;a.samples_per_sec=rate;
             a.timestamp=timestamp+sent*1000000000ULL/rate;
             timing.measure(uint64_t(n)*1000000000ULL/rate,[&]{obs_source_output_audio(source,&a);});sent+=n;
-            std::this_thread::sleep_until(wall+std::chrono::nanoseconds(sent*1000000000ULL/rate));
+            if(!burst)std::this_thread::sleep_until(wall+std::chrono::nanoseconds(sent*1000000000ULL/rate));
         }
         obs_source_remove_audio_capture_callback(source,capture,&stats);
     };
-    Stats a(rate*2),b(rate*2),switched(rate*2),shift(rate*2),noise(rate*2),dry(rate*2),silence(rate*2);
+    Stats a(rate*2),b(rate*4),switched(rate*2),shift(rate*2),noise(rate*2),dry(rate*2),silence(rate*2);
     stream(a,true,170);auto result=snapshot(filter);
     bool ok=picker&&a.count>rate&&!a.invalid;
     if(missing){
@@ -107,6 +110,70 @@ int main(int argc,char** argv){
             ok=ok&&recovered;
         }
         printf("DDSP_MISSING dry_rms=%.5f stereo_difference=%.5f pass=%d\n",rms(a,rate),rms(a,rate,true),ok);
+    }else if(std::getenv("SOUND_DDSP_RETRY_LIMIT")){
+        auto retry_count=[&]{
+            calldata_t rd{};proc_handler_call(obs_source_get_proc_handler(filter),"sound_ddsp_recovery_v1",&rd);
+            auto n=calldata_int(&rd,"automatic_retries");calldata_free(&rd);return n;
+        };
+        for(int i=0;i<4;++i){
+            dry.count=0;b.count=0;
+            stream(dry,true,120,true);
+            wall=std::chrono::steady_clock::now()-std::chrono::nanoseconds(sent*1000000000ULL/rate);
+            stream(b,true,350);
+            auto state=snapshot(filter);
+            const bool bounded=retry_count()==std::min(i+1,3)&&state.status==(i<3?"ready":"error");
+            printf("DDSP_RETRY_STEP fault=%d retries=%lld status=%s pass=%d\n",i+1,(long long)retry_count(),state.status.c_str(),bounded);
+            ok=ok&&bounded;
+            if(!bounded)break;
+        }
+        bool fallback=snapshot(filter).status=="error"&&rms(b,rate,true)>.08&&retry_count()==3;
+        auto* props=obs_source_properties(filter);
+        auto* retry=obs_properties_get(props,"retry_models");
+        const bool retry_present=retry!=nullptr;
+        if(retry_present)obs_property_button_clicked(retry,filter);
+        obs_properties_destroy(props);
+        b.count=0;stream(b,true,300);
+        auto last=snapshot(filter);
+        double tail_diff=0,tail_energy=0;
+        if(b.count>=rate/2)for(size_t i=b.count-rate/2;i<b.count;++i){tail_diff+=std::pow(b.l[i]-b.r[i],2);tail_energy+=b.l[i]*b.l[i];}
+        bool resumed=retry_present&&last.status=="ready"&&b.count>=rate/2&&tail_diff<1e-6&&tail_energy>1&&retry_count()==3;
+        ok=ok&&fallback&&resumed;
+        printf("DDSP_RETRY_LIMIT fallback=%d manual_recovered=%d retries=%lld pass=%d\n",fallback,resumed,(long long)retry_count(),ok);
+    }else if(std::getenv("SOUND_DDSP_AUTO_RECOVER")){
+        const auto before=result.hops;
+        // Real source packets arrive faster than inference can consume them.
+        // This forces a transport fault, without a test-only production hook.
+        stream(dry,true,120,true);
+        // Restore the pacing origin, not the filter or its queues.
+        wall=std::chrono::steady_clock::now()-std::chrono::nanoseconds(sent*1000000000ULL/rate);
+        stream(b,true,300);auto recovered=snapshot(filter);
+        calldata_t rd{};proc_handler_call(obs_source_get_proc_handler(filter),"sound_ddsp_recovery_v1",&rd);
+        auto retries=calldata_int(&rd,"automatic_retries");calldata_free(&rd);
+        const size_t tail=rate/2;
+        double wet_diff=0,energy=0;
+        if(b.count>=tail)for(size_t i=b.count-tail;i<b.count;++i){
+            wet_diff+=std::pow(b.l[i]-b.r[i],2);energy+=b.l[i]*b.l[i];
+        }
+        bool resumed=recovered.status=="ready"&&recovered.hops>before+50&&
+            retries>=1&&retries<=3&&b.count>=tail&&energy>1&&wet_diff<1e-6&&!b.invalid;
+        ok=ok&&resumed;
+        printf("DDSP_AUTO_RECOVER retries=%lld recovered=%d hops=%lld tail_diff=%.8f energy=%.5f pass=%d\n",
+            (long long)retries,resumed,recovered.hops,wet_diff,energy,ok);
+    }else if(std::getenv("SOUND_DDSP_HOT_RELOAD")){
+        // Keep the original filter and the audio clock while replacing assets.
+        const auto before=result.hops;
+        obs_data_set_string(d,"models","/sound-ddsp-test-missing-assets");
+        obs_source_update(filter,d);stream(dry,true,170);
+        auto failed=snapshot(filter);
+        bool fallback=failed.status=="error" && rms(dry,rate,true)>.08 &&
+            std::abs(rms(dry,rate)-.3/std::sqrt(2.))<.01 && !dry.invalid;
+        obs_data_set_string(d,"models",argv[4]);obs_source_update(filter,d);
+        stream(b,true,200);auto recovered=snapshot(filter);
+        bool resumed=recovered.status=="ready" && recovered.hops>before+50 &&
+            rms(b,rate)>.005 && rms(b,rate,true)<1e-5 && !b.invalid;
+        ok=ok&&fallback&&resumed;
+        printf("DDSP_HOT_RELOAD fallback=%d recovered=%d hops=%lld pass=%d\n",
+            fallback,resumed,recovered.hops,ok);
     }else{
         obs_data_set_double(d,"morph",1);obs_source_update(filter,d);stream(b,true,170);
         obs_data_set_string(d,"instrument_b","Trumpet");obs_source_update(filter,d);stream(switched,true,170);
@@ -132,5 +199,8 @@ int main(int argc,char** argv){
     timing.report("ddsp");
     obs_source_filter_remove(source,filter);obs_source_release(filter);obs_data_release(d);
     obs_set_output_source(1,nullptr);obs_source_dec_active(source);obs_source_release(source);obs_wait_for_destroy_queue();obs_shutdown();
+#ifdef SOUND_RT_PROBE
+    ok=rt_probe::report(100,{1})&&ok;
+#endif
     return ok?0:1;
 }
