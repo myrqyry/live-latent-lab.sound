@@ -229,6 +229,40 @@ including model replacement and clearing, not a real noise suppression
 model. All three Matchering wall-time spikes over 100 us spent most of
 their duration off CPU. No production code changed.
 
+## Seventh pass: direct source-capture callback qualification
+
+The SAME-S live texture source captures another OBS source using a registered
+audio capture callback, not filter_audio. The test-only capture interposer
+wraps Sound module callbacks at registration, retains per-registration
+statistics, and detaches the same wrapper before reporting. Fixture callbacks
+are not counted. This uses the libobs 32.0.1 audio callback mutex removal
+contract; no registration mutex is acquired inside the instrumented callback.
+
+The actual installed seven-effect module and installed SA3 helper were used
+with the existing local SAME-S GGUF model. The first 48 kHz test missed the
+existing startup latency limit (6265 ms versus the 6000 ms ceiling, and less
+than three seconds of wet playback), despite no capture drops, underruns or
+intercepted allocation/lock violations. Unchanged acceptance criteria passed
+on a second 48 kHz run and at 44.1 kHz.
+
+| Rate / run | Capture calls | CPU p99 us | CPU max us | Startup delay ms | Functional result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 48 kHz first | 901 | 9.768 | 15.880 | 6265 | Fail |
+| 48 kHz repeat | 900 | 8.435 | 12.704 | 1860 | Pass |
+| 44.1 kHz | 900 | 8.485 | 16.732 | 1860 | Pass |
+
+All 2701 capture calls recorded zero intercepted allocations, frees,
+blocking locks or waits. Both successful tests produced 23 wet blocks
+with zero capture drops, reported failures or underruns. Startup timing
+is variable; the first failure remains evidence and its cause has not been
+isolated. These are isolated short runs, not qualification of simultaneous
+live model workloads. Only test code changed. The installed module SHA-256
+matches the previously verified seven-effect candidate.
+
+Reproduce by compiling tests/verify-same-live.cpp with -DSOUND_RT_PROBE
+and -rdynamic, linking libobs and libdl (see other probe-enabled test runners).
+Pass MODULE DATA_DIR MODELS_DIR and set SAME_LIVE_44100=1 for 44.1 kHz.
+
 ## Repeatable tests
 
 Model-free queue and DSP checks are included in the public CI verification

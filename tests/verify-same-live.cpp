@@ -1,3 +1,6 @@
+#ifdef SOUND_RT_PROBE
+#include "rt-capture-probe.hpp"
+#endif
 #include <obs.h>
 #include <obs-module.h>
 #include <util/platform.h>
@@ -166,5 +169,9 @@ int main(int argc,char** argv){
             if(!f)ok=false;
         }
     }
-    obs_set_output_source(1,nullptr);obs_set_output_source(2,nullptr);obs_source_release(source);obs_source_release(wet);obs_data_release(d);obs_wait_for_destroy_queue();obs_shutdown();return ok?0:1;
+    obs_set_output_source(1,nullptr);obs_set_output_source(2,nullptr);obs_source_release(source);obs_source_release(wet);obs_data_release(d);obs_wait_for_destroy_queue();obs_shutdown();
+#ifdef SOUND_RT_PROBE
+    ok=rt_capture_probe::report(200)&&ok;
+#endif
+    return ok?0:1;
 }

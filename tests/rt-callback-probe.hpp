@@ -33,12 +33,11 @@ inline uint64_t thread_cpu_ns(){
     if(clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts)!=0)std::abort();
     return uint64_t(ts.tv_sec)*1000000000ULL+uint64_t(ts.tv_nsec);
 }
-template<int I> obs_audio_data* dispatch(void* state,obs_audio_data* p){
-    auto& s=stats[I];
+template<class F> void measure(Stats& s,F&& callback){
     const auto begin=std::chrono::steady_clock::now();
     const auto cpu_begin=thread_cpu_ns();
     auto* previous=active;active=&s;
-    auto* out=s.original(state,p);
+    callback();
     active=previous;
     const auto cpu=thread_cpu_ns()-cpu_begin;
     const auto ns=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -47,25 +46,33 @@ template<int I> obs_audio_data* dispatch(void* state,obs_audio_data* p){
     ++s.calls;s.max=std::max(s.max,ns);s.cpu_max=std::max(s.cpu_max,cpu);
     if(ns>=100000){++s.slow_wall;if(cpu<ns/2)++s.slow_mostly_off_cpu;}
     if(ns>=10000000)++s.late;
+}
+template<int I> obs_audio_data* dispatch(void* state,obs_audio_data* p){
+    auto& s=stats[I];
+    obs_audio_data* out=nullptr;
+    measure(s,[&]{out=s.original(state,p);});
     return out;
+}
+inline bool report_one(Stats& s,size_t minimum){
+    const size_t n=std::min<uint64_t>(s.calls,s.times.size());
+    std::sort(s.times.begin(),s.times.begin()+n);
+    std::sort(s.cpu_times.begin(),s.cpu_times.begin()+n);
+    auto p99=n?s.times[(n*99+99)/100-1]/1000.:0.;
+    auto cpu99=n?s.cpu_times[(n*99+99)/100-1]/1000.:0.;
+    std::printf("RT_CALLBACK id=%s calls=%llu p99_us=%.3f max_us=%.3f cpu_p99_us=%.3f cpu_max_us=%.3f slow_wall=%llu slow_mostly_off_cpu=%llu allocations=%llu frees=%llu locks=%llu waits=%llu over_10ms=%llu\n",
+        s.id,(unsigned long long)s.calls,p99,s.max/1000.,cpu99,s.cpu_max/1000.,
+        (unsigned long long)s.slow_wall,(unsigned long long)s.slow_mostly_off_cpu,
+        (unsigned long long)s.allocs,(unsigned long long)s.frees,
+        (unsigned long long)s.locks,(unsigned long long)s.waits,(unsigned long long)s.late);
+    // Timing is diagnostic; a scheduler preemption is not a code defect.
+    return s.calls>=minimum && s.allocs==0 && s.frees==0 && s.locks==0 && s.waits==0;
 }
 inline bool report(size_t minimum,std::initializer_list<size_t> selected={0,1,2}){
     bool ok=true;
     for(auto index:selected){
         auto& s=stats[index];
         if(!s.original){ok=false;continue;}
-        const size_t n=std::min<uint64_t>(s.calls,s.times.size());
-        std::sort(s.times.begin(),s.times.begin()+n);
-        std::sort(s.cpu_times.begin(),s.cpu_times.begin()+n);
-        auto p99=n?s.times[(n*99+99)/100-1]/1000.:0.;
-        auto cpu99=n?s.cpu_times[(n*99+99)/100-1]/1000.:0.;
-        std::printf("RT_CALLBACK id=%s calls=%llu p99_us=%.3f max_us=%.3f cpu_p99_us=%.3f cpu_max_us=%.3f slow_wall=%llu slow_mostly_off_cpu=%llu allocations=%llu frees=%llu locks=%llu waits=%llu over_10ms=%llu\n",
-            s.id,(unsigned long long)s.calls,p99,s.max/1000.,cpu99,s.cpu_max/1000.,
-            (unsigned long long)s.slow_wall,(unsigned long long)s.slow_mostly_off_cpu,
-            (unsigned long long)s.allocs,(unsigned long long)s.frees,
-            (unsigned long long)s.locks,(unsigned long long)s.waits,(unsigned long long)s.late);
-        // Timing is diagnostic; a scheduler preemption is not a code defect.
-        ok&=s.calls>=minimum && s.allocs==0 && s.frees==0 && s.locks==0 && s.waits==0;
+        ok=report_one(s,minimum)&&ok;
     }
     return ok;
 }
