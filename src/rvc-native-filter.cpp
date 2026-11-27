@@ -67,14 +67,13 @@ struct Child{
         }
         return size==0;
     }
-    std::vector<float> convert(std::array<float,16000>& pcm,int pitch,bool cold,float blend){
+    void convert(std::array<float,16000>& pcm,int pitch,bool cold,float blend,std::vector<float>& out){
         using namespace rvc_native;
         Request r{magic,++seq,uint32_t(pcm.size()),uint32_t(s.rate),pitch,blend,s.rms_mix.load(),s.protection.load(),s.pitch_median.load()?1u:0u};Reply q{};
         auto end=std::chrono::steady_clock::now()+(cold?45s:1500ms);
         if(!transfer(&r,sizeof r,true,end)||!transfer(pcm.data(),sizeof(pcm),true,end)||!transfer(&q,sizeof q,false,end)||q.magic!=magic||q.sequence!=r.sequence||q.status||q.frames<s.rate*88/100||q.frames>s.rate)throw std::runtime_error("RVC worker unavailable or rejected audio");
-        std::vector<float> out(q.frames);
+        out.resize(q.frames);
         if(!transfer(out.data(),out.size()*sizeof(float),false,end)||!std::all_of(out.begin(),out.end(),[](float v){return std::isfinite(v)&&std::abs(v)<=1;}))throw std::runtime_error("RVC invalid audio");
-        return out;
     }
 };
 void run(State* s){
@@ -83,10 +82,12 @@ void run(State* s){
         if(!slot.owns_lock())throw std::runtime_error("Another RVC filter owns the CUDA session");
         Child worker(*s);worker.start();
         std::array<float,16000> warm{};for(size_t i=0;i<warm.size();++i)warm[i]=.05f*std::sin(6.28318530718*220*i/16000.);
-        worker.convert(warm,0,true,s->index.empty()?s->retrieval.load():0.5f);
+        std::vector<float> output;output.reserve(s->rate);
+        worker.convert(warm,0,true,s->index.empty()?s->retrieval.load():0.5f,output);
         rvc_native::Window window(s->rate);
         std::vector<float> l(s->rate),r(s->rate);
         stts::SolaStitcher stitch({s->rate/2,s->rate/25,s->rate/50});
+        std::vector<float> hop(s->rate/2);
         s->status.store(Ready,std::memory_order_release);
         auto last=std::chrono::steady_clock::now();
         while(!s->stop.load()&&!s->pipeline.failed()){
@@ -97,10 +98,10 @@ void run(State* s){
             }
             auto t=std::chrono::steady_clock::now();auto pcm=window.push(l.data(),r.data(),n);
             // Always convert the real window, including silence; never reuse stale output.
-            auto output=worker.convert(pcm,s->pitch.load(),false,s->retrieval.load());
+            worker.convert(pcm,s->pitch.load(),false,s->retrieval.load(),output);
             auto offset=s->rate*24/100;
-            auto hop=stitch.push(output.data()+offset,output.size()-offset);
-            if(!s->pipeline.write(hop.pcm.data()))break;
+            stitch.push_into(output.data()+offset,output.size()-offset,hop.data(),hop.size());
+            if(!s->pipeline.write(hop.data()))break;
             s->ms=float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count());
             ++s->hops;last=std::chrono::steady_clock::now();
         }

@@ -19,6 +19,11 @@ struct SolaSettings {
     float fade_end = 1.0f;
 };
 
+struct SolaAlignment {
+    size_t offset_frames = 0;
+    bool alignment_used = false;
+};
+
 struct SolaOutput {
     std::vector<float> pcm; // precisely hop_frames samples
     size_t offset_frames = 0;
@@ -42,6 +47,14 @@ public:
             throw std::invalid_argument("invalid SOLA frame or fade configuration");
         }
         previous_tail_.resize(settings_.overlap_frames);
+        fade_.resize(settings_.overlap_frames);
+        for(size_t i=0;i<fade_.size();++i){
+            const double pos=double(i)/double(fade_.size());
+            const double start=settings_.fade_start,end=settings_.fade_end;
+            const double f=pos<=start?0.0:pos>=end?1.0:(pos-start)/(end-start);
+            const double c=std::cos(f*1.57079632679489661923);
+            fade_[i]=c*c;
+        }
     }
 
     void reset() {
@@ -53,7 +66,20 @@ public:
     // Each window must have at least hop + overlap + search frames.
     // On a stream's initial window there is no previous tail to match.
     SolaOutput push(const float* samples, size_t frames) {
+        SolaOutput result;
+        result.pcm.resize(settings_.hop_frames);
+        const auto alignment=push_into(samples,frames,result.pcm.data(),result.pcm.size());
+        result.offset_frames=alignment.offset_frames;
+        result.alignment_used=alignment.alignment_used;
+        return result;
+    }
+
+    // Non-owning output for a worker that can reuse its hop buffer.
+    // Input and output buffers must not overlap.
+    SolaAlignment push_into(const float* samples,size_t frames,float* output,size_t output_frames) {
         const auto hop = settings_.hop_frames;
+        if(!output || output_frames!=hop)
+            throw std::invalid_argument("SOLA output must match hop size");
         const auto overlap = settings_.overlap_frames;
         const auto search = settings_.search_frames;
         if (!samples || frames < hop + overlap + search)
@@ -91,36 +117,26 @@ public:
             }
         }
 
-        SolaOutput result;
-        result.pcm.resize(hop);
-        result.offset_frames = offset;
-        result.alignment_used = matched;
-        std::copy_n(samples + offset, hop, result.pcm.begin());
+        std::copy_n(samples + offset, hop, output);
         if (primed_) {
             for (size_t i = 0; i < overlap; ++i) {
-                const double pos = double(i) / double(overlap);
-                const double start = settings_.fade_start;
-                const double end = settings_.fade_end;
-                const double f = pos <= start ? 0.0
-                               : pos >= end ? 1.0
-                               : (pos - start) / (end - start);
-                const double c = std::cos(f * 1.57079632679489661923);
-                const double prev_strength = c * c;
-                const double next_strength = 1.0 - prev_strength;
-                result.pcm[i] = float(double(previous_tail_[i]) * prev_strength +
-                                      double(result.pcm[i]) * next_strength);
+                const double prev_strength=fade_[i];
+                const double next_strength=1.0-prev_strength;
+                output[i]=float(double(previous_tail_[i])*prev_strength+
+                                double(output[i])*next_strength);
             }
         }
         // The next chunk overlaps the *unplayed* output after this hop.
         // It must be raw audio, not a previously faded or emitted region.
         std::copy_n(samples + offset + hop, overlap, previous_tail_.begin());
         primed_ = true;
-        return result;
+        return {offset,matched};
     }
 
 private:
     SolaSettings settings_;
     std::vector<float> previous_tail_;
+    std::vector<double> fade_;
     bool primed_ = false;
 };
 

@@ -60,11 +60,11 @@ public:
 // causal low-pass FIR. The window carries 704 samples across hops.
 class Analysis {
     std::array<float,1024> history_{};
-    std::array<float,48> tail_{};
     std::vector<std::array<float,48>> weights_;
     size_t hop_;
+    std::vector<float> mono_;
 public:
-    explicit Analysis(size_t rate):weights_(320),hop_(rate/50){
+    explicit Analysis(size_t rate):weights_(320),hop_(rate/50),mono_(hop_+48){
         constexpr double pi=3.14159265358979323846;
         const double fc=7200./rate;
         for(size_t i=0;i<320;++i){
@@ -79,13 +79,18 @@ public:
     }
     const std::array<float,1024>& push(const float* l,const float* r){
         std::move(history_.begin()+320,history_.end(),history_.begin());
-        auto mono=[&](size_t i){float v=(l[i]+r[i])*.5f;return std::isfinite(v)?std::clamp(v,-1.f,1.f):0.f;};
+        // Sanitize each input sample once instead of repeating the stereo
+        // downmix and finite check for every FIR tap. First 48 are history.
+        for(size_t i=0;i<hop_;++i){
+            float v=(l[i]+r[i])*.5f;
+            mono_[48+i]=std::isfinite(v)?std::clamp(v,-1.f,1.f):0.f;
+        }
         for(size_t i=0;i<320;++i){
             int pos=int(i*hop_/320);float sum=0;
-            for(int j=0;j<48;++j){int k=pos-j;sum+=weights_[i][j]*(k<0?tail_[size_t(k+48)]:mono(size_t(k)));}
+            for(int j=0;j<48;++j){sum+=weights_[i][j]*mono_[size_t(pos-j+48)];}
             history_[704+i]=sum;
         }
-        for(size_t i=0;i<48;++i)tail_[i]=mono(hop_-48+i);
+        std::copy_n(mono_.begin()+hop_,48,mono_.begin());
         return history_;
     }
 };
