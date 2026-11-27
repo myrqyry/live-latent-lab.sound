@@ -4,7 +4,7 @@ The opt-in `rvc` effect now builds a native-worker filter instead of
 the quarantined ONNX adapter. The historical source ID
 `stts_rvc_filter` is retained. A saved ONNX voice selection is not
 silently replaced with a different voice: explicitly select the native
-package and reload the scene to use the new backend. No ONNX dependency
+package to use the new backend. No ONNX dependency
 is linked for this effect.
 
 ## Build and local assets
@@ -62,18 +62,19 @@ use their embedded index when no custom checkpoint is selected.
 The picker starts in the local runtime's voice-library directory
 (which can be a symlink to an existing model collection).
 No file copies or automatic checkpoint conversion are needed.
-Save checkpoint/index paths and reload the scene to apply them.
+Checkpoint/index paths, packaged voice, speaker ID and runtime paths can reload live.
 Pitch shift (-24 to +24 semitones), retrieval blend (0–1 with a compatible
 index), RMS envelope mix, unvoiced protection, median filtering and
-wet/dry mix are live. Speaker ID is checkpoint-dependent and applies
-on scene reload. Use zero unless the checkpoint has a speaker table
+wet/dry mix are live. Speaker ID is checkpoint-dependent and reloads the
+worker. Use zero unless the checkpoint has a speaker table
 with additional IDs. Lower unvoiced protection values preserve more
 source content during retrieval; values >=0.5 disable protection. The selected index is
 loaded during warmup; incompatible or missing assets fail closed.
 The helper bounds checkpoint/index size to 512 MiB/1 GiB.
 Only trusted checkpoints should be used.
 A single private worker owns the RVC CUDA session; additional
-instances fail closed. The binary protocol carries 16000 mono
+instances fail closed; use Retry models after the slot becomes available.
+The binary protocol carries 16000 mono
 float samples per request, an output rate, pitch, retrieval blend, RMS mix, unvoiced protection,
 median filter switch and sequence (RVC3 framing).
 The child is spawned with an inherited socketpair, no listener.
@@ -89,15 +90,26 @@ hops. Wet is mono (duplicated to stereo); dry preserves stereo.
 After warming, the callback starts a 1500 ms fixed delay with
 initial silence. Initial loading or missing assets pass through
 undelayed dry. Once activated, a queue overrun, missed deadline,
-timestamp discontinuity, or failed conversion permanently switches
-that instance to delayed dry. Recreate the filter to retry; runtime
-and model paths are read at creation. An input-idle timeout of
-30 seconds frees the worker. Changes in latency when activating,
+timestamp discontinuity, or failed conversion switches that instance
+to aligned delayed dry. A fresh generation rebuilds the child, window
+and SOLA history; obsolete wet output is discarded before the new
+1.5-second prefill. The dry delay line is never reset during recovery.
+Automatic retries are bounded to three attempts (250/500/1000 ms
+backoff plus model warmup), with 60 successful hops replenishing the
+budget. Invalid initial configuration waits for explicit correction.
+Use Retry models or change paths to reset the retry budget. If input
+is idle for 30 seconds, the child and CUDA slot are released; incoming
+audio requests a fresh session without spending a retry. If the slot
+is taken or resume initialization fails outside an active retry series,
+retry explicitly. The fault transition to dry is not guaranteed clickless.
+The fixed delay is measured in received samples; a source timestamp gap
+does not erase the pre-gap dry history. Changes in latency when activating,
 bypassing or recreating the filter are not seamless. No A/V sync
 compensation or long-run clock-drift correction. The status proc
 `sound_rvc_native_v1` reports readiness, completed hops, most
 recent processing ms and fixed delay; the properties status is
-a snapshot when opened.
+a snapshot when opened. The separate read-only
+`sound_rvc_recovery_v1` reports cumulative automatic retries.
 
 ## Acceptance
 
@@ -116,7 +128,10 @@ SOUND_RVC_STAGE=/path/to/staged-sound \
 
 The native test checks the real private C API protocol, invalid
 request rejection, distinct pitch-shifted output, both output
-rates, finite samples, and continuous OBS stereo dry/wet processing.
+rates, finite samples, continuous OBS stereo dry/wet processing,
+model/helper reload, recovery after an isolated child crash, and
+idle release/resume. The child crash test uses Linux pidfd signaling on
+the test process's own private helper.
 No user mic capture or online model service.
 
 ## Actual native acceptance (2026-11-25)

@@ -237,11 +237,57 @@ Verified on yuzu-mint, staged seven-effect Linux module SHA256:
   DeepFilter transport tests passed. This does not qualify recovery in
   RVC or stems; their longer windows and failure policies differ.
 
-Next: extend generation-tagged recovery to native RVC, then evaluate
-YAMNet/HTDemucs using their own timing and fail-closed contracts.
-Do not reset dry latency or replay stale wet output. DSP optimization
-and the remaining roadmap follow. No installation, publication or
-release promotion; entire expanded release acceptance remains open.
+## Native RVC generation recovery (2026-11-27)
+
+DDSP and RVC now share the same generation-tagged fixed-delay mono-wet
+transport. RVC retains its 1500 ms delayed stereo dry, 750 ms first
+capture, 500 ms hops, existing crop and SOLA behavior. Wake readiness
+now uses the actual first-window threshold and resets on recovery.
+The child, window and SOLA history are rebuilt on faults or settings
+revision; old output is discarded before the fresh wet prefill.
+The helper's cold-transfer path can warm up while the audio generation
+is faulted, but both cold and live IPC observe cancellation and revision.
+The previous child is reaped before releasing the exclusive CUDA slot.
+Voice/runtime/checkpoint/index/speaker settings now reload live; the
+legacy ONNX guard is retained. Automatic retries use the existing
+worker-owned budget, replenished after 60 successful hops; Retry models
+or changed paths reset the budget. After 30 s without input the worker
+releases its session and waits for actual audio activity.
+
+Verified on yuzu-mint using staged seven-effect Linux build SHA256:
+530da26d9be68158e4413e9c63f2a584ac1db0b28a7875d7ad761434a296d54d.
+
+- Model-free RVC recovery at both rates with uneven packets, exact dry
+  alignment, new capture origin, old result rejection, superseded restart,
+  and the correct first and subsequent wake thresholds. Allocation guards
+  and UBSan passed. DDSP recovery, pipeline, wet-block, RVC window and
+  wake tests passed after extracting the common transport.
+- Real CUDA RVC ordinary OBS audio at both 44.1 and 48 kHz passed
+  (16 hops each). 48 kHz live helper-path reload passed (44 hops);
+  the pre-change binary failed the same fallback test. Actual isolated
+  child crash recovered on the first retry (33 hops). Actual 30-second
+  idle/resume recovered without consuming a retry (34 hops).
+- Missing-helper safety and legacy ONNX guard with valid native
+  assets passed; neither allowed unintended wet output. DDSP real
+  48 kHz hot reload on the shared transport passed (177 hops).
+- RVC probe runs across ordinary conversion, reload, crash, idle and
+  legacy guard measured 11,400 callbacks, zero observed allocator/free/
+  lock/wait violations and no callback above 10 ms. These are targeted
+  observed results, not a hard-real-time guarantee.
+
+Limitations: recovery runtime tests use the pinned packaged CUDA model
+at 48 kHz, not every custom checkpoint/index/speaker permutation.
+RVC retry exhaustion shares the unit-tested policy but was not
+independently forced through four GPU crashes. The 1500 ms dry delay
+is measured in received samples, not absolute time across source gaps;
+pre-gap dry history is retained. Fault transition is not guaranteed
+clickless. Entire native helper protocol wrapper and full expanded
+release acceptance were not rerun in this pass. No installation or
+publication. System disk remains critically full; existing runtime
+assets reused in isolated staging.
+
+Next: YAMNet/HTDemucs recovery, preserving their distinct fail-closed
+contracts; then DSP optimization and the remaining roadmap.
 
 ## STT event-driven worker wakeups (2026-11-22)
 

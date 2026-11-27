@@ -1,3 +1,6 @@
+#ifdef SOUND_RT_PROBE
+#include "rt-callback-probe.hpp"
+#endif
 #include "audio-dispatch-timing.hpp"
 #include <obs.h>
 #include <obs-module.h>
@@ -13,6 +16,10 @@
 #include <thread>
 #include <string>
 #include <fstream>
+#include <filesystem>
+#include <signal.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 struct Stats{
     std::vector<float> l,r;size_t count=0;bool invalid=false;
     explicit Stats(size_t n):l(n),r(n){}
@@ -43,6 +50,25 @@ static double rms(const Stats& s,size_t rate,bool stereo_difference=false){
     if(s.count<=rate/2)return 0;double power=0;
     for(size_t i=rate/2;i<s.count;++i){double v=stereo_difference?s.l[i]-s.r[i]:s.l[i];power+=v*v;}
     return std::sqrt(power/(s.count-rate/2));
+}
+// Select only a direct child of this isolated libobs test process, with
+// the expected executable. Signal via pidfd so PID reuse cannot redirect
+// the injected crash to another process.
+static bool crash_owned_helper(const char* executable){
+    namespace fs=std::filesystem;
+    std::error_code error;
+    auto expected=fs::canonical(executable,error);if(error)return false;
+    for(const auto& task:fs::directory_iterator("/proc/self/task",error)){
+        std::ifstream children(task.path()/"children");int pid;
+        while(children>>pid){
+            if(pid<=1)continue;
+            int fd=int(syscall(SYS_pidfd_open,pid,0));if(fd<0)continue;
+            auto actual=fs::canonical("/proc/"+std::to_string(pid)+"/exe",error);
+            bool ok=!error&&actual==expected&&syscall(SYS_pidfd_send_signal,fd,SIGKILL,nullptr,0)==0;
+            close(fd);if(ok)return true;
+        }
+    }
+    return false;
 }
 int main(int argc,char** argv){
     if(argc!=7)return 2;
@@ -91,6 +117,73 @@ int main(int argc,char** argv){
     };
     Stats wet(rate*8),dry(rate*4);
     stream(wet,true,600);
+    auto retry_count=[&]{
+        calldata_t rd{};proc_handler_call(obs_source_get_proc_handler(filter),"sound_rvc_recovery_v1",&rd);
+        auto retries=calldata_int(&rd,"automatic_retries");calldata_free(&rd);return retries;
+    };
+    auto wet_tail=[&](const Stats& recovered){
+        double diff=0,power=0;
+        if(recovered.count<rate*2||recovered.invalid)return false;
+        for(size_t i=recovered.count-rate*2;i<recovered.count;++i){
+            diff+=std::pow(recovered.l[i]-recovered.r[i],2);power+=recovered.l[i]*recovered.l[i];
+        }
+        return diff<1e-6&&power>1;
+    };
+    auto finish=[&](bool ok,const char* tag){
+        timing.report(tag);
+        obs_source_filter_remove(source,filter);obs_source_release(filter);obs_data_release(d);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(source);obs_source_release(source);obs_wait_for_destroy_queue();obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        ok=rt_probe::report(100,{2})&&ok;
+#endif
+        return ok?0:1;
+    };
+    if(std::getenv("SOUND_RVC_CRASH_RECOVER")){
+        const auto before=snapshot(filter);
+        bool killed=crash_owned_helper(argv[3]);
+        Stats recovered(rate*20);stream(recovered,true,2000);
+        auto last=snapshot(filter);
+        bool ok=picker&&killed&&before.status=="ready"&&last.status=="ready"&&
+            retry_count()==1&&last.hops>before.hops+4&&wet_tail(recovered);
+        printf("RVC_CRASH_RECOVER killed=%d retries=%lld hops=%lld pass=%d\n",killed,(long long)retry_count(),last.hops,ok);
+        return finish(ok,"rvc-crash");
+    }
+    if(std::getenv("SOUND_RVC_IDLE_RECOVER")){
+        auto before=snapshot(filter);
+        for(int i=0;i<340&&snapshot(filter).status!="idle";++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        bool idle=snapshot(filter).status=="idle";
+        // Audio timestamps advance with elapsed wall time after a source gap.
+        wall=std::chrono::steady_clock::now()-std::chrono::nanoseconds(sent*1000000000ULL/rate);
+        timestamp=os_gettime_ns()-sent*1000000000ULL/rate;
+        Stats recovered(rate*20);stream(recovered,true,2000);
+        auto last=snapshot(filter);
+        bool ok=picker&&idle&&last.status=="ready"&&retry_count()==0&&
+            last.hops>before.hops+4&&wet_tail(recovered);
+        printf("RVC_IDLE_RECOVER idle=%d retries=%lld hops=%lld pass=%d\n",idle,(long long)retry_count(),last.hops,ok);
+        return finish(ok,"rvc-idle");
+    }
+    if(std::getenv("SOUND_RVC_HOT_RELOAD")){
+        // The same filter must honor a changed executable path, keep its
+        // stereo dry signal, then reload the original real CUDA worker.
+        auto before=snapshot(filter);
+        obs_data_set_string(d,"helper","/sound-rvc-test-missing-worker");
+        obs_source_update(filter,d);stream(dry,true,400);
+        auto bad=snapshot(filter);
+        bool fallback=bad.status=="error"&&rms(dry,rate,true)>.005&&!dry.invalid;
+        obs_data_set_string(d,"helper",argv[3]);obs_source_update(filter,d);
+        Stats recovered(rate*25);stream(recovered,true,2500);
+        auto last=snapshot(filter);
+        double diff=0,power=0;
+        if(recovered.count>=rate*2)for(size_t i=recovered.count-rate*2;i<recovered.count;++i){
+            diff+=std::pow(recovered.l[i]-recovered.r[i],2);power+=recovered.l[i]*recovered.l[i];
+        }
+        bool resumed=last.status=="ready"&&last.hops>before.hops+4&&recovered.count>=rate*2&&
+            diff<1e-6&&power>1&&!recovered.invalid;
+        bool ok=picker&&before.status=="ready"&&fallback&&resumed;
+        printf("RVC_HOT_RELOAD fallback=%d recovered=%d hops=%lld pass=%d\n",fallback,resumed,last.hops,ok);
+        return finish(ok,"rvc-reload");
+    }
     obs_data_set_double(d,"rms_mix",.8);obs_data_set_double(d,"unvoiced_protection",.1);obs_data_set_bool(d,"pitch_median",false);
     obs_data_set_double(d,"mix",0);obs_source_update(filter,d);
     stream(dry,true,300);
@@ -101,8 +194,5 @@ int main(int argc,char** argv){
     if(missing)ok=ok&&last.status=="error"&&last.hops==0&&wet_stereo>.005;
     else ok=ok&&last.status=="ready"&&last.hops>=16&&wet_stereo<.005&&dry_stereo>.005&&rms(wet,rate)>.005;
     printf("RVC_OBS rate=%u status=%s hops=%lld last_ms=%.1f wet_rms=%.5f wet_stereo=%.5f dry_stereo=%.5f pass=%d\n",rate,last.status.c_str(),last.hops,last.ms,rms(wet,rate),wet_stereo,dry_stereo,ok);
-    timing.report("rvc-native");
-    obs_source_filter_remove(source,filter);obs_source_release(filter);obs_data_release(d);
-    obs_set_output_source(1,nullptr);obs_source_dec_active(source);obs_source_release(source);obs_wait_for_destroy_queue();obs_shutdown();
-    return ok?0:1;
+    return finish(ok,"rvc-native");
 }

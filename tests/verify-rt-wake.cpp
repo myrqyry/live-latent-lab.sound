@@ -24,9 +24,9 @@ int main(){
         assert(ddsp.input_ready());
         std::vector<float> dl(ddsp.hop()),dr(ddsp.hop());
         assert(ddsp.read(dl.data(),dr.data()) && !ddsp.input_ready());
-        for(size_t i=0;i<50;++i){
+        for(size_t i=0;i<75;++i){
             rvc.process(l.data(),r.data(),n,0);
-            assert(rvc.input_ready()==(i==49));
+            assert(rvc.input_ready()==(i==74));
         }
         for(size_t i=0;i<800;++i){
             stems.process(l.data(),r.data(),n);
