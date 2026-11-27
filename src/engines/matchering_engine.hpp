@@ -8,6 +8,9 @@
 #include <fstream>
 #include <iostream>
 #include <cstring>
+#include <array>
+#include <atomic>
+#include <cstdint>
 
 namespace stts {
 
@@ -24,6 +27,24 @@ public:
         float eq_amount = 1.0f; // 0.0 to 1.0
         float mix = 1.0f;       // 0.0 to 1.0
     };
+
+    struct ReferenceProfile {
+        bool ready = false;
+        float rms = 0.1f;
+        std::array<float,3> energy{0.1f,0.1f,0.1f};
+    };
+
+    ReferenceProfile reference_profile() const {
+        return {ready_, ref_rms_, {ref_energy_[0],ref_energy_[1],ref_energy_[2]}};
+    }
+
+    // Only the audio owner applies a prepared profile to the running DSP.
+    void apply_reference(const ReferenceProfile& p) {
+        ready_ = p.ready;
+        ref_rms_ = p.rms;
+        std::copy(p.energy.begin(),p.energy.end(),ref_energy_);
+        if (ready_) setup_filters();
+    }
 
     virtual bool initialize(const std::string& config) override {
         // config is just path for now
@@ -62,19 +83,31 @@ public:
      * @brief Analyze input audio (usually a mono downmix) to update dynamic parameters.
      */
     void update_analysis(const std::vector<float>& input, uint32_t sample_rate) {
-        if (!ready_ || input.empty()) return;
+        update_analysis(input.data(), nullptr, input.size(), sample_rate);
+    }
+
+    // Analyze planar mono/stereo directly, without materializing a downmix.
+    void update_analysis(const float* left, const float* right, size_t frames, uint32_t sample_rate) {
+        if (!ready_ || !left || !frames || !sample_rate) return;
 
         if (sample_rate_ != sample_rate) {
             sample_rate_ = sample_rate;
             setup_filters();
         }
 
-        // 1. Calculate Input RMS
-        float current_rms = calculate_rms(input);
-
-        // 2. Calculate Input Spectral Balance
-        float in_low = 0.0f, in_mid = 0.0f, in_high = 0.0f;
-        measure_bands(input, in_low, in_mid, in_high); // This uses temp filters, stateless
+        // Compute the same block RMS and band energies from the mono mix.
+        Biquad lp = lp_proto_; lp.reset();
+        Biquad hp = hp_proto_; hp.reset();
+        float sum = 0, sum_low = 0, sum_mid = 0, sum_high = 0;
+        for (size_t i=0; i<frames; ++i) {
+            const float x = right ? (left[i]+right[i])*0.5f : left[i];
+            const float l = lp.process(x), h = hp.process(x), m = x-l-h;
+            sum += x*x; sum_low += l*l; sum_mid += m*m; sum_high += h*h;
+        }
+        const float current_rms = std::sqrt(sum/frames);
+        const float in_low = std::sqrt(sum_low/frames);
+        const float in_mid = std::sqrt(sum_mid/frames);
+        const float in_high = std::sqrt(sum_high/frames);
 
         // 3. Smooth the measurements
         // Map 0.0-1.0 param to a coefficient
@@ -125,31 +158,26 @@ public:
      * @param channel_idx Used to maintain separate filter states for stereo channels.
      */
     void process_channel(std::vector<float>& buffer, int channel_idx) {
-        if (!ready_ || buffer.empty()) return;
-        if (channel_idx >= 2) return; // Only support 2 channels for now
+        process_channel(buffer.data(), buffer.size(), channel_idx);
+    }
 
-        // Prepare filter coefficients
+    void process_channel(float* buffer, size_t frames, int channel_idx) {
+        if (!ready_ || !buffer || !frames || channel_idx < 0 || channel_idx >= 2) return;
         update_filters_for_gains(target_gains_[0], target_gains_[1], target_gains_[2], channel_idx);
-
-        // Process in-place
-        std::vector<float> dry = buffer;
-
-        // Apply EQ
-        for (auto& s : buffer) {
-            s = eq_low_[channel_idx].process(s);
-            s = eq_mid_[channel_idx].process(s);
-            s = eq_high_[channel_idx].process(s);
-            s *= target_makeup_; // Apply makeup gain
-        }
-
-        // Apply Limiter
-        AudioNormalizer::soft_clip(buffer, 0.98f);
-
-        // Mix
-        if (params_.mix < 1.0f) {
-            for (size_t i = 0; i < buffer.size(); i++) {
-                buffer[i] = dry[i] * (1.0f - params_.mix) + buffer[i] * params_.mix;
+        for (size_t i=0; i<frames; ++i) {
+            const float dry = buffer[i];
+            float wet = eq_low_[channel_idx].process(dry);
+            wet = eq_mid_[channel_idx].process(wet);
+            wet = eq_high_[channel_idx].process(wet);
+            wet *= target_makeup_;
+            constexpr float threshold = 0.98f;
+            const float magnitude = std::abs(wet);
+            if (magnitude > threshold) {
+                constexpr float knee = 1.0f-threshold;
+                wet = (wet >= 0.f ? 1.f : -1.f) *
+                      (threshold+knee*std::tanh((magnitude-threshold)/knee));
             }
+            buffer[i] = params_.mix < 1.f ? dry*(1.f-params_.mix)+wet*params_.mix : wet;
         }
     }
 
@@ -385,6 +413,50 @@ private:
         mid = std::sqrt(sum_mid / buffer.size());
         high = std::sqrt(sum_high / buffer.size());
     }
+};
+
+// Single serialized control writer; one audio reader. All payload fields are
+// atomic, so a failed snapshot read is race-free. Sequential consistency
+// makes the version check coherent across fields. The reader never retries or
+// waits: it simply keeps its last complete configuration during publication.
+class MatcheringControl {
+public:
+    struct Snapshot {
+        MatcheringEngine::ReferenceProfile reference;
+        MatcheringEngine::Parameters parameters;
+        uint32_t generation = 0;
+    };
+    void publish(const Snapshot& s) noexcept {
+        version_.fetch_add(1);
+        generation_.store(s.generation);
+        ready_.store(s.reference.ready);
+        rms_.store(s.reference.rms);
+        for (size_t i=0;i<3;++i) energy_[i].store(s.reference.energy[i]);
+        smoothing_.store(s.parameters.smoothing);
+        amount_.store(s.parameters.eq_amount);
+        mix_.store(s.parameters.mix);
+        version_.fetch_add(1);
+    }
+    bool try_read(Snapshot& output) const noexcept {
+        const auto version = version_.load();
+        if (version & 1u) return false;
+        Snapshot s;
+        s.generation = generation_.load();
+        s.reference.ready = ready_.load();
+        s.reference.rms = rms_.load();
+        for (size_t i=0;i<3;++i) s.reference.energy[i] = energy_[i].load();
+        s.parameters = {smoothing_.load(),amount_.load(),mix_.load()};
+        if (version_.load() != version) return false;
+        output = s;
+        return true;
+    }
+private:
+    static_assert(std::atomic<float>::is_always_lock_free && std::atomic<uint32_t>::is_always_lock_free &&
+                  std::atomic<bool>::is_always_lock_free, "Matchering requires lock-free control atomics");
+    std::atomic<uint32_t> version_{0}, generation_{0};
+    std::atomic<bool> ready_{false};
+    std::atomic<float> rms_{0.1f}, energy_[3]{{0.1f},{0.1f},{0.1f}};
+    std::atomic<float> smoothing_{0.5f}, amount_{1.f}, mix_{1.f};
 };
 
 } // namespace stts

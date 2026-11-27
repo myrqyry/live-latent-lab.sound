@@ -1,18 +1,19 @@
 #include <obs-module.h>
 #include <obs.h>
 #include <string>
-#include <memory>
 #include <mutex>
-#include <vector>
 #include "engines/matchering_engine.hpp"
 #include "framework/obs_helpers.h"
 
 struct matchering_data {
     obs_source_t *context;
-    std::unique_ptr<stts::MatcheringEngine> engine;
-    std::mutex mutex;
+    stts::MatcheringEngine engine; // exclusively owned by audio after creation
+    stts::MatcheringControl control;
+    std::mutex mutex; // serializes control writers, never taken by audio
     std::string reference_path;
-    stts::MatcheringEngine::Parameters params;
+    stts::MatcheringControl::Snapshot settings;
+    uint32_t applied_generation = UINT32_MAX;
+    uint32_t sample_rate = 48000;
 };
 
 static const char *matchering_get_name(void *unused)
@@ -35,21 +36,27 @@ static void matchering_update(void *data, obs_data_t *settings)
     const char* path_ptr = obs_data_get_string(settings, "reference_path");
     if (path_ptr && std::string(path_ptr) != filter->reference_path) {
         filter->reference_path = path_ptr;
-        filter->engine->initialize(filter->reference_path);
+        stts::MatcheringEngine loader;
+        if (loader.initialize(filter->reference_path))
+            filter->settings.reference = loader.reference_profile();
+        else
+            filter->settings.reference = {};
+        ++filter->settings.generation;
     }
 
-    filter->params.smoothing = (float)obs_data_get_double(settings, "smoothing");
-    filter->params.eq_amount = (float)obs_data_get_double(settings, "eq_amount");
-    filter->params.mix = (float)obs_data_get_double(settings, "mix");
+    filter->settings.parameters.smoothing = (float)obs_data_get_double(settings, "smoothing");
+    filter->settings.parameters.eq_amount = (float)obs_data_get_double(settings, "eq_amount");
+    filter->settings.parameters.mix = (float)obs_data_get_double(settings, "mix");
 
-    filter->engine->set_parameters(filter->params);
+    filter->control.publish(filter->settings);
 }
 
 static void *matchering_create(obs_data_t *settings, obs_source_t *context)
 {
     matchering_data *filter = new matchering_data();
     filter->context = context;
-    filter->engine = std::make_unique<stts::MatcheringEngine>();
+    if (auto* audio = obs_get_audio())
+        filter->sample_rate = audio_output_get_sample_rate(audio);
 
     // Set defaults if not present
     matchering_update(filter, settings);
@@ -60,53 +67,23 @@ static struct obs_audio_data *matchering_filter_audio(void *data, struct obs_aud
 {
     matchering_data *filter = (matchering_data *)data;
 
-    if (!filter->engine->is_ready()) {
-        return audio;
-    }
+    if (!audio || !audio->data[0] || !audio->frames) return audio;
 
-    std::lock_guard<std::mutex> lock(filter->mutex);
-
-    uint32_t channels = audio_output_get_channels(obs_get_audio());
-    // Fallback if we can't get global channels, guess based on data pointers?
-    // audio->frames is count.
-    // We assume max 2 channels for this filter or just process first 2.
-    // OBS usually processes in planar or interleaved. obs_audio_data is planar (array of pointers).
-
-    size_t frames = audio->frames;
-
-    // 1. Analyze Mix (Mono Downmix)
-    std::vector<float> mix_input(frames);
-    float *l = (float *)audio->data[0];
-
-    if (channels >= 2 && audio->data[1]) {
-        float *r = (float *)audio->data[1];
-        for (size_t i = 0; i < frames; i++) {
-            mix_input[i] = (l[i] + r[i]) * 0.5f;
+    stts::MatcheringControl::Snapshot snapshot;
+    if (filter->control.try_read(snapshot)) {
+        if (snapshot.generation != filter->applied_generation) {
+            filter->engine.apply_reference(snapshot.reference);
+            filter->applied_generation = snapshot.generation;
         }
-    } else {
-        // Mono
-        memcpy(mix_input.data(), l, frames * sizeof(float));
+        filter->engine.set_parameters(snapshot.parameters);
     }
+    if (!filter->engine.is_ready()) return audio;
 
-    // Update Analysis State
-    uint32_t sample_rate = audio_output_get_sample_rate(obs_get_audio());
-    filter->engine->update_analysis(mix_input, sample_rate);
-
-    // 2. Process Channels
-    // Channel 0 (Left / Mono)
-    {
-        std::vector<float> ch_data(l, l + frames);
-        filter->engine->process_channel(ch_data, 0);
-        memcpy(l, ch_data.data(), frames * sizeof(float));
-    }
-
-    // Channel 1 (Right)
-    if (channels >= 2 && audio->data[1]) {
-        float *r = (float *)audio->data[1];
-        std::vector<float> ch_data(r, r + frames);
-        filter->engine->process_channel(ch_data, 1);
-        memcpy(r, ch_data.data(), frames * sizeof(float));
-    }
+    auto* left = reinterpret_cast<float*>(audio->data[0]);
+    auto* right = reinterpret_cast<float*>(audio->data[1]);
+    filter->engine.update_analysis(left,right,audio->frames,filter->sample_rate);
+    filter->engine.process_channel(left,audio->frames,0);
+    if (right) filter->engine.process_channel(right,audio->frames,1);
 
     return audio;
 }
