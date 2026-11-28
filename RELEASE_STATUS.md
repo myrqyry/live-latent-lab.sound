@@ -1276,3 +1276,19 @@ two-type OBS registration. All 12 local reference links resolved.
 No new real-model measurement or combined-plugin acceptance; prior
 CUDA evidence remains unchanged. Next: evaluate overlap-add and
 lower latency against the unchanged v1 interface.
+
+
+## Multi-family separation candidate probe (2026-11-27)
+
+Broadened roadmap beyond HTDemucs after inspecting the installed
+audio-separator catalog and actual audio.cpp registry. Exact cached
+Kijai Mel-Band FP16 SafeTensors hash verified; direct strict model
+load and 1.4/2.8/8 s CUDA FP32 stereo probes passed twice.
+Warm repeat medians .1520/.2948/.9361 s, peak allocated 1030–1705
+MiB, outputs finite and nonzero, instrumental residual derived.
+No live OBS or quality qualification; no dependency install.
+See docs/stem-model-families.md and tests/verify-stem-melband-model.py.
+Preserve LLSTEM01; qualify named two/six-stem geometry separately.
+Native audio.cpp source supports separation but installed RVC/VAD
+registry does not; isolated native build required. Next: short-context
+quality/overlap comparison and native GPU candidate qualification.

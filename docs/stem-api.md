@@ -239,7 +239,8 @@ Cross-window overlap-add can be implemented on the OBS side without
 changing the wire layout if request geometry remains eight seconds.
 Any new request geometry or incompatible wire/OBS contract requires an
 explicit new version and separate qualification; do not silently
-reinterpret v1. Treat the existing 12-second delay and failure behavior
+reinterpret v1. For two-stem, six-stem and native GPU candidate
+evidence, see [separation backend expansion](stem-model-families.md). Treat the existing 12-second delay and failure behavior
 as the current playback contract, not a claim about the model's
 minimum achievable latency.
 
