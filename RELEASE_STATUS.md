@@ -1499,3 +1499,8 @@ and old Qt QSettings-written simple-path compatibility test. New
 model-picker regression added to baseline CI; entire CI not run.
 No actual OS dialog click-through or exotic legacy QSettings escaped
 paths tested. New candidate staged; installed binary unchanged.
+
+Follow-up regression found Qt legacy quoted directory names (comma)
+were not decoded by libobs INI parser. Qt-enabled fallback preserves
+legacy QSettings paths; new shared-format paths with comma work in
+Qt-free and expanded builds. All three real picker harnesses passed.

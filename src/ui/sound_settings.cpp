@@ -3,6 +3,7 @@
 #include <obs-module.h>
 #include <util/bmem.h>
 #include <util/config-file.h>
+#include <QSettings>
 #include <QDir>
 #include <QLabel>
 #include <QLineEdit>
@@ -94,6 +95,15 @@ bool savePage(QWidget*page){
     config_close(settings);
     page->findChild<QLabel*>("sound-preferences-status")->setText(ok?"Sound preferences saved.":"Could not save Sound preferences.");
     return ok;
+}
+}
+namespace sound_preferences {
+std::string legacy_directory(bool runtime){
+    const auto path=configPath();
+    if(path.isEmpty())return {};
+    const auto dir=QSettings(path,QSettings::IniFormat).value(runtime?"runtimes":"models").toString();
+    return !dir.isEmpty()&&QDir::isAbsolutePath(dir)&&QFileInfo(dir).isDir()?
+        QDir::cleanPath(dir).toUtf8().toStdString():std::string{};
 }
 }
 void register_sound_settings(){

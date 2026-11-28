@@ -8,6 +8,10 @@
 #include <string>
 
 namespace sound_preferences {
+#ifdef SOUND_WITH_SETTINGS_PAGE
+// Older Qt-written INI values may use QSettings-specific quoting/escapes.
+std::string legacy_directory(bool runtime);
+#endif
 inline std::string directory(bool runtime=false){
     char* path=obs_module_config_path("preferences.ini");
     if(!path)return {};
@@ -21,6 +25,11 @@ inline std::string directory(bool runtime=false){
     if(result.empty())return {};
     std::error_code ec;
     auto dir=std::filesystem::u8path(result);
-    return dir.is_absolute()&&std::filesystem::is_directory(dir,ec)?result:std::string{};
+    if(dir.is_absolute()&&std::filesystem::is_directory(dir,ec))return result;
+#ifdef SOUND_WITH_SETTINGS_PAGE
+    return legacy_directory(runtime);
+#else
+    return {};
+#endif
 }
 }

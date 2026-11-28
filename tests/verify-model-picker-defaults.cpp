@@ -12,7 +12,7 @@ int main(int argc,char**argv){
  CHECK(argc==4||argc==5||argc==6);
  const bool expanded=argc==5&&std::string(argv[4])=="--expanded";
  const bool installed=argc==6&&std::string(argv[4])=="--read-only";
- fs::path base=argv[3],models=installed?fs::path(argv[5]):base/"model library",runtime=base/"runtime library";
+ fs::path base=argv[3],models=installed?fs::path(argv[5]):base/"model library, test",runtime=base/"runtime library";
  if(!installed){fs::create_directories(models);fs::create_directories(runtime);}
  CHECK(obs_startup("en-US",base.string().c_str(),nullptr));
  obs_module_t*m=nullptr;CHECK(obs_open_module(&m,argv[1],argv[2])==MODULE_SUCCESS&&obs_init_module(m));

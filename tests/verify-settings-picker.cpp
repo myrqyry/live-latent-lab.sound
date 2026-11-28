@@ -23,6 +23,14 @@ int main(int argc,char**argv){
  CHECK(QString::fromUtf8(obs_property_path_default_path(obs_properties_get(p,"yamnet_model")))==tmp.filePath("models"));
  CHECK(QString::fromUtf8(obs_property_path_default_path(obs_properties_get(p,"mediapipe_library")))==tmp.filePath("runtime"));
  obs_properties_destroy(p);
+ // A legacy QSettings value containing a comma is quoted in the INI.
+ CHECK(QDir(tmp.path()).mkdir("models, test"));
+ path=obs_module_get_config_path(m,"preferences.ini");CHECK(path);
+ {QSettings s(QString::fromUtf8(path),QSettings::IniFormat);s.setValue("models",tmp.filePath("models, test"));s.sync();CHECK(s.status()==QSettings::NoError);}
+ bfree(path);
+ p=obs_get_source_properties("yamnet_classifier_source");CHECK(p);
+ CHECK(QString::fromUtf8(obs_property_path_default_path(obs_properties_get(p,"yamnet_model")))==tmp.filePath("models, test"));
+ obs_properties_destroy(p);
  auto*defaults=obs_get_source_defaults("yamnet_classifier_source");
  CHECK(defaults&&QString::fromUtf8(obs_data_get_string(defaults,"yamnet_model")).isEmpty());
  obs_data_release(defaults);obs_shutdown();
