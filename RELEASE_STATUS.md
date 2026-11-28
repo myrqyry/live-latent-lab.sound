@@ -1292,3 +1292,35 @@ Preserve LLSTEM01; qualify named two/six-stem geometry separately.
 Native audio.cpp source supports separation but installed RVC/VAD
 registry does not; isolated native build required. Next: short-context
 quality/overlap comparison and native GPU candidate qualification.
+
+
+## Synchronized cross-window blending (2026-11-27)
+
+Optional smooth_windows setting (off by default). The worker reuses 2 s
+of input context and advances 6 s per 8 s request, publishing
+complementary raised-cosine blends for all eight planes on the same
+timeline. LLSTEM01 and 12 s delay unchanged. Changing the mode starts a
+new generation; no old input context or output tail is retained.
+Worker-only reusable helper supports 2/4/6 stereo stem geometries
+(model-free); OBS still registers only the qualified four-stem layout.
+No audio-callback allocation or extra model calls per output.
+Steady-state request rate is 4/3 of the previous nonoverlapping mode.
+
+Red/green sample-exact timeline tests passed at 44100 and 48000, with
+733-frame variable final packets, complementary blend endpoints,
+malformed response/rejected publication and generation recovery;
+UBSan passed. Existing isolated runner passed 14 Python tests,
+C++ transport, cancellation, recovery, mix, dispatch and two-type OBS
+registry. Actual resident CUDA FP32, shifts 0, model overlap .1,
+segment 4, synthetic stereo 48 kHz fixture: normal 24 s four-source
+run passed (three windows, zero retries, 2400 packets, equal
+timestamps, zero drops); 49 s socket failure/reload passed (five
+windows, one retry, 4900 packets, exact silent fault/prefill, all
+stems restored, equal timestamps and zero drops). Eight completed
+requests .393–.487 s; one model load including warmup. 7300
+instrumented parent callbacks zero observed allocations/frees/
+locks/waits/>10ms. Normal wall p99 23.935us, recovery p99 19.366us,
+max .387ms. This qualifies timing/recovery, not separation quality
+or a hard RT guarantee. Actual live mode toggle and other rates,
+extended full wrappers and sustained contention remain untested.
+No installed plugin or running user OBS session changed; no push.

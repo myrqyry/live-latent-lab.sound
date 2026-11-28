@@ -53,6 +53,7 @@ int main(int argc,char**argv){
     if(argc!=5)return 2;
     const bool fixture=std::getenv("SOUND_STEM_OUTPUT_FIXTURE");
     const bool recover=std::getenv("SOUND_STEM_OUTPUT_RECOVER");
+    const bool smooth=std::getenv("SOUND_STEM_SMOOTH");
     const size_t seconds=recover?49:24;
     std::ifstream in(argv[3],std::ios::binary);
     std::vector<float> pcm(24*48000*2);
@@ -69,6 +70,7 @@ int main(int argc,char**argv){
     auto* input=obs_source_create(input_info.id,"fixture",nullptr,nullptr);
     auto* settings=obs_data_create();
     obs_data_set_int(settings,"mix_mode",3);
+    obs_data_set_bool(settings,"smooth_windows",smooth);
     obs_data_set_string(settings,"socket_path",argv[4]);
     auto* filter=obs_source_create("stem_live_buffered_filter","stem parent",settings,nullptr);
     if(!input||!filter)return 7;
@@ -154,7 +156,7 @@ int main(int argc,char**argv){
     }
     calldata_t d{};proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_live_v1",&d);
     auto windows=calldata_int(&d,"windows"),retries=calldata_int(&d,"automatic_retries");calldata_free(&d);
-    pass=pass&&(recover?(windows>=3&&retries>=1):(windows>=2&&windows<=3&&retries==0));
+    pass=pass&&(recover?(windows>=3&&retries>=1):(windows>=2&&windows<=(smooth?4:3)&&retries==0));
     calldata_t fanout{};
     bool fanout_status=proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_fanout_v1",&fanout);
     auto packets=calldata_int(&fanout,"packets"),drops=calldata_int(&fanout,"drops"),subscribers=calldata_int(&fanout,"subscribers");

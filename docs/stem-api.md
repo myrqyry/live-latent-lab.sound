@@ -1,7 +1,7 @@
 # Sound stem interfaces v1
 
 Compatibility baseline for the experimental Linux x86_64 `stem_live`
-effect, as implemented at 9c7499c. This describes the local Unix socket
+effect, originally baselined at 9c7499c with the optional overlap extension below. This describes the local Unix socket
 and native OBS interfaces, not HTTP, a network API, or a promised stable
 public release. See [expanded build and operation](expanded-build.md) and
 [qualification evidence](../RELEASE_STATUS.md).
@@ -139,6 +139,7 @@ then be audible.
 | Filter key | Type | Default / meaning |
 | --- | --- | --- |
 | socket_path | string | Runtime directory default if available |
+| smooth_windows | bool | false; optional 2 s cross-window overlap, 6 s hop |
 | stem | int | 3 (Vocals); 0–3 in single-stem mode |
 | mix_mode | int | 0 single, 1 instrumental, 2 custom, 3 separate outputs |
 | drums_gain, bass_gain, other_gain, vocals_gain | double | 1.0; linear 0–2, quantized to 1/4096 |
@@ -235,8 +236,15 @@ is a separate interface: [Sound signal interop v1](sound-signal-interop-v1.md).
 
 Preserve the v1 header, byte layout, stereo stem order, 8-second
 request geometry, error semantics and existing procedure signatures.
-Cross-window overlap-add can be implemented on the OBS side without
-changing the wire layout if request geometry remains eight seconds.
+The optional OBS-side cross-window blending keeps the v1 request
+geometry at eight seconds and delay_ms at 12000. It sends a new request
+every six seconds of capture, retaining two seconds of input context.
+Only the first six seconds of each prediction are published; the final
+two seconds are retained for complementary raised-cosine blending into
+the next prediction. Both channels of every stem use the same weights
+and timeline. The generation reset discards both input context and
+output tail. Changing smooth_windows starts fresh prefill. The
+windows counter counts successful requests, not seconds or played hops.
 Any new request geometry or incompatible wire/OBS contract requires an
 explicit new version and separate qualification; do not silently
 reinterpret v1. For two-stem, six-stem and native GPU candidate

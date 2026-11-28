@@ -210,7 +210,7 @@ substitutes unseparated music for a stem.
 The existing worker is external and user-owned: the OBS filter
 reconnects to its socket, rather than spawning or terminating it.
 Three automatic attempts use 250/500/1000 ms backoff; four successful
-eight-second windows replenish the budget. A missing endpoint
+model responses replenish the budget. A missing endpoint
 remains silent while attempting recovery. Changes to the socket reload live and start a new silent prefill.
 Single stem selection, instrumental and custom mix are live controls;
 all four stereo stems share the same batch cursor, so these changes
@@ -223,6 +223,18 @@ cumulative successful windows, automatic retries and delay_ms. Ready
 means a valid window has been queued, not necessarily that the silent
 prefill has elapsed. The delay is counted in received samples; this is
 not hardware-clock-drift correction.
+
+**Smooth window boundaries (2 s overlap)** is an optional filter
+setting, off by default. It retains two seconds of preceding input
+and crossfades adjacent predictions with complementary raised-cosine
+weights. It advances by six seconds of new audio per eight-second
+request (one-third more requests in steady state), with the same
+12-second prefill and unchanged v1 wire format. All stems and stereo
+channels use one timeline; the worker, not the audio callback,
+performs blending. Toggling the setting starts a fresh generation.
+This is independent of the worker's model-internal overlap setting.
+Live timing/recovery was verified with resident CUDA; comparative
+music quality and long-run contention still need qualification.
 
 A request is cancellable on the worker thread if its generation
 becomes obsolete, with nonblocking socket I/O, 20 ms poll intervals

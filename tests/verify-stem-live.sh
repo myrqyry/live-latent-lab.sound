@@ -52,6 +52,9 @@ cxx="${CXX:-c++}"
     "$root/tests/verify-stem-mix.cpp" -o "$work/mix"
 "$work/mix"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
+    "$root/tests/verify-stem-overlap.cpp" -o "$work/overlap"
+"$work/overlap"
+"$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-dispatch.cpp" -o "$work/dispatch"
 "$work/dispatch"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
@@ -184,13 +187,17 @@ for mode in MIX AUTO_RECOVER RECOVER;do
 done
 "$cxx" -std=gnu++17 -O2 -pthread -I"$inc" \
     "$root/tests/verify-stem-output-obs.cpp" "${libs[@]}" "${probe_flags[@]}" -o "$work/obs-outputs"
-for recover in 0 1;do
-    env_args=()
-    if [[ "$recover" == 1 ]];then env_args=(SOUND_STEM_OUTPUT_RECOVER=1);fi
-    env "${env_args[@]}" QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 80 \
-        "$work/obs-outputs" "$module" "$work/stage/data" "$work/input-f32-stereo.bin" "$socket_dir/model.sock" \
-        >"$work/fanout-$recover.log" 2>&1 || { tail -60 "$work/fanout-$recover.log";exit 1; }
-    grep -E '^STEM_OUTPUT |^STEM_FANOUT_OBS |^RT_CALLBACK ' "$work/fanout-$recover.log"
+for smooth in 0 1;do
+    for recover in 0 1;do
+        env_args=()
+        if [[ "$smooth" == 1 ]];then env_args+=(SOUND_STEM_SMOOTH=1);fi
+        if [[ "$recover" == 1 ]];then env_args+=(SOUND_STEM_OUTPUT_RECOVER=1);fi
+        log="$work/fanout-$smooth-$recover.log"
+        env "${env_args[@]}" QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 80 \
+            "$work/obs-outputs" "$module" "$work/stage/data" "$work/input-f32-stereo.bin" "$socket_dir/model.sock" \
+            >"$log" 2>&1 || { tail -60 "$log";exit 1; }
+        grep -E '^STEM_OUTPUT |^STEM_FANOUT_OBS |^RT_CALLBACK ' "$log"
+    done
 done
 echo "SOUND_STEM_LIVE_REAL_GPU_OBS_PASS=1"
 if [[ "$tts" == true ]]; then

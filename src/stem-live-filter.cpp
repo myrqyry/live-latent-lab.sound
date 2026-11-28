@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 #include "framework/live-stem-pipeline.hpp"
+#include "framework/stem-window-overlap.hpp"
 #include "framework/live-stem-client.hpp"
 #include "framework/live-stem-dispatch.hpp"
 #include "framework/live-stem-outputs.hpp"
@@ -35,6 +36,7 @@ struct StemFilter {
     static_assert(std::atomic<uint64_t>::is_always_lock_free);
     std::atomic<uint64_t> mix{stts::pack_stem_gains({0,0,0,1})};
     std::string socket_path;
+    bool smooth_windows=false; // control lock
     uint64_t revision=0;
     enum Status{Buffering,Ready,Error};
     std::atomic<int> status{Buffering};
@@ -61,6 +63,7 @@ constexpr const char* stem_names[]={"Drums","Bass","Other","Vocals"};
 void defaults(obs_data_t* settings) {
     obs_data_set_default_int(settings,"stem",3);
     obs_data_set_default_int(settings,"mix_mode",0);
+    obs_data_set_default_bool(settings,"smooth_windows",false);
     for(size_t i=0;i<4;++i){
         obs_data_set_default_double(settings,gain_keys[i],1.);
         obs_data_set_default_bool(settings,mute_keys[i],false);
@@ -87,9 +90,10 @@ void update(void* ptr,obs_data_t* settings) {
     std::string path=obs_data_get_string(settings,"socket_path");
     std::lock_guard<std::mutex> lock(data->control);
     data->mix.store(mix,std::memory_order_release);
-    if(!data->revision||path!=data->socket_path){
+    const bool smooth=obs_data_get_bool(settings,"smooth_windows");
+    if(!data->revision||path!=data->socket_path||smooth!=data->smooth_windows){
         if(data->revision)data->pipeline.invalidate();
-        data->socket_path=std::move(path);
+        data->socket_path=std::move(path);data->smooth_windows=smooth;
         ++data->revision;data->status=StemFilter::Buffering;data->wake.notify();
     }
 }
@@ -119,6 +123,10 @@ obs_properties_t* properties(void* ptr) {
     auto* props=obs_properties_create();
     obs_properties_add_text(props,"socket_path",
         "Local worker socket (live reload)",OBS_TEXT_DEFAULT);
+    obs_properties_add_bool(props,"smooth_windows","Smooth window boundaries (2 s overlap)");
+    obs_properties_add_text(props,"overlap_note",
+        "Optional overlapping inference every 6 s instead of 8 s. "
+        "Uses more inference time; keeps the 12 s playback delay. Changing this setting re-buffers.",OBS_TEXT_INFO);
     auto* mode=obs_properties_add_list(props,"mix_mode","Output mode",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
     obs_property_list_add_int(mode,"Single stem",0);
     obs_property_list_add_int(mode,"Instrumental (no vocals)",1);
@@ -152,33 +160,38 @@ obs_properties_t* properties(void* ptr) {
 
 void worker_loop(StemFilter* data) {
     const auto frames=data->pipeline.window_frames();
-    std::vector<float> input_l(frames),input_r(frames);
-    // Four healthy eight-second windows replenish the shared retry budget.
+    stts::StemWindowOverlap overlap(frames,8);
+    // Four healthy model responses replenish the shared retry budget.
     // The external sidecar is user-owned: reconnect, never spawn or kill it.
     stts::WorkerRecovery budget(4);
     uint64_t attempt_revision=0;
     uint32_t seq=0;
     while(!data->stopping.load()){
-        std::string path;uint64_t revision,epoch;
+        std::string path;uint64_t revision,epoch;bool smooth;
         {
             std::lock_guard<std::mutex> lock(data->control);
-            revision=data->revision;path=data->socket_path;
+            revision=data->revision;path=data->socket_path;smooth=data->smooth_windows;
             if(revision!=attempt_revision){budget.reset();attempt_revision=revision;}
             if(!data->pipeline.ok()&&!data->pipeline.restart())return;
             epoch=data->pipeline.epoch();data->status=StemFilter::Buffering;
         }
+        overlap.reset(smooth?size_t(data->sample_rate)*2:0);
         auto current=[&]{return data->pipeline.current(epoch);};
         while(!data->stopping.load()&&current()){
             const auto ticket=data->wake.sequence();
             if(!data->pipeline.worker_prepare()||
-               !data->pipeline.read_input_window(input_l.data(),input_r.data())){
+               !overlap.capture([&](float* l,float* r,size_t n){
+                   return data->pipeline.read_input_frames(l,r,n);
+               })){
                 if(!data->stopping.load()&&current())data->wake.wait(ticket,100);
                 continue;
             }
             if(!data->client.exchange_batch(path,data->sample_rate,seq++,
-                    input_l.data(),input_r.data(),frames,current,
+                    overlap.left(),overlap.right(),frames,current,
                     [&](const float* batch,size_t count){
-                        return data->pipeline.push_output_batch(batch,count);
+                        return overlap.publish(batch,count,[&](const float* out,size_t samples,size_t n){
+                            return data->pipeline.push_output_frames(out,samples,n);
+                        });
                     })){
                 data->pipeline.fault(epoch);break;
             }

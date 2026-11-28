@@ -161,7 +161,8 @@ public:
     explicit BasicLiveStemPipeline(uint32_t sample_rate)
         : rate_(sample_rate),inputs_(size_t(sample_rate)*32),
           outputs_(size_t(sample_rate)*24),
-          state_(sample_rate==44100||sample_rate==48000?3:0) {}
+          state_(sample_rate==44100||sample_rate==48000?3:0),
+          input_needed_(size_t(sample_rate)*8) {}
     uint64_t epoch()const{return state_.load(std::memory_order_acquire);}
     bool current(uint64_t e)const{return (e&1)&&epoch()==e;}
     bool ok()const{return epoch()&1;}
@@ -182,7 +183,7 @@ public:
         auto e=epoch();
         return (e&1)&&audio_ack_.load(std::memory_order_acquire)==e&&
             (worker_ack_.load(std::memory_order_acquire)!=e||
-             inputs_.available()>=window_frames());
+             inputs_.available()>=input_needed_.load(std::memory_order_relaxed));
     }
     // Worker must stop publishing old output before acknowledging new
     // capture. Each consumer alone advances its own queue read cursor.
@@ -201,9 +202,14 @@ public:
         if(!inputs_.push(l,r,frames)){fault(e);return false;}
         return current(e);
     }
-    bool read_input_window(float* l,float* r){
+    bool read_input_frames(float* l,float* r,size_t frames){
+        if(!frames||frames>window_frames())return false;
+        input_needed_.store(frames,std::memory_order_relaxed);
         auto e=worker_epoch_;
-        return current(e)&&inputs_.pop(l,r,window_frames())&&current(e);
+        return current(e)&&inputs_.pop(l,r,frames)&&current(e);
+    }
+    bool read_input_window(float* l,float* r){
+        return read_input_frames(l,r,window_frames());
     }
     bool push_output_window(const float* l,const float* r){
         auto e=worker_epoch_;
@@ -211,11 +217,16 @@ public:
         if(!outputs_.push(l,r,window_frames())){fault(e);return false;}
         return current(e);
     }
-    bool push_output_batch(const float* data,size_t count){
+    bool push_output_frames(const float* data,size_t count,size_t frames){
         auto e=worker_epoch_;
         if(!current(e))return false;
-        if(!outputs_.push_batch(data,count,window_frames())){fault(e);return false;}
+        if(!frames||frames>window_frames()||!outputs_.push_batch(data,count,frames)){
+            fault(e);return false;
+        }
         return current(e);
+    }
+    bool push_output_batch(const float* data,size_t count){
+        return push_output_frames(data,count,window_frames());
     }
     void process(float* left,float* right,size_t frames){
         process_with(left,right,frames,[&](float* l,float* r,size_t n){return outputs_.pop(l,r,n);});
@@ -266,6 +277,7 @@ private:
     StereoSpscQueue inputs_;
     OutputQueue outputs_;
     std::atomic<uint64_t> state_,audio_ack_{3},worker_ack_{3};
+    std::atomic<size_t> input_needed_; // next worker capture size
     uint64_t worker_epoch_=3,render_epoch_=3,played_=0;
 };
 using LiveStemPipeline = BasicLiveStemPipeline<StereoSpscQueue>;
