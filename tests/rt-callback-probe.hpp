@@ -26,7 +26,7 @@ struct Stats {
 inline Stats stats[]={{nullptr,"sound_stt_filter"},{nullptr,"sound_ddsp_filter"},
                        {nullptr,"stts_rvc_filter"},{nullptr,"yamnet_classifier_source"},
                        {nullptr,"stem_live_buffered_filter"},{nullptr,"matchering_filter"},
-                       {nullptr,"deepfilter_noise_suppression"}};
+                       {nullptr,"deepfilter_noise_suppression"},{nullptr,"stem_live_melband_filter"}};
 inline thread_local Stats* active=nullptr;
 inline uint64_t thread_cpu_ns(){
     timespec ts{};
@@ -132,7 +132,7 @@ void obs_register_source_s(const obs_source_info* info,size_t size){
     using Fn=void(*)(const obs_source_info*,size_t);
     static const auto real=reinterpret_cast<Fn>(dlsym(RTLD_NEXT,"obs_register_source_s"));
     if(size==sizeof(obs_source_info)&&info->filter_audio){
-        constexpr rt_probe::Callback wrappers[]={rt_probe::dispatch<0>,rt_probe::dispatch<1>,rt_probe::dispatch<2>,rt_probe::dispatch<3>,rt_probe::dispatch<4>,rt_probe::dispatch<5>,rt_probe::dispatch<6>};
+        constexpr rt_probe::Callback wrappers[]={rt_probe::dispatch<0>,rt_probe::dispatch<1>,rt_probe::dispatch<2>,rt_probe::dispatch<3>,rt_probe::dispatch<4>,rt_probe::dispatch<5>,rt_probe::dispatch<6>,rt_probe::dispatch<7>};
         for(size_t i=0;i<sizeof(wrappers)/sizeof(wrappers[0]);++i){
             auto& s=rt_probe::stats[i];
             if(std::strcmp(info->id,s.id)==0){

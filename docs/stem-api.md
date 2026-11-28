@@ -270,4 +270,4 @@ runtime requirements in [expanded-build.md](expanded-build.md).
 Model-free tests do not establish inference performance or music
 quality.
 
-Experimental named two-stem worker transport: [LLSTEM02 profile 1](stem-api-v2.md). This is not yet wired into the OBS filter.
+Experimental named two-stem worker and 2.1-second playback filter: [LLSTEM02 profile 1](stem-api-v2.md). The existing v1 procedure and producer settings are unchanged.

@@ -13,6 +13,7 @@
 namespace stts::stem_outputs {
 inline constexpr char source_id[]="stem_live_output";
 inline constexpr char filter_id[]="stem_live_buffered_filter";
+inline constexpr char mel_filter_id[]="stem_live_melband_filter";
 inline bool allowed_parent(obs_source_t* source){
     const auto* id=source?obs_source_get_unversioned_id(source):nullptr;
     return id&&std::strcmp(id,source_id)!=0&&
@@ -56,7 +57,7 @@ inline void update(void* ptr,obs_data_t* settings){
     auto* id=obs_data_get_string(settings,"filter_uuid");
     std::string key=id?id:"";
     int stem=int(obs_data_get_int(settings,"stem"));
-    if(stem<0||stem>3)stem=3;
+    if(stem<0||stem>4)stem=3;
     std::lock_guard<std::mutex> lock(d->control);
     if(d->binding&&d->binding->uuid==key&&d->binding->stem==stem)return;
     if(d->binding){d->binding->live.store(false,std::memory_order_release);revision.fetch_add(1,std::memory_order_release);}
@@ -83,7 +84,7 @@ inline void destroy(void* ptr){
 inline void add_filter(obs_source_t* parent,obs_source_t* filter,void* ptr){
     const auto* id=obs_source_get_unversioned_id(filter);
     const auto* uuid=obs_source_get_uuid(filter);
-    if(!id||std::strcmp(id,filter_id)||!uuid||!*uuid||obs_source_removed(filter))return;
+    if(!id||(std::strcmp(id,filter_id)&&std::strcmp(id,mel_filter_id))||!uuid||!*uuid||obs_source_removed(filter))return;
     auto label=std::string(obs_source_get_name(parent))+" / "+obs_source_get_name(filter);
     obs_property_list_add_string(static_cast<obs_property_t*>(ptr),label.c_str(),uuid);
 }
@@ -91,14 +92,38 @@ inline bool add_parent(void* ptr,obs_source_t* parent){
     if(allowed_parent(parent)&&!obs_source_removed(parent))obs_source_enum_filters(parent,add_filter,ptr);
     return true;
 }
+struct ParentProfile{std::string key;int profile=-1;};
+inline void profile_filter(obs_source_t*,obs_source_t* filter,void* ptr){
+    auto* p=static_cast<ParentProfile*>(ptr);
+    auto* uuid=obs_source_get_uuid(filter);auto* id=obs_source_get_unversioned_id(filter);
+    if(!uuid||!id||p->key!=uuid)return;
+    if(!std::strcmp(id,mel_filter_id))p->profile=1;
+    else if(!std::strcmp(id,filter_id))p->profile=0;
+}
+inline bool profile_parent(void* ptr,obs_source_t* parent){
+    if(allowed_parent(parent)&&!obs_source_removed(parent))obs_source_enum_filters(parent,profile_filter,ptr);
+    return static_cast<ParentProfile*>(ptr)->profile<0;
+}
+inline bool parent_changed(obs_properties_t* props,obs_property_t*,obs_data_t* settings){
+    ParentProfile profile{obs_data_get_string(settings,"filter_uuid")};
+    obs_enum_sources(profile_parent,&profile);
+    auto* stem=obs_properties_get(props,"stem");
+    if(stem)for(size_t i=0;i<obs_property_list_item_count(stem);++i){
+        auto id=obs_property_list_item_int(stem,i);
+        obs_property_list_item_disable(stem,i,profile.profile==1?id<3:profile.profile==0?id==4:false);
+    }
+    return true;
+}
 inline obs_properties_t* properties(void*){
     auto* p=obs_properties_create();
     auto* parents=obs_properties_add_list(p,"filter_uuid","Shared stem filter",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(parents,"(Select a buffered stem filter)","");
     obs_enum_sources(add_parent,parents);
+    obs_property_set_modified_callback(parents,parent_changed);
     auto* stem=obs_properties_add_list(p,"stem","Stereo stem",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
     obs_property_list_add_int(stem,"Drums",0);obs_property_list_add_int(stem,"Bass",1);
     obs_property_list_add_int(stem,"Other",2);obs_property_list_add_int(stem,"Vocals",3);
+    obs_property_list_add_int(stem,"Instrumental (RoFormer)",4);
     obs_properties_add_text(p,"note","Uses an existing LLL.sound Buffered stem filter. Add as a normal scene source; select Separate outputs on the parent to avoid duplicating its mix. Use OBS mixer for volume, monitoring and tracks. Keep the parent input active. Unbound or unavailable outputs are silent.",OBS_TEXT_INFO);
     return p;
 }

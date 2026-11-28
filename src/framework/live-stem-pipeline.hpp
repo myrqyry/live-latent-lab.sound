@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <stdexcept>
 
 namespace stts {
 class StereoSpscQueue {
@@ -67,6 +68,23 @@ private:
 };
 
 using StemGains = std::array<float,4>;
+// Stable public output IDs: legacy drums/bass/other/vocals = 0/1/2/3;
+// residual instrumental = 4. Never reinterpret a saved child as another stem.
+inline int stem_output_index(bool melband,int id){
+    if(melband)return id==3?0:id==4?1:-1;
+    return id>=0&&id<4?id:-1;
+}
+inline StemGains resolve_melband_gains(int mode,int selected,StemGains gains,unsigned muted,unsigned solo){
+    if(mode==3)return {};
+    if(mode==1)return {0,1,0,0};
+    if(mode==2){
+        for(size_t i=0;i<2;++i)
+            if((muted&(1u<<i))||((solo&3u)&&!(solo&(1u<<i))))gains[i]=0;
+        gains[2]=gains[3]=0;return gains;
+    }
+    return selected==4?StemGains{0,1,0,0}:StemGains{1,0,0,0};
+}
+
 // Mode 0 is the original single-stem selection; 1 is instrumental;
 // 2 is a custom linear mix. Explicit mute always overrides solo.
 inline StemGains resolve_stem_gains(int mode,int selected,StemGains gains,unsigned muted,unsigned solo){
@@ -102,14 +120,15 @@ inline StemGains unpack_stem_gains(uint64_t bits){
 // The input layout is [stem][channel][frame], matching LLSTEM01.
 class StemBatchQueue {
 public:
-    explicit StemBatchQueue(size_t capacity):capacity_(capacity),planes_(8*capacity){}
+    explicit StemBatchQueue(size_t capacity,size_t stems=4)
+        :capacity_(capacity),stem_count_(checked_count(stems)),planes_(2*stem_count_*capacity){}
     bool push_batch(const float* batch,size_t count,size_t frames){
-        if(!batch||!frames||frames>capacity_||count!=8*frames)return false;
+        if(!batch||!frames||frames>capacity_||count!=2*stem_count_*frames)return false;
         auto head=head_.load(std::memory_order_relaxed);
         auto tail=tail_.load(std::memory_order_acquire);
         if(head-tail>capacity_-frames)return false;
         const size_t offset=head%capacity_,first=std::min(frames,capacity_-offset);
-        for(size_t ch=0;ch<8;++ch){
+        for(size_t ch=0;ch<2*stem_count_;++ch){
             auto* dst=planes_.data()+ch*capacity_;
             const auto* src=batch+ch*frames;
             std::memcpy(dst+offset,src,first*sizeof(float));
@@ -131,13 +150,13 @@ public:
         if(head-tail<frames)return false;
         size_t offset=tail%capacity_,first=std::min(frames,capacity_-offset);
         std::fill_n(l,frames,0.f);std::fill_n(r,frames,0.f);
-        if(raw)for(size_t ch=0;ch<8;++ch){
+        if(raw)for(size_t ch=0;ch<2*stem_count_;++ch){
             const auto* src=planes_.data()+ch*capacity_;
             std::memcpy(raw[ch],src+offset,first*sizeof(float));
             if(first<frames)std::memcpy(raw[ch]+first,src,(frames-first)*sizeof(float));
         }
         // Skip muted stems entirely; each span is contiguous for SIMD.
-        for(size_t stem=0;stem<4;++stem){
+        for(size_t stem=0;stem<stem_count_;++stem){
             const float gain=gains[stem];
             if(gain==0.f)continue;
             auto* sl=planes_.data()+stem*2*capacity_;
@@ -149,7 +168,11 @@ public:
         return true;
     }
 private:
-    const size_t capacity_;
+    static size_t checked_count(size_t stems){
+        if(stems!=2&&stems!=4)throw std::invalid_argument("unsupported stem count");
+        return stems;
+    }
+    const size_t capacity_,stem_count_;
     std::vector<float> planes_;
     alignas(64) std::atomic<size_t> head_{0};
     alignas(64) std::atomic<size_t> tail_{0};
@@ -159,10 +182,17 @@ template<class OutputQueue>
 class BasicLiveStemPipeline {
 public:
     explicit BasicLiveStemPipeline(uint32_t sample_rate)
-        : rate_(sample_rate),inputs_(size_t(sample_rate)*32),
-          outputs_(size_t(sample_rate)*24),
+        : rate_(sample_rate),window_(size_t(sample_rate)*8),delay_(size_t(sample_rate)*12),
+          inputs_(size_t(sample_rate)*32),outputs_(size_t(sample_rate)*24),
           state_(sample_rate==44100||sample_rate==48000?3:0),
           input_needed_(size_t(sample_rate)*8) {}
+    // Immutable geometry for new named layouts; existing constructor and
+    // v1 defaults remain byte/timeline compatible.
+    BasicLiveStemPipeline(uint32_t rate,size_t window,size_t delay,size_t stems)
+        : rate_(rate),window_(window),delay_(delay),inputs_(size_t(rate)*8),
+          outputs_(size_t(rate)*6,stems),
+          state_((rate==44100||rate==48000)&&window&&window<=size_t(rate)*8&&delay&&delay<=size_t(rate)*6?3:0),
+          input_needed_(window) {}
     uint64_t epoch()const{return state_.load(std::memory_order_acquire);}
     bool current(uint64_t e)const{return (e&1)&&epoch()==e;}
     bool ok()const{return epoch()&1;}
@@ -177,8 +207,8 @@ public:
         return e&&!(e&1)&&state_.compare_exchange_strong(e,e+1,
             std::memory_order_acq_rel,std::memory_order_acquire);
     }
-    size_t window_frames()const{return size_t(rate_)*8;}
-    size_t delay_frames()const{return size_t(rate_)*12;}
+    size_t window_frames()const{return window_;}
+    size_t delay_frames()const{return delay_;}
     bool input_ready()const{
         auto e=epoch();
         return (e&1)&&audio_ack_.load(std::memory_order_acquire)==e&&
@@ -274,6 +304,7 @@ private:
     }
 private:
     const uint32_t rate_;
+    const size_t window_,delay_;
     StereoSpscQueue inputs_;
     OutputQueue outputs_;
     std::atomic<uint64_t> state_,audio_ack_{3},worker_ack_{3};

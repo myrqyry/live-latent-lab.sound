@@ -16,6 +16,7 @@
 #include <vector>
 #include "framework/live-stem-pipeline.hpp"
 #include "framework/stem-window-overlap.hpp"
+#include "framework/stem-readout.hpp"
 #include "framework/live-stem-client.hpp"
 #include "framework/live-stem-dispatch.hpp"
 #include "framework/live-stem-outputs.hpp"
@@ -24,9 +25,12 @@
 
 namespace {
 struct StemFilter {
-    explicit StemFilter(uint32_t rate)
-        : sample_rate(rate),pipeline(rate),client(stopping) {}
-    uint32_t sample_rate;
+    explicit StemFilter(uint32_t rate,bool mel)
+        : sample_rate(rate),melband(mel),
+          pipeline(mel?stts::LiveStemMixPipeline(rate,rate*28/10,rate*21/10,2):stts::LiveStemMixPipeline(rate)),
+          client(stopping) {}
+    const uint32_t sample_rate;
+    const bool melband;
     stts::LiveStemMixPipeline pipeline;
     stts::RtWake wake;
     std::atomic<bool> stopping{false};
@@ -75,22 +79,37 @@ void defaults(obs_data_t* settings) {
         obs_data_set_default_string(settings,"socket_path",path.c_str());
     }
 }
+constexpr const char* mel_gain_keys[]={"vocals_gain","instrumental_gain"};
+constexpr const char* mel_mute_keys[]={"vocals_mute","instrumental_mute"};
+constexpr const char* mel_solo_keys[]={"vocals_solo","instrumental_solo"};
+constexpr const char* mel_names[]={"Vocals","Instrumental"};
+const char* mel_name(void*){return "LLL.sound RoFormer stems (experimental)";}
+void mel_defaults(obs_data_t* settings){
+    defaults(settings);
+    obs_data_set_default_double(settings,"instrumental_gain",1.);
+    obs_data_set_default_bool(settings,"instrumental_mute",false);
+    obs_data_set_default_bool(settings,"instrumental_solo",false);
+    const char* dir=std::getenv("XDG_RUNTIME_DIR");
+    if(dir&&*dir)obs_data_set_default_string(settings,"socket_path",(std::string(dir)+"/lll-sound-melband.sock").c_str());
+}
 void update(void* ptr,obs_data_t* settings) {
     auto* data=static_cast<StemFilter*>(ptr);
     if(!data)return;
     int selected=int(obs_data_get_int(settings,"stem"));
     int mode=int(obs_data_get_int(settings,"mix_mode"));
     stts::StemGains gains{};unsigned muted=0,solo=0;
-    for(size_t i=0;i<4;++i){
-        gains[i]=float(obs_data_get_double(settings,gain_keys[i]));
-        if(obs_data_get_bool(settings,mute_keys[i]))muted|=1u<<i;
-        if(obs_data_get_bool(settings,solo_keys[i]))solo|=1u<<i;
+    for(size_t i=0;i<(data->melband?2u:4u);++i){
+        gains[i]=float(obs_data_get_double(settings,data->melband?mel_gain_keys[i]:gain_keys[i]));
+        if(obs_data_get_bool(settings,data->melband?mel_mute_keys[i]:mute_keys[i]))muted|=1u<<i;
+        if(obs_data_get_bool(settings,data->melband?mel_solo_keys[i]:solo_keys[i]))solo|=1u<<i;
     }
-    const auto mix=stts::pack_stem_gains(stts::resolve_stem_gains(mode,selected,gains,muted,solo));
+    const auto mix=stts::pack_stem_gains(data->melband?
+        stts::resolve_melband_gains(mode,selected,gains,muted,solo):
+        stts::resolve_stem_gains(mode,selected,gains,muted,solo));
     std::string path=obs_data_get_string(settings,"socket_path");
     std::lock_guard<std::mutex> lock(data->control);
     data->mix.store(mix,std::memory_order_release);
-    const bool smooth=obs_data_get_bool(settings,"smooth_windows");
+    const bool smooth=!data->melband&&obs_data_get_bool(settings,"smooth_windows");
     if(!data->revision||path!=data->socket_path||smooth!=data->smooth_windows){
         if(data->revision)data->pipeline.invalidate();
         data->socket_path=std::move(path);data->smooth_windows=smooth;
@@ -111,7 +130,7 @@ void snapshot(void* ptr,calldata_t* d){
         !data->pipeline.ok()||status==StemFilter::Buffering?"buffering":"ready");
     calldata_set_int(d,"windows",data->windows.load());
     calldata_set_int(d,"automatic_retries",data->retries.load());
-    calldata_set_int(d,"delay_ms",12000);
+    calldata_set_int(d,"delay_ms",data->melband?2100:12000);
 }
 bool mix_mode_changed(obs_properties_t* props,obs_property_t*,obs_data_t* settings){
     const auto mode=obs_data_get_int(settings,"mix_mode");
@@ -119,14 +138,16 @@ bool mix_mode_changed(obs_properties_t* props,obs_property_t*,obs_data_t* settin
     obs_property_set_visible(obs_properties_get(props,"custom_mix"),mode==2);
     return true;
 }
-obs_properties_t* properties(void* ptr) {
+obs_properties_t* properties_for(void* ptr,bool melband) {
     auto* props=obs_properties_create();
     obs_properties_add_text(props,"socket_path",
         "Local worker socket (live reload)",OBS_TEXT_DEFAULT);
+    if(!melband){
     obs_properties_add_bool(props,"smooth_windows","Smooth window boundaries (2 s overlap)");
     obs_properties_add_text(props,"overlap_note",
         "Optional overlapping inference every 6 s instead of 8 s. "
         "Uses more inference time; keeps the 12 s playback delay. Changing this setting re-buffers.",OBS_TEXT_INFO);
+    }
     auto* mode=obs_properties_add_list(props,"mix_mode","Output mode",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
     obs_property_list_add_int(mode,"Single stem",0);
     obs_property_list_add_int(mode,"Instrumental (no vocals)",1);
@@ -136,18 +157,22 @@ obs_properties_t* properties(void* ptr) {
     auto* list=obs_properties_add_list(props,"stem","Separated stereo stem",
         OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
     obs_property_list_add_int(list,"Vocals",3);
-    obs_property_list_add_int(list,"Drums",0);
-    obs_property_list_add_int(list,"Bass",1);
-    obs_property_list_add_int(list,"Other",2);
+    if(melband)obs_property_list_add_int(list,"Instrumental",4);
+    else{
+        obs_property_list_add_int(list,"Drums",0);
+        obs_property_list_add_int(list,"Bass",1);
+        obs_property_list_add_int(list,"Other",2);
+    }
     auto* custom=obs_properties_create();
-    for(size_t i=0;i<4;++i){
-        const auto label=std::string(stem_names[i]);
-        obs_properties_add_float_slider(custom,gain_keys[i],(label+" level (linear)").c_str(),0.,2.,.01);
-        obs_properties_add_bool(custom,mute_keys[i],(label+" mute").c_str());
-        obs_properties_add_bool(custom,solo_keys[i],(label+" solo").c_str());
+    for(size_t i=0;i<(melband?2u:4u);++i){
+        const auto label=std::string(melband?mel_names[i]:stem_names[i]);
+        obs_properties_add_float_slider(custom,melband?mel_gain_keys[i]:gain_keys[i],(label+" level (linear)").c_str(),0.,2.,.01);
+        obs_properties_add_bool(custom,melband?mel_mute_keys[i]:mute_keys[i],(label+" mute").c_str());
+        obs_properties_add_bool(custom,melband?mel_solo_keys[i]:solo_keys[i],(label+" solo").c_str());
     }
     obs_properties_add_group(props,"custom_mix","Stem mixer",OBS_GROUP_NORMAL,custom);
-    obs_properties_add_text(props,"delay_note",
+    obs_properties_add_text(props,"delay_note",melband?
+        "Experimental 2.1 s fixed delay, 2.8 s context / 700 ms hop / 350 ms lookahead. Needs the separate LLSTEM02 profile 1 CUDA worker. Vocals and residual instrumental only. Add Stem Output sources for independent routing. Faults mute, retry and restart prefill.":
         "Fixed 12 s delay; first 12 s silent. Needs local 8 s HTDemucs worker. "
         "All four stereo stems share one inference and playback clock. "
          "Mix controls change without rebuffering. Levels are linear; allow headroom when summing. "
@@ -158,12 +183,18 @@ obs_properties_t* properties(void* ptr) {
     return props;
 }
 
+obs_properties_t* properties(void* ptr){return properties_for(ptr,false);}
+obs_properties_t* mel_properties(void* ptr){return properties_for(ptr,true);}
+
 void worker_loop(StemFilter* data) {
     const auto frames=data->pipeline.window_frames();
     stts::StemWindowOverlap overlap(frames,8);
+    std::unique_ptr<stts::StemReadout> readout;
+    if(data->melband)readout=std::make_unique<stts::StemReadout>(frames,
+        data->sample_rate*7/10,data->sample_rate*35/100,data->sample_rate*14/100,4);
     // Four healthy model responses replenish the shared retry budget.
     // The external sidecar is user-owned: reconnect, never spawn or kill it.
-    stts::WorkerRecovery budget(4);
+    stts::WorkerRecovery budget(data->melband?40:4);
     uint64_t attempt_revision=0;
     uint32_t seq=0;
     while(!data->stopping.load()){
@@ -175,24 +206,26 @@ void worker_loop(StemFilter* data) {
             if(!data->pipeline.ok()&&!data->pipeline.restart())return;
             epoch=data->pipeline.epoch();data->status=StemFilter::Buffering;
         }
-        overlap.reset(smooth?size_t(data->sample_rate)*2:0);
+        if(readout)readout->reset();else overlap.reset(smooth?size_t(data->sample_rate)*2:0);
         auto current=[&]{return data->pipeline.current(epoch);};
         while(!data->stopping.load()&&current()){
             const auto ticket=data->wake.sequence();
+            auto capture=[&](float* l,float* r,size_t n){return data->pipeline.read_input_frames(l,r,n);};
             if(!data->pipeline.worker_prepare()||
-               !overlap.capture([&](float* l,float* r,size_t n){
-                   return data->pipeline.read_input_frames(l,r,n);
-               })){
+               !(readout?readout->capture(capture):overlap.capture(capture))){
                 if(!data->stopping.load()&&current())data->wake.wait(ticket,100);
                 continue;
             }
-            if(!data->client.exchange_batch(path,data->sample_rate,seq++,
-                    overlap.left(),overlap.right(),frames,current,
-                    [&](const float* batch,size_t count){
-                        return overlap.publish(batch,count,[&](const float* out,size_t samples,size_t n){
-                            return data->pipeline.push_output_frames(out,samples,n);
-                        });
-                    })){
+            auto publish=[&](const float* out,size_t samples,size_t n){
+                return data->pipeline.push_output_frames(out,samples,n);
+            };
+            auto publish_batch=[&](const float* batch,size_t count){
+                return readout?readout->publish(batch,count,publish):overlap.publish(batch,count,publish);
+            };
+            bool exchanged=readout?
+                data->client.exchange_melband(path,data->sample_rate,seq++,readout->left(),readout->right(),frames,current,publish_batch):
+                data->client.exchange_batch(path,data->sample_rate,seq++,overlap.left(),overlap.right(),frames,current,publish_batch);
+            if(!exchanged){
                 data->pipeline.fault(epoch);break;
             }
             {
@@ -249,7 +282,9 @@ void dispatch_loop(StemFilter* data){
         }
         const auto revision=outputs::revision.load(std::memory_order_acquire);
         if(key!=last_key||revision!=last_revision){
-            bindings=outputs::find(key);last_key=std::move(key);last_revision=revision;
+            bindings=outputs::find(key);
+            bindings.erase(std::remove_if(bindings.begin(),bindings.end(),[&](const auto& b){return stts::stem_output_index(data->melband,b->stem)<0;}),bindings.end());
+            last_key=std::move(key);last_revision=revision;
         }
         const bool allowed=!bindings.empty()&&data->fanout_allowed.load(std::memory_order_acquire)&&
             obs_source_enabled(data->context);
@@ -267,7 +302,7 @@ void dispatch_loop(StemFilter* data){
                     if(!obs_source_removed(source)&&obs_source_enabled(source)&&
                         binding->live.load(std::memory_order_acquire)){
                         obs_source_audio audio{};
-                        auto stem=size_t(binding->stem);
+                        auto stem=size_t(stts::stem_output_index(data->melband,binding->stem));
                         auto* l=valid?packet->planes[stem*2].data():silence.data();
                         auto* r=valid?packet->planes[stem*2+1].data():silence.data();
                         audio.data[0]=reinterpret_cast<const uint8_t*>(l);
@@ -332,7 +367,7 @@ void fanout_snapshot(void* ptr,calldata_t* d){
     calldata_set_int(d,"drops",data->dispatch_drops.load());
     calldata_set_int(d,"subscribers",data->dispatch_subscribers.load());
 }
-void* create(obs_data_t* settings,obs_source_t* source) {
+void* create_for(obs_data_t* settings,obs_source_t* source,bool melband) {
     auto* audio=obs_get_audio();
     const uint32_t rate=audio?audio_output_get_sample_rate(audio):0;
     if(rate!=48000 && rate!=44100){
@@ -340,7 +375,7 @@ void* create(obs_data_t* settings,obs_source_t* source) {
         return nullptr;
     }
     StemFilter* data=nullptr;
-    try{data=new StemFilter(rate);}catch(...){return nullptr;}
+    try{data=new StemFilter(rate,melband);}catch(...){return nullptr;}
     if(!data)return nullptr;
     data->context=source;
     try {
@@ -355,13 +390,16 @@ void* create(obs_data_t* settings,obs_source_t* source) {
         delete data;return nullptr;
     }
     proc_handler_add(obs_source_get_proc_handler(source),
+        melband?"void sound_stem_live_v2(out string status, out int windows, out int automatic_retries, out int delay_ms)":
         "void sound_stem_live_v1(out string status, out int windows, out int automatic_retries, out int delay_ms)",snapshot,data);
     proc_handler_add(obs_source_get_proc_handler(source),
         "void sound_stem_fanout_v1(out int packets, out int drops, out int subscribers)",fanout_snapshot,data);
     signal_handler_connect(obs_source_get_signal_handler(source),"enable",enabled_changed,data);
-    blog(LOG_INFO,"[Sound stems] Experimental stereo delayed filter created (rate=%u, delay=12s)",rate);
+    blog(LOG_INFO,"[Sound stems] Experimental stereo delayed filter created (rate=%u, delay=%dms)",rate,melband?2100:12000);
     return data;
 }
+void* create(obs_data_t* s,obs_source_t* p){return create_for(s,p,false);}
+void* mel_create(obs_data_t* s,obs_source_t* p){return create_for(s,p,true);}
 void destroy(void* ptr) {
     auto* data=static_cast<StemFilter*>(ptr);
     if(!data)return;
@@ -437,6 +475,14 @@ struct obs_source_info stem_live_filter={
     .filter_audio=filter_audio,
     .filter_remove=filter_remove,
     .filter_add=filter_add,
+};
+struct obs_source_info stem_live_melband_filter={
+    .id=stts::stem_outputs::mel_filter_id,
+    .type=OBS_SOURCE_TYPE_FILTER,
+    .output_flags=OBS_SOURCE_AUDIO,
+    .get_name=mel_name,.create=mel_create,.destroy=destroy,
+    .get_defaults=mel_defaults,.get_properties=mel_properties,.update=update,
+    .filter_audio=filter_audio,.filter_remove=filter_remove,.filter_add=filter_add,
 };
 struct obs_source_info stem_live_output={
     .id=stts::stem_outputs::source_id,

@@ -14,6 +14,7 @@ static const Effect effects[] = {
     {"demucs_audio_filter", "demucs_filter"},
     {"mic_modeler_filter", nullptr},
     {"stem_live_buffered_filter", "stem_live"},
+    {"stem_live_melband_filter", "stem_live"},
     {"stem_live_output", "stem_live"},
     {"deepfilter_noise_suppression", "deepfilter"},
     {"matchering_filter", "matchering"},

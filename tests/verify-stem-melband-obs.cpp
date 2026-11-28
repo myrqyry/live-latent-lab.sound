@@ -1,0 +1,168 @@
+// Real libobs capture/fanout and sample-count latency test. Use a real v2
+// CUDA sidecar, no mock separation. No changes to the normal OBS profile.
+#ifdef SOUND_RT_PROBE
+#include "rt-callback-probe.hpp"
+#endif
+#include <obs.h>
+#include <obs-module.h>
+#include <util/platform.h>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <thread>
+#include <vector>
+#include <algorithm>
+#include <string>
+#include <cassert>
+
+static const char* input_name(void*){return "MelBand test input";}
+static void* input_create(obs_data_t*,obs_source_t*){return reinterpret_cast<void*>(1);}
+static void input_destroy(void*){}
+static obs_source_info input_info={
+    .id="sound_melband_test_input",.type=OBS_SOURCE_TYPE_INPUT,
+    .output_flags=OBS_SOURCE_AUDIO,.get_name=input_name,.create=input_create,.destroy=input_destroy,
+};
+struct Packet{uint64_t ts;uint32_t frames;bool operator==(const Packet& b)const{return ts==b.ts&&frames==b.frames;}};
+struct Capture{
+    std::vector<float> l,r;
+    std::vector<Packet> packets;
+};
+static void capture(void* ptr,obs_source_t*,const audio_data* a,bool){
+    auto& s=*static_cast<Capture*>(ptr);
+    auto* l=reinterpret_cast<const float*>(a->data[0]);auto* r=reinterpret_cast<const float*>(a->data[1]);
+    if(!l||!r)return;
+    s.packets.push_back({a->timestamp,a->frames});
+    s.l.insert(s.l.end(),l,l+a->frames);s.r.insert(s.r.end(),r,r+a->frames);
+}
+static double energy(const Capture& s,size_t a,size_t b){
+    double sum=0;
+    for(size_t i=a;i<b&&i<s.l.size();++i)sum+=double(s.l[i])*s.l[i]+double(s.r[i])*s.r[i];
+    return sum;
+}
+int main(int argc,char** argv){
+    if(argc!=5)return 2;
+    const bool recover=std::getenv("SOUND_MELBAND_RECOVER");
+    const uint32_t rate=std::getenv("SOUND_MELBAND_44100")?44100:48000;
+    const size_t seconds=recover?16:10,packet=rate/100,delay=rate*21/10;
+    std::ifstream in(argv[3],std::ios::binary);
+    std::vector<float> pcm(24*48000*2),orig_l(seconds*rate),orig_r(seconds*rate);
+    if(!in.read(reinterpret_cast<char*>(pcm.data()),pcm.size()*sizeof(float)))return 3;
+    for(size_t i=0;i<orig_l.size();++i){
+        size_t src=i*48000/rate;
+        orig_l[i]=pcm[2*src];orig_r[i]=pcm[2*src+1];
+    }
+    if(!obs_startup("en-US",nullptr,nullptr))return 4;
+    obs_audio_info ai{};ai.samples_per_sec=rate;ai.speakers=SPEAKERS_STEREO;
+    if(!obs_reset_audio(&ai))return 5;
+    obs_module_t* module=nullptr;
+    if(obs_open_module(&module,argv[1],argv[2])!=MODULE_SUCCESS||!obs_init_module(module))return 6;
+    obs_register_source(&input_info);
+    auto* input=obs_source_create(input_info.id,"fixture",nullptr,nullptr);
+    auto* settings=obs_data_create();
+    obs_data_set_int(settings,"mix_mode",3);obs_data_set_string(settings,"socket_path",argv[4]);
+    auto* filter=obs_source_create("stem_live_melband_filter","RoFormer parent",settings,nullptr);
+    if(!input||!filter||!obs_source_get_uuid(filter))return 7;
+    std::string uuid=obs_source_get_uuid(filter);
+    std::array<obs_source_t*,3> outputs{};
+    std::array<Capture,3> stats{};
+    const int ids[]={3,4,0};const char* names[]={"vocals","instrumental","incompatible drums"};
+    auto* child=obs_data_create();
+    obs_data_set_string(child,"filter_uuid",uuid.c_str());
+    for(size_t i=0;i<3;++i){
+        obs_data_set_int(child,"stem",ids[i]);
+        outputs[i]=obs_source_create("stem_live_output",names[i],child,nullptr);
+        if(!outputs[i])return 8;
+        obs_source_add_audio_capture_callback(outputs[i],capture,&stats[i]);
+    }
+    obs_source_filter_add(input,filter);
+    auto* props=obs_source_properties(outputs[0]);
+    auto* parents=props?obs_properties_get(props,"filter_uuid"):nullptr;
+    auto* stem=props?obs_properties_get(props,"stem"):nullptr;
+    bool picker=false;
+    if(parents&&stem){
+        for(size_t i=0;i<obs_property_list_item_count(parents);++i){
+            auto* key=obs_property_list_item_string(parents,i);
+            picker|=key&&uuid==key;
+        }
+        obs_property_modified(parents,child);
+        for(size_t i=0;i<obs_property_list_item_count(stem);++i){
+            auto id=obs_property_list_item_int(stem,i);
+            picker&=obs_property_list_item_disabled(stem,i)==(id<3);
+        }
+    }
+    if(props)obs_properties_destroy(props);
+    obs_data_release(child);
+    auto* scene=obs_scene_create("melband scene");obs_scene_add(scene,input);
+    for(auto* s:outputs)obs_scene_add(scene,s);
+    obs_set_output_source(1,obs_scene_get_source(scene));
+    obs_source_inc_active(input);
+    for(auto* s:outputs)obs_source_inc_active(s);
+    Capture parent;obs_source_add_audio_capture_callback(input,capture,&parent);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    auto started=std::chrono::steady_clock::now();
+    auto initial=os_gettime_ns();
+    std::vector<float> l(packet),r(packet);
+    for(size_t i=0;i<seconds*100;++i){
+        if(i==500){
+            obs_source_set_name(filter,"renamed RoFormer parent");
+            if(recover){
+                obs_data_set_string(settings,"socket_path","/sound-melband-test-absent.sock");
+                obs_source_update(filter,settings);
+            }
+        }
+        if(recover&&i==900){
+            obs_data_set_string(settings,"socket_path",argv[4]);obs_source_update(filter,settings);
+        }
+        std::copy_n(orig_l.data()+i*packet,packet,l.data());std::copy_n(orig_r.data()+i*packet,packet,r.data());
+        obs_source_audio a{};
+        a.data[0]=reinterpret_cast<uint8_t*>(l.data());a.data[1]=reinterpret_cast<uint8_t*>(r.data());
+        a.frames=packet;a.speakers=SPEAKERS_STEREO;a.format=AUDIO_FORMAT_FLOAT_PLANAR;
+        a.samples_per_sec=rate;a.timestamp=initial+i*10000000ULL;
+        obs_source_output_audio(input,&a);
+        std::this_thread::sleep_until(started+std::chrono::milliseconds((i+1)*10));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    for(size_t i=0;i<3;++i)obs_source_remove_audio_capture_callback(outputs[i],capture,&stats[i]);
+    obs_source_remove_audio_capture_callback(input,capture,&parent);
+    bool pass=picker&&stats[2].l.empty()&&stats[0].packets==stats[1].packets&&
+        stats[0].l.size()==seconds*rate&&stats[1].l.size()==seconds*rate&&parent.l.size()==seconds*rate&&
+        energy(parent,0,parent.l.size())==0;
+    double maximum=0;
+    if(pass){
+        // First generation: complementary readout should reconstruct exact
+        // delayed stereo mixture. All future/history and blend indices agree.
+        for(size_t i=delay;i<(recover?5:seconds)*rate;++i){
+            maximum=std::max(maximum,double(std::abs(stats[0].l[i]+stats[1].l[i]-orig_l[i-delay])));
+            maximum=std::max(maximum,double(std::abs(stats[0].r[i]+stats[1].r[i]-orig_r[i-delay])));
+        }
+        pass=maximum<2e-6;
+    }
+    for(size_t i=0;i<2;++i){
+        auto& s=stats[i];
+        bool valid=energy(s,0,delay)==0&&energy(s,rate*3,rate*5)>0;
+        if(recover)valid=valid&&energy(s,rate*51/10,rate*9)==0&&energy(s,rate*9,rate*111/10)==0&&energy(s,rate*12,rate*15)>0;
+        pass&=valid;
+        printf("MELBAND_OBS stem=%s frames=%zu early=%g initial=%g fault=%g fresh_prefill=%g restored=%g pass=%d\n",
+            names[i],s.l.size(),energy(s,0,delay),energy(s,3*rate,5*rate),energy(s,rate*51/10,9*rate),
+            energy(s,9*rate,rate*111/10),energy(s,12*rate,15*rate),valid);
+    }
+    calldata_t d{};bool status=proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_live_v2",&d);
+    auto windows=calldata_int(&d,"windows"),retries=calldata_int(&d,"automatic_retries"),delay_ms=calldata_int(&d,"delay_ms");calldata_free(&d);
+    calldata_t f{};bool fan=proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_fanout_v1",&f);
+    auto packets=calldata_int(&f,"packets"),drops=calldata_int(&f,"drops"),subscribers=calldata_int(&f,"subscribers");calldata_free(&f);
+    pass=pass&&status&&fan&&delay_ms==2100&&windows>=8&&(recover?retries>=1:retries==0)&&packets==static_cast<long long>(seconds*100)&&drops==0&&subscribers==2;
+    printf("MELBAND_OBS_SUMMARY rate=%u recovery=%d delay_ms=%lld windows=%lld retries=%lld packets=%lld drops=%lld subscribers=%lld picker=%d wrong_stem_silent=%d reconstruction_max=%g pass=%d\n",
+        rate,recover,(long long)delay_ms,(long long)windows,(long long)retries,(long long)packets,(long long)drops,(long long)subscribers,picker,stats[2].l.empty(),maximum,pass);
+    obs_set_output_source(1,nullptr);obs_source_dec_active(input);
+    for(auto* s:outputs)obs_source_dec_active(s);
+    obs_source_filter_remove(input,filter);obs_source_release(filter);obs_scene_release(scene);
+    for(auto* s:outputs)obs_source_release(s);
+    obs_source_release(input);obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+    pass=rt_probe::report(seconds*100,{7})&&pass;
+#endif
+    return pass?0:1;
+}

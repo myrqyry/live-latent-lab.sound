@@ -245,6 +245,17 @@ external sidecar. The next request may contend with that old work.
 No dry bypass while the filter is enabled. The resident backend,
 shared mix and independent OBS output sources are available.
 
+### Experimental RoFormer stereo separation
+
+The same stem_live gate adds **LLL.sound RoFormer stems
+(experimental)**, with the shared Stem Output source, native routing
+and mixer. Its separate LLSTEM02 profile 1 worker requires the pinned
+local Mel-Band checkpoint and CUDA FP32. Its 2.1-second sample-count
+playback buffer uses the 2.8 s context/700 ms hop/350 ms future/
+140 ms blend configuration. Only vocals and residual instrumental
+are supported. See [v2 contract and qualification](stem-api-v2.md);
+do not connect this producer to the v1 HTDemucs socket.
+
 ### Independent stereo stem sources
 
 1. Attach **LLL.sound Buffered stem (experimental)** to an active stereo

@@ -1365,3 +1365,77 @@ seven-effect candidate staged and isolated registry passed eight IDs.
 Installation not applied because OBS remained running; do not
 overwrite a loaded module or interrupt the user session. No full
 expanded acceptance claimed.
+
+## Local installation and RoFormer short-hop OBS acceptance (2026-11-27)
+
+Installed the previously staged seven-effect module at 0f0ba26
+(SHA256 cb653072db919ceae2fceaf5dfed3ab85aa5ab59b2fe65a93d2536fa804b5472)
+after the user closed normal OBS. The only remaining obs process was
+an isolated Unscene centered-title smoke test on Xvfb :407, with a
+separate configuration and no mapped Sound module; sent SIGTERM
+to that test process and confirmed no OBS process remained. Followed
+the previous documented local atomic binary replacement, not the
+older combined receipt installer (which does not support the full
+seven-effect profile). Backup:
+~/.config/obs-studio/plugin-backups/sound-before-0f0ba26-7Ul3ys/
+(previous binary SHA256
+3ebe16651bf873a5011d3b21077225678a7e261925f9be20ebc9175b0ac3f8d2).
+Installed hash matched stage/build, all eight source/filter IDs
+registered in isolated libobs. Existing runtime/model/scene/service
+files unchanged. No full expanded acceptance claimed.
+
+Continuation: the new experimental stem_live_melband_filter shares
+the existing producer/filter mixer, generation handshakes, recovery,
+source binding and dispatch worker. LLSTEM01 remains unchanged;
+LLSTEM02 profile 1 uses a separate endpoint and true two-stem ring.
+The worker-only StemReadout uses fixed 2.8 s context, .7 s hop,
+.35 s future, .14 s complementary blend, 1.75 s initial zero history.
+First capture is 1.05 s, later .7 s; playback is a fixed 2.1 s
+sample-count prefill. Reset discards all history/tails. The v1 ring
+and settings are preserved. Stable public stem IDs vocals=3,
+instrumental=4; incompatible bindings do not receive packets,
+picker disables incompatible choices. New read-only
+sound_stem_live_v2 reports delay_ms=2100; fanout_v1 unchanged.
+Custom gains/mute/solo, instrumental and separate outputs available;
+two-stem mixer mapping verified model-free, actual live mode toggles
+not separately exercised. 40 successful requests replenish retry
+budget. No global output-slot changes. No new dependency installation.
+
+Red/green sample-exact short-readout tests at both rates, variable
+packet sizes, reset/fresh prefill and blend endpoints; UBSan passed.
+All 18 Python tests, v1/v2 socket/shape/cancellation, mix/dispatch,
+overlap, transport recovery and exact three-type isolated registry
+passed. Actual isolated module SHA256
+0b9b0e339055e2bc2b9efb4382406c66e1618f0cd182d84083d68c32d27522d1.
+Real resident pinned Mel-Band FP32 CUDA on synthetic stereo fixture:
+- 10 s at 48kHz and 10 s at 44.1kHz: each 13 requests, 1000
+  synchronized dispatch packets, 0 retries/drops, 2 valid subscribers,
+  exact initial 2.1 s silence, same packet timestamps, reconstruction
+  max error 5.96046e-8 relative to captured stereo at the exact sample
+  delay. Both learned vocals and residual instrumental nonzero;
+  unavailable drums binding received no packets. UUID picker and
+  rename exercised. Parent in separate-output mode remained silent.
+- 16 s at 48kHz, socket missing from 5 to 9 s: 15 requests, 2
+  automatic retries, 1600 synchronized packets, 0 drops, both child
+  streams silent in tested fault/fresh prefill intervals and nonzero
+  together after recovery. Initial generation reconstruction max
+  5.96046e-8; recovered reconstruction alignment not separately checked.
+- 41 completed real model requests, server processing (including
+  resampling) .2805–.3208 s, median .2975 s. 3600 instrumented parent
+  callbacks: no observed allocations/frees/locks/waits/>10ms.
+  p99 12.513/14.225/11.891 us, max .083481 ms.
+- Actual v1 resident CUDA overlapping four-stem fanout rerun on
+  same module, 24 s at 48kHz, 3 windows .401–.420 s, zero retries,
+  2400 packets, zero drops and equal timestamps, parent silent,
+  detached children silent. Callback p99 13.915us, max 26.397us,
+  no observed allocations/frees/locks/waits/>10ms.
+
+The checked-in tests/verify-stem-melband-obs.sh reproduces the same
+acceptance commands (wrapper syntax checked; actual tests run
+directly). This proves sample-stream latency, not physical speaker
+latency, musical quality, actual multitrack recordings, concurrent
+GPU pressure, long-duration robustness or full expanded acceptance.
+New RoFormer module is not installed or pushed. Installed prior
+0f0ba26 build remains unchanged. Next: real mixer switch/lifecycle
+stress, shared worker/model provisioning and isolated native GGUF
+candidate qualification.

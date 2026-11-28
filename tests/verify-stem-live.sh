@@ -8,13 +8,13 @@ combined=false
 tts=false
 stt=false
 effects="stem_live"
-count=2
+count=3
 case "${1:-}" in
   "") ;;
   --with-model) run_real=true ;;
-  --combined) run_real=true; combined=true; effects="stem_live;yamnet"; count=3 ;;
-  --combined-tts) run_real=true; combined=true; tts=true; effects="stem_live;yamnet;tts"; count=4 ;;
-  --combined-stt) run_real=true; combined=true; tts=true; stt=true; effects="stem_live;yamnet;tts;stt"; count=5 ;;
+  --combined) run_real=true; combined=true; effects="stem_live;yamnet"; count=4 ;;
+  --combined-tts) run_real=true; combined=true; tts=true; effects="stem_live;yamnet;tts"; count=5 ;;
+  --combined-stt) run_real=true; combined=true; tts=true; stt=true; effects="stem_live;yamnet;tts;stt"; count=6 ;;
   *) echo "Usage: $0 [--with-model|--combined|--combined-tts|--combined-stt]" >&2; exit 2 ;;
 esac
 work="$(mktemp -d /tmp/lll-sound-stem-live-XXXXXX)"
@@ -54,6 +54,8 @@ cxx="${CXX:-c++}"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-overlap.cpp" -o "$work/overlap"
 "$work/overlap"
+"$cxx" -std=c++17 -O2 -pthread -I"$root/src" "$root/tests/verify-stem-readout.cpp" -o "$work/readout"
+"$work/readout"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-dispatch.cpp" -o "$work/dispatch"
 "$work/dispatch"

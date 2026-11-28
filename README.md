@@ -16,6 +16,7 @@ All entries use the `LLL.sound` prefix in OBS.
 | --- | --- | --- |
 | Native YAMNet (experimental) | Audio classification; dry stereo passthrough | Both |
 | [Buffered stem / Stem Output (experimental)](docs/stem-api.md) | CUDA HTDemucs shared four-stem stereo mix and independent OBS sources, fixed 12-second delay | Expanded |
+| [RoFormer stems (experimental)](docs/stem-api-v2.md) | CUDA Mel-Band vocals and residual instrumental, shared mixer/routing, fixed 2.1-second delay | Expanded |
 | STT | Select Whisper, Parakeet or streaming Nemotron; optional [Zipformer CPU](docs/zipformer-stt.md); rolling captions | Expanded |
 | TTS | Select Kokoro ONNX/native CUDA, Piper, Chatterbox Nano/native Turbo CPU, TikTok or Edge | Expanded |
 | [Audio Diffusion](docs/audio-diffusion.md) | Local Stable Audio 3 music/SFX, continuous playback, capture and transformation, prompt/LoRA automation, optional resident SAME-S morph/texture and overlapping live wet output | Explicit opt-in |
@@ -49,7 +50,7 @@ YAMNet requires a separately supplied compatible MediaPipe 1.2.3 runtime
 and classification model. Follow the [verified asset setup](docs/yamnet-setup.md).
 
 The baseline profile includes only YAMNet. Deterministic microphone modeling now lives in [HyperDSP](https://github.com/myrqyry/hyperdsp). The expanded
-profile registers YAMNet, the two stem types, STT and TTS. Audio Diffusion
+profile registers YAMNet, the three stem types, STT and TTS. Audio Diffusion
 requires a separately qualified SA3 runtime and the explicit diffusion gate.
 DDSP requires its separately qualified LiteRT runtime/models and ddsp gate.
 Other historical effects stay quarantined.
@@ -109,7 +110,7 @@ moved to HyperDSP. Individual real OBS audio tests at both 44.1/48 kHz
 cover multiple backends, but the latest combined acceptance suite has
 not passed as one uninterrupted run. Parakeet has an unresolved
 intermittent 44.1 kHz lifecycle failure; the SA3 lifecycle also required
-a retry. The latest seven-effect module has been installed locally and verified with isolated OBS registration, YAMNet, DDSP and native CUDA RVC at 48 kHz. This is local qualification, not a distributed installer.
+a retry. The previous seven-effect module (including four-stem overlap) is installed locally; the new RoFormer candidate is separately staged and tested. Earlier installed-module YAMNet, DDSP and native CUDA RVC acceptance was at 48 kHz. This is local qualification, not a distributed installer.
 
 [Release evidence and history](RELEASE_STATUS.md) · [Model settings audit](docs/model-settings-audit.md)
 · [Build checks](https://github.com/myrqyry/live-latent-lab.sound/actions)
