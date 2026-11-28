@@ -17,26 +17,17 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 SHA256 = "6119aef379a6c7264e0b37db65ae1e6488b8ca4a00baf56d6d244737b8488226"
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--fixture", type=Path, required=True,
-                        help="Local 48 kHz interleaved stereo float32, >=8 seconds")
-    parser.add_argument("--safetensors-package", type=Path,
-                        help="Optional explicitly trusted existing safetensors package directory, if absent from this venv")
-    args = parser.parse_args()
-    with args.model.open("rb") as stream:
+def load_model(model_path, safetensors_package=None):
+    with model_path.open("rb") as stream:
         if hashlib.file_digest(stream, "sha256").hexdigest() != SHA256:
             raise ValueError("Unexpected model checkpoint")
     if importlib.metadata.version("audio-separator") != "0.47.0":
         raise RuntimeError("Probe pinned to audio-separator 0.47.0")
-    import numpy as np
-    from scipy.signal import resample_poly
     import torch
     if not torch.cuda.is_available():
         raise RuntimeError("Explicit CUDA unavailable")
-    if args.safetensors_package is not None:
-        package = args.safetensors_package.resolve(strict=True)
+    if safetensors_package is not None:
+        package = safetensors_package.resolve(strict=True)
         spec = importlib.util.spec_from_file_location(
             "safetensors", package / "__init__.py",
             submodule_search_locations=[str(package)])
@@ -48,10 +39,6 @@ def main():
     from safetensors.torch import load_file
     from audio_separator.separator.uvr_lib_v5.roformer.mel_band_roformer import MelBandRoformer
 
-    raw = np.fromfile(args.fixture, dtype="<f4").reshape(-1, 2).T
-    if raw.shape[1] < 8 * 48000 or not np.isfinite(raw).all():
-        raise ValueError("Invalid fixture")
-    pcm = resample_poly(raw[:, :8 * 48000], 147, 160, axis=1).astype("float32")
     started = time.monotonic()
     # Published Kijai loader geometry; current installed adapter's default
     # zero-DC behavior. Strict state loading, FP32 execution, no autocast.
@@ -61,13 +48,32 @@ def main():
         dim_freqs_in=1025, sample_rate=44100, stft_n_fft=2048,
         stft_hop_length=441, stft_win_length=2048, stft_normalized=False,
         mask_estimator_depth=2, match_input_audio_length=True).eval()
-    state = load_file(str(args.model), device="cpu")
+    state = load_file(str(model_path), device="cpu")
     model.load_state_dict(state, strict=True)
     del state
     model = model.to("cuda")
     torch.cuda.synchronize()
     print(f"MELBAND_STRICT_LOAD_PASS device={next(model.parameters()).device} "
           f"dtype={next(model.parameters()).dtype} elapsed={time.monotonic()-started:.4f}", flush=True)
+    return model
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--fixture", type=Path, required=True,
+                        help="Local 48 kHz interleaved stereo float32, >=8 seconds")
+    parser.add_argument("--safetensors-package", type=Path,
+                        help="Optional explicitly trusted existing safetensors package directory, if absent from this venv")
+    args = parser.parse_args()
+    import numpy as np
+    from scipy.signal import resample_poly
+    import torch
+    model = load_model(args.model, args.safetensors_package)
+    raw = np.fromfile(args.fixture, dtype="<f4").reshape(-1, 2).T
+    if raw.shape[1] < 8 * 48000 or not np.isfinite(raw).all():
+        raise ValueError("Invalid fixture")
+    pcm = resample_poly(raw[:, :8 * 48000], 147, 160, axis=1).astype("float32")
     with torch.inference_mode():
         for seconds in (1.4, 2.8, 8.0):
             frames = round(44100 * seconds)

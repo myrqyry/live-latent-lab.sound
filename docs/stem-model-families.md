@@ -124,3 +124,74 @@ Prior art:
 
 No OBS changes, runtime install, push, new stem source or model-family
 registration in this checkpoint.
+
+## Readout versus context experiment (2026-11-27)
+
+A longer inference context need not dictate the playback hop. The
+September 2026 preprint https://arxiv.org/abs/2609.35397 studies this
+distinction with sliding windows and short output readouts. Its
+reported latency/performance is not a measurement on this GPU.
+
+Reused the exact pinned Mel-Band FP32 CUDA loader above, using the
+previous Stem Splitter private 16-second, 44.1 kHz stereo music
+fixture (not included in Git). Reference is one model pass on the
+whole 16 seconds, not ground truth. Scored the same interior seven
+seconds (ten 700 ms readouts) in every configuration, all context
+within the fixture. Model context = history + readout + future
+lookahead; algorithmic wait = readout + lookahead, plus compute,
+transport, scheduling and playback buffering in a real implementation.
+No retraining, audio export or model download.
+
+Two full experiments passed. The second also reuses the preceding
+window's prediction of the first 140 ms of the next readout, blending
+with the current estimate using complementary raised-cosine weights.
+The preceding prediction is already available; no extra inference or
+lookahead is required. The remaining audio is read directly. Residual
+instrumental is calculated after blending vocals, preserving the input
+mixture within float32 precision. This reconstruction check is
+algebraic, not evidence that vocals are accurately isolated.
+
+| Context | Future | Algorithmic wait | Median model | Model RTF | Relative RMS error, direct / blended | Boundary RMS, direct / blended |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1.4 s | .35 s | 1.05 s | .1552 s | .2284 | .15460 / .15404 | .0061292 / .0010841 |
+| 2.8 s | .35 s | 1.05 s | .2954 s | .4235 | .07462 / .07491 | .0021389 / .0005539 |
+| 2.8 s | 1.05 s | 1.75 s | .2958 s | .4216 | .06877 / .06901 | .0040789 / .0004141 |
+| 5.6 s | .35 s | 1.05 s | .6013 s | .8572 | .05290 / .05290 | .0015206 / .0004045 |
+| 5.6 s | 1.05 s | 1.75 s | .6026 s | .8595 | .05024 / .05037 | .0013075 / .0002396 |
+
+Relative RMS error is the estimate-minus-reference RMS divided by
+reference RMS. Boundary RMS is the first-difference error at the nine
+readout boundaries, relative to the reference. Neither metric is SDR
+or subjective listening quality. All model times exclude copying,
+resampling, worker IPC and other OBS loads. Max model time for the
+2.8 s/.35 s geometry was .3028 s, versus a .7 s hop; max for 5.6 s
+was .6090 s. Full-context reference took 2.136–2.179 s. Maximum
+residual reconstruction error was 2.98e-8 on this float32 fixture.
+
+Prefer 2.8 s context, .7 s readout, .35 s future and .14 s blend as
+the first balanced **experimental** streaming RoFormer configuration
+on this GPU: .07491 relative RMS deviation and .0005539 boundary
+error (74% less than direct readout), with approximately .4 s model
+budget remaining per hop under this particular load. The 1.4 s
+candidate has more compute headroom but higher reference deviation;
+5.6 s uses most of its hop budget. Longer lookahead can reduce
+reference deviation but adds delay. Do not silently choose a profile
+or advertise the 1.05 s algorithmic wait as end-to-end latency.
+A fixed 1.75–2.1 s playback buffer is a candidate to test, not an
+established deadline. Need multiple music genres, true source
+references/listening, continuous capture and GPU contention tests.
+
+Reproduce:
+```sh
+python tests/verify-stem-melband-readout.py \
+  --model /path/to/MelBandRoformer_fp16.safetensors \
+  --fixture /path/to/local-stereo-44100.wav
+```
+Use the explicit safetensors package argument only if required as
+in the earlier direct model probe. No changes to model dependencies.
+The shared loader retains strict checkpoint/adapter validation.
+This experiment is not live OBS integration, does not implement
+LLSTEM02 and does not register the two-stem model as four stems.
+The separately committed opt-in HTDemucs cross-window blend is
+already wired and verified in real OBS; its quality effect needs
+its own comparative music experiment.

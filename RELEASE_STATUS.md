@@ -1324,3 +1324,21 @@ max .387ms. This qualifies timing/recovery, not separation quality
 or a hard RT guarantee. Actual live mode toggle and other rates,
 extended full wrappers and sustained contention remain untested.
 No installed plugin or running user OBS session changed; no push.
+
+## Mel-Band streaming readout experiment (2026-11-27)
+
+Same pinned cached model, FP32 CUDA, previous private 16 s stereo
+music fixture, 16 s same-model reference. Five combinations of
+history/context/future, 700 ms hops, exact seven-second comparison.
+Two real GPU runs passed. Reused already-predicted 140 ms future
+tail for crossfade, no extra inference. Balanced experimental
+candidate: 2.8 s context, .7 s hop, .35 s future, .14 s blend,
+1.05 s algorithmic wait excluding compute/transport/buffering.
+Median .2954 s, max .3028 s, model RTF .4235, relative reference
+RMS error .07462 direct/.07491 blended, boundary RMS
+.0021389 direct/.0005539 blended. 5.6 s context closer to
+reference but model RTF .8572–.8595. All figures from one fixture,
+not SDR/ground truth, not live OBS. See docs/stem-model-families.md
+and tests/verify-stem-melband-readout.py. Next: qualified named
+two-stem streaming transport with explicit latency/model options;
+measure real end-to-end latency and recovery. No install/push.
