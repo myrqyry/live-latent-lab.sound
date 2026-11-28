@@ -42,7 +42,8 @@ struct StemFilter {
     // Q12 gains packed into one lock-free atomic, independent of model revision.
     static_assert(std::atomic<uint64_t>::is_always_lock_free);
     std::atomic<uint64_t> mix{stts::pack_stem_gains({0,0,0,1})};
-    std::string socket_path,python,model,safetensors;
+    std::string socket_path,python,model,safetensors,native_model;
+    bool native_backend=false;
     bool managed=true;
     std::atomic<uint64_t> activity{0};
     std::atomic<bool> attached{false};
@@ -97,6 +98,11 @@ constexpr const char* mel_names[]={"Vocals","Instrumental"};
 const char* mel_name(void*){return "LLL.sound RoFormer stems (experimental)";}
 void mel_defaults(obs_data_t* settings){
     defaults(settings);
+#ifdef SOUND_WITH_STEM_NATIVE
+    obs_data_set_default_bool(settings,"native_backend",true);
+#else
+    obs_data_set_default_bool(settings,"native_backend",false);
+#endif
     obs_data_set_default_double(settings,"instrumental_gain",1.);
     obs_data_set_default_bool(settings,"instrumental_mute",false);
     obs_data_set_default_bool(settings,"instrumental_solo",false);
@@ -129,14 +135,22 @@ void update(void* ptr,obs_data_t* settings) {
     const bool managed=managed_mode(settings,data->melband);
     std::string python=obs_data_get_string(settings,"worker_python"),model=obs_data_get_string(settings,"worker_model"),
         safetensors=obs_data_get_string(settings,"worker_safetensors");
+    const bool native_backend=data->melband&&obs_data_get_bool(settings,"native_backend");
+    std::string native_model=obs_data_get_string(settings,"native_model");
+    if(native_backend&&native_model.empty()){
+        auto root=sound_preferences::directory();
+        if(!root.empty())native_model=(std::filesystem::u8path(root)/"Mel-Band-RoFormer-GGUF"/"mel-band-roformer-f16.gguf").string();
+    }
     std::lock_guard<std::mutex> lock(data->control);
     data->mix.store(mix,std::memory_order_release);
     const bool smooth=!data->melband&&obs_data_get_bool(settings,"smooth_windows");
     if(!data->revision||path!=data->socket_path||smooth!=data->smooth_windows||managed!=data->managed||
-       python!=data->python||model!=data->model||safetensors!=data->safetensors){
+       python!=data->python||model!=data->model||safetensors!=data->safetensors||
+       native_backend!=data->native_backend||native_model!=data->native_model){
         if(data->revision||managed)data->pipeline.invalidate();
         data->socket_path=std::move(path);data->smooth_windows=smooth;data->managed=managed;
         data->python=std::move(python);data->model=std::move(model);data->safetensors=std::move(safetensors);
+        data->native_backend=native_backend;data->native_model=std::move(native_model);
         data->worker_state=managed?StemFilter::Idle:StemFilter::External;data->worker_detail.clear();
         ++data->revision;data->status=StemFilter::Buffering;data->wake.notify();
     }
@@ -182,8 +196,11 @@ bool worker_mode_changed(obs_properties_t* props,obs_property_t*,obs_data_t* set
     const auto mode=obs_data_get_int(settings,"worker_mode");
     const bool external=mode==1||(mode==-1&&!managed_mode(settings,false)&&!managed_mode(settings,true));
     obs_property_set_visible(obs_properties_get(props,"socket_path"),external);
+    const bool native=obs_properties_get(props,"native_backend")&&obs_data_get_bool(settings,"native_backend");
+    if(auto* p=obs_properties_get(props,"native_backend"))obs_property_set_visible(p,!external);
+    if(auto* p=obs_properties_get(props,"native_model"))obs_property_set_visible(p,!external&&native);
     for(auto key:{"worker_python","worker_model","worker_safetensors"})
-        if(auto* p=obs_properties_get(props,key))obs_property_set_visible(p,!external);
+        if(auto* p=obs_properties_get(props,key))obs_property_set_visible(p,!external&&!native);
     return true;
 }
 std::string status_text(StemFilter* data){
@@ -212,6 +229,15 @@ obs_properties_t* properties_for(void* ptr,bool melband) {
     obs_properties_add_path(props,"worker_model",melband?"Mel-Band model override":"Demucs model directory override",
         melband?OBS_PATH_FILE:OBS_PATH_DIRECTORY,melband?"SafeTensors (*.safetensors);;All files (*)":nullptr,model_root.c_str());
     if(melband)obs_properties_add_path(props,"worker_safetensors","Optional existing safetensors package",OBS_PATH_DIRECTORY,nullptr,runtime_root.c_str());
+    if(melband){
+        auto* native=obs_properties_add_bool(props,"native_backend","Native CUDA (GGUF; no Python)");
+#ifndef SOUND_WITH_STEM_NATIVE
+        obs_property_set_enabled(native,false);
+#endif
+        obs_property_set_modified_callback(native,worker_mode_changed);
+        obs_properties_add_path(props,"native_model","GGUF model (empty uses library F16 default)",OBS_PATH_FILE,
+            "GGUF (*.gguf);;All files (*)",model_root.c_str());
+    }
     obs_properties_add_text(props,"managed_note","Automatic mode loads the configured local model when audio arrives. Overrides are optional with a saved local profile. Cold loading adds silence before the fixed playback delay; no model downloads or CPU fallback.",OBS_TEXT_INFO);
     if(ptr){
         obs_properties_add_text(props,"worker_status",status_text(static_cast<StemFilter*>(ptr)).c_str(),OBS_TEXT_INFO);
@@ -274,11 +300,12 @@ void worker_loop(StemFilter* data) {
     uint64_t attempt_revision=0,seen_activity=0;
     uint32_t seq=0;
     while(!data->stopping.load()){
-        std::string path,python,model,safetensors;uint64_t revision,epoch=0;bool smooth,managed;
+        std::string path,python,model,safetensors,native_model;uint64_t revision,epoch=0;bool smooth,managed,native_backend;
         {
             std::lock_guard<std::mutex> lock(data->control);
             revision=data->revision;path=data->socket_path;smooth=data->smooth_windows;managed=data->managed;
             python=data->python;model=data->model;safetensors=data->safetensors;
+            native_backend=data->native_backend;native_model=data->native_model;
             if(revision!=attempt_revision){budget.reset();attempt_revision=revision;}
             if(managed)data->pipeline.invalidate();
             data->status=StemFilter::Buffering;
@@ -306,17 +333,23 @@ void worker_loop(StemFilter* data) {
             if(!valid_revision())continue;
             seen_activity=data->activity.load();
             data->worker_state=StemFilter::Loading;
-            char* file=obs_module_file("stem-worker/sound-stems.py");
+            char* file=obs_module_file(native_backend?"stem-native/sound-stem-native":"stem-worker/sound-stems.py");
             std::string script=file?file:"";bfree(file);
             bool acquired=slot.try_lock();
-            initialized=acquired&&child.start(script,data->melband?"melband":"demucs",python,model,safetensors)&&
-                child.wait_ready(valid_revision,std::chrono::seconds(60));
+            bool spawned=acquired&&(native_backend?child.start_native(script,native_model):
+                child.start(script,data->melband?"melband":"demucs",python,model,safetensors));
+            initialized=spawned&&child.wait_ready(valid_revision,std::chrono::seconds(60));
             if(!valid_revision())continue;
-            if(initialized){path=child.path();data->worker_state=StemFilter::Running;}
+            if(initialized){
+                path=child.path();
+                std::lock_guard<std::mutex> lock(data->control);
+                data->worker_detail=native_backend?"Native CUDA GGUF":"Python CUDA compatibility";
+                data->worker_state=StemFilter::Running;
+            }
             else{
                 std::lock_guard<std::mutex> lock(data->control);
                 data->worker_state=StemFilter::Unavailable;
-                data->worker_detail=acquired?"Local worker could not load. Check Python/model paths and OBS log.":"Another managed filter owns this model family.";
+                data->worker_detail=acquired?(native_backend?"Native CUDA worker unavailable. Check GGUF model/runtime and OBS log.":"Local worker could not load. Check Python/model paths and OBS log."):"Another managed filter owns this model family.";
                 auto detail=child.error();
                 blog(LOG_WARNING,"[Sound stems] %s %s",data->worker_detail.c_str(),detail.c_str());
             }

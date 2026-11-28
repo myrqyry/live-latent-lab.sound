@@ -1575,3 +1575,44 @@ worker path was previously qualified; no new real external
 acceptance in this pass. Optional runner:
 tests/verify-stem-managed-obs.sh (syntax checked; same commands
 executed directly). Native GGUF work unchanged.
+
+## Native CUDA RoFormer (2026-11-27)
+
+Resumed the preserved 26b8927 audio.cpp separation-only sm75 CUDA
+build. All remaining 85 tasks completed; no Python/Torch/NCCL
+linkage. Explicit model-spec lookup required for the prepared
+safetensors directory; the generated F16 and Q8_0 GGUF embed it.
+Real C API tests on three matching local music contexts verified
+both named stereo outputs, finite PCM and reconstruction <=2.98e-8.
+Warm median native FP32 226.3 ms, F16 140.5 ms, Q8_0 154.2 ms;
+max relative RMS difference from FP32 PyTorch reference .0159%,
+.0714%, .5091%. Sampled native process VRAM peaks 1300/892/712 MiB.
+F16 436 MiB, Q8_0 235 MiB. Native timings exclude host resampling
+and transport; reference agreement is not ground-truth quality.
+Separate C++ helper uses resident native C API, same LLSTEM02
+contract and sinc libsamplerate stereo conversion, no Python.
+Initial 48k roundtrip exposed one extra upsampled trailing frame;
+fixed exact host interval trimming and verified both GGUF variants
+at both rates, malformed profile and nonfinite input rejection,
+successful subsequent requests. Native-enabled build defaults to
+F16 under the shared Model Library; explicit native model picker
+and Python compatibility toggle, no silent fallback. Linux helper
+and matched private runtime are staged by CMake; OBS module does
+not link CUDA/Python/audiocpp. No existing runtime replacements.
+
+Actual managed F16 native OBS runs at 48k and 44.1k, 24 s each,
+no Python profile or pre-launched worker: default library picker
+and backend selected, cold first wet 2.72 s both rates, fixed
+2.1 s sample delay, each 32 requests, 2400 dispatch packets, 0
+retries/drops, 2 synchronized stems, incompatible drums silent,
+reconstruction max 5.96046e-8. Parent silent in split mode, child
+processes and private directories cleaned on shutdown. 4800
+observed callbacks no allocations/frees/locks/waits/>10 ms;
+worst p99 37.950 us, max 3.001 ms mostly off CPU. Q8 actual socket
+acceptance only, not live OBS. Expanded nine-ID registration passed.
+24 Python regression tests and model-free transport/lifecycle suite
+passed. Native-specific long soak, live fault/reload, multi-family
+GPU pressure and real music quality remain unqualified. Demucs
+still uses Python compatibility backend; no native four-stem claim.
+No redistributable binary package qualification; locally built
+runtime and licenses only. Native model assets not committed.

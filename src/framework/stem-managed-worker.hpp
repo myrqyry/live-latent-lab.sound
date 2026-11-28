@@ -37,15 +37,30 @@ public:
     bool start(const std::string& script,const std::string& profile,
                const std::string& python,const std::string& model,const std::string& safetensors){
         std::error_code ec;
-        if(pid_>0||!dir_.empty()||script.empty()||!std::filesystem::is_regular_file(script,ec))return false;
-        char temp[]="/tmp/lll-stem-worker-XXXXXX";
-        auto* dir=mkdtemp(temp);if(!dir)return false;
-        dir_=dir;path_=dir_+"/model.sock";
+        if(script.empty()||!std::filesystem::is_regular_file(script,ec)||!make_endpoint())return false;
         std::vector<std::string> args{"python3","-E","-s","-B",script,"run",profile,
             "--socket",path_,"--parent-pid",std::to_string(getpid())};
         if(!python.empty()){args.push_back("--python");args.push_back(python);}
         if(!model.empty()){args.push_back("--model");args.push_back(model);}
         if(!safetensors.empty()){args.push_back("--safetensors-package");args.push_back(safetensors);}
+        return spawn(args);
+    }
+    bool start_native(const std::string& helper,const std::string& model){
+        std::error_code ec;
+        if(helper.empty()||model.empty()||!std::filesystem::is_regular_file(helper,ec)||
+           access(helper.c_str(),X_OK)||!make_endpoint())return false;
+        std::vector<std::string> args{helper,"--model",model,"--socket",path_,
+            "--parent-pid",std::to_string(getpid())};
+        return spawn(args);
+    }
+private:
+    bool make_endpoint(){
+        if(pid_>0||!dir_.empty())return false;
+        char temp[]="/tmp/lll-stem-worker-XXXXXX";
+        auto* dir=mkdtemp(temp);if(!dir)return false;
+        dir_=dir;path_=dir_+"/model.sock";return true;
+    }
+    bool spawn(std::vector<std::string>& args){
         std::vector<char*> argv;for(auto& a:args)argv.push_back(a.data());argv.push_back(nullptr);
         posix_spawn_file_actions_t actions;
         if(posix_spawn_file_actions_init(&actions))return false;
@@ -58,6 +73,7 @@ public:
         if(ok)pid_=pid;
         return ok;
     }
+public:
     bool alive(){
         if(pid_<=0)return false;
         pid_t r;do{r=waitpid(pid_,nullptr,WNOHANG);}while(r<0&&errno==EINTR);

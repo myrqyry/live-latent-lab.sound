@@ -24,12 +24,13 @@ static std::vector<float> read(const char* path,size_t n){
 }
 int main(int argc,char**argv){
  try{
- if(argc!=5)throw std::runtime_error("model input.raw reference.raw weight_type");
+ if(argc!=5&&argc!=6)throw std::runtime_error("model input.raw reference.raw weight_type [model_spec]");
  constexpr size_t frames=123480, samples=frames*2, windows=3;
  auto x=read(argv[2],samples*windows),ref=read(argv[3],samples*windows);
  audiocpp_registry* r=nullptr;check(audiocpp_registry_create(nullptr,&r));
  Handle<audiocpp_registry,audiocpp_registry_free> registry(r,audiocpp_registry_free);
  audiocpp_model_config conf{};conf.family_hint="mel_band_roformer";
+ if(argc==6)conf.model_spec_override=argv[5];
  audiocpp_model* m=nullptr;
  auto start=std::chrono::steady_clock::now();
  check(audiocpp_model_load(r,argv[1],&conf,nullptr,&m));

@@ -17,6 +17,9 @@
 #include <algorithm>
 #include <string>
 #include <cassert>
+#include <filesystem>
+#include <util/config-file.h>
+#include <util/bmem.h>
 
 static const char* input_name(void*){return "MelBand test input";}
 static void* input_create(obs_data_t*,obs_source_t*){return reinterpret_cast<void*>(1);}
@@ -45,6 +48,8 @@ static double energy(const Capture& s,size_t a,size_t b){
 int main(int argc,char** argv){
     if(argc!=5)return 2;
     const bool managed=std::string(argv[4])=="--managed";
+    const char* native_library=std::getenv("SOUND_MELBAND_NATIVE_LIBRARY");
+    if(native_library&&!managed)return 2;
     const bool recover=std::getenv("SOUND_MELBAND_RECOVER");
     const bool mix=std::getenv("SOUND_MELBAND_MIX");
     if((mix&&recover)||(managed&&(mix||recover)))return 2;
@@ -57,11 +62,32 @@ int main(int argc,char** argv){
         size_t src=i*48000/rate;
         orig_l[i]=pcm[2*src];orig_r[i]=pcm[2*src+1];
     }
-    if(!obs_startup("en-US",nullptr,nullptr))return 4;
+    if(!obs_startup("en-US",std::getenv("SOUND_MELBAND_OBS_CONFIG"),nullptr))return 4;
     obs_audio_info ai{};ai.samples_per_sec=rate;ai.speakers=SPEAKERS_STEREO;
     if(!obs_reset_audio(&ai))return 5;
     obs_module_t* module=nullptr;
     if(obs_open_module(&module,argv[1],argv[2])!=MODULE_SUCCESS||!obs_init_module(module))return 6;
+    if(native_library){
+        if(!std::getenv("SOUND_MELBAND_OBS_CONFIG"))return 2;
+        auto* path=obs_module_get_config_path(module,"preferences.ini");
+        if(!path)return 6;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+        config_t* pref=nullptr;
+        if(config_open(&pref,path,CONFIG_OPEN_ALWAYS)!=CONFIG_SUCCESS){bfree(path);return 6;}
+        config_set_string(pref,"General","models",native_library);
+        bool saved=config_save(pref)==CONFIG_SUCCESS;config_close(pref);bfree(path);
+        if(!saved)return 6;
+        auto* def=obs_get_source_defaults("stem_live_melband_filter");
+        bool enabled=def&&obs_data_get_bool(def,"native_backend")&&std::string(obs_data_get_string(def,"native_model")).empty();
+        obs_data_release(def);
+        auto* props=obs_get_source_properties("stem_live_melband_filter");
+        auto* picker=props?obs_properties_get(props,"native_model"):nullptr;
+        const char* initial=picker?obs_property_path_default_path(picker):nullptr;
+        bool rooted=initial&&std::string(initial)==native_library;
+        if(props)obs_properties_destroy(props);
+        if(!enabled||!rooted)return 6;
+        printf("MELBAND_NATIVE_DEFAULT picker=%d enabled=%d\n",rooted,enabled);
+    }
     obs_register_source(&input_info);
     auto* input=obs_source_create(input_info.id,"fixture",nullptr,nullptr);
     auto* settings=obs_data_create();
@@ -188,7 +214,9 @@ int main(int argc,char** argv){
         calldata_t w{};bool state=proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_worker_v1",&w);
         auto* name=calldata_string(&w,"state");
         bool ready=state&&name&&std::string(name)=="Managed worker ready";
-        printf("MELBAND_MANAGED_START first_wet_s=%g ready=%d\n",double(first)/rate,ready);
+        const char* detail=calldata_string(&w,"detail");
+        if(native_library)ready=ready&&detail&&std::string(detail)=="Native CUDA GGUF";
+        printf("MELBAND_MANAGED_START first_wet_s=%g ready=%d backend=%s\n",double(first)/rate,ready,detail?detail:"");
         pass=pass&&ready;calldata_free(&w);
     }
     pass=pass&&status&&fan&&delay_ms==2100&&windows>=8&&(recover?retries>=1:retries==0)&&packets==static_cast<long long>(seconds*100)&&drops==0&&subscribers==2;

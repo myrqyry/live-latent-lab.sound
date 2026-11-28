@@ -135,3 +135,27 @@ The runner tests both project rates and socket reload recovery at
 or recording latency. See RELEASE_STATUS.md for evidence and limits.
 
 For automatic startup in OBS and optional diagnostics, see [stem worker setup](stem-worker-setup.md).
+
+
+## Native CUDA implementation
+
+A stem-enabled build can package the isolated compiled
+`sound-stem-native` helper via
+`-DSOUND_STEM_NATIVE_RUNTIME_DIR=/path/to/matched/runtime`.
+The directory must contain the matching audiocpp.h,
+libaudiocpp.so.0.1.0 and license files documented in CMake.
+The helper links libsamplerate and CUDA through the matched
+audio.cpp runtime. It loads the local Mel-Band GGUF once, warms
+the resident session, returns named native vocal estimates, and
+computes the residual from the original host-rate PCM.
+At 48 kHz, both directions use medium-quality sinc resampling
+over the full context, trimming only a possible single extra
+trailing sample from endpoint rounding; no padding or cursor drift.
+Wire geometry, readout, mixing and failure semantics are unchanged.
+The OBS module itself has no CUDA or Python linkage.
+
+Native enabled builds default to native_backend=true (RoFormer
+only). native_model is an optional GGUF file path; blank resolves
+the F16 file under the configured library. A missing native model
+does not trigger compatibility fallback. External socket mode
+continues to be independent of managed backend choice.

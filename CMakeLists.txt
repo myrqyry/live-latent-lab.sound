@@ -393,6 +393,24 @@ if(SOUND_TOOLS_MENU)
     target_compile_definitions(live-latent-lab-sound PRIVATE SOUND_WITH_TOOLS_MENU=1)
 endif()
 
+# Native separation lives in a private helper, not the OBS module.
+# Match the headers and runtime supplied by a qualified audio.cpp build.
+set(SOUND_STEM_NATIVE_RUNTIME_DIR "" CACHE PATH "Optional qualified native RoFormer runtime directory")
+if(stem_live IN_LIST SOUND_SELECTED_EFFECTS AND SOUND_STEM_NATIVE_RUNTIME_DIR)
+    foreach(asset audiocpp.h libaudiocpp.so.0.1.0 LICENSE-audiocpp.txt LICENSE-ggml.txt)
+        if(NOT EXISTS "${SOUND_STEM_NATIVE_RUNTIME_DIR}/${asset}")
+            message(FATAL_ERROR "Native stem runtime missing ${asset}")
+        endif()
+    endforeach()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(STEM_SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
+    add_executable(sound-stem-native src/stem-native-worker.cpp)
+    target_include_directories(sound-stem-native PRIVATE "${SOUND_STEM_NATIVE_RUNTIME_DIR}")
+    target_link_libraries(sound-stem-native PRIVATE "${SOUND_STEM_NATIVE_RUNTIME_DIR}/libaudiocpp.so.0.1.0" PkgConfig::STEM_SAMPLERATE)
+    set_target_properties(sound-stem-native PROPERTIES INSTALL_RPATH "$ORIGIN")
+    target_compile_definitions(live-latent-lab-sound PRIVATE SOUND_WITH_STEM_NATIVE=1)
+endif()
+
 # Unique log tokens identify exact candidate builds.
 if(stem_live IN_LIST SOUND_SELECTED_EFFECTS AND NOT SOUND_TOOLS_MENU)
     string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef SOUND_STEM_BUILD_NONCE)
@@ -482,6 +500,14 @@ install(FILES data/locale/en-US.ini DESTINATION "${OBS_DATA_DESTINATION}/locale"
 if(stem_live IN_LIST SOUND_SELECTED_EFFECTS)
     install(FILES tools/sound-stems.py tools/live_stem_sidecar.py tools/live_stem_v2.py
         tools/melband_model.py DESTINATION "${OBS_DATA_DESTINATION}/stem-worker")
+endif()
+if(TARGET sound-stem-native)
+    install(TARGETS sound-stem-native RUNTIME DESTINATION "${OBS_DATA_DESTINATION}/stem-native")
+    install(FILES "${SOUND_STEM_NATIVE_RUNTIME_DIR}/libaudiocpp.so.0.1.0"
+        DESTINATION "${OBS_DATA_DESTINATION}/stem-native" RENAME libaudiocpp.so.0)
+    install(FILES "${SOUND_STEM_NATIVE_RUNTIME_DIR}/LICENSE-audiocpp.txt"
+        "${SOUND_STEM_NATIVE_RUNTIME_DIR}/LICENSE-ggml.txt"
+        DESTINATION "${OBS_DATA_DESTINATION}/stem-native")
 endif()
 
 

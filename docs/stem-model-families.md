@@ -234,10 +234,25 @@ music contexts and corresponding CUDA FP32 vocal estimates; both
 input and output reproduced byte-for-byte. The resident C API probe
 compiles against the matched header and checks exact named stereo
 outputs, finite samples, mixture reconstruction, per-context relative
-RMS error and warm timing. It has not yet linked or executed a native
-model. Do not interpret the prepared source as a qualified GGUF.
-After successful native build, run the upstream GGUF converter with
-the prepared package and explicit family/model spec, compare F16 and
-Q8_0 against the reference, measure device memory and verify CUDA
-execution before integrating or copying a model into the user's
-configured library. No model downloads or public fixture artifacts.
+RMS error and warm timing. Native build and conversion subsequently succeeded. The standalone
+C API comparison uses the resident CUDA session; the source checkout
+provides an explicit model spec for a safetensors directory, while
+GGUF embeds the spec. No model downloads or public fixture artifacts.
+
+| Backend | Warm median (3 contexts) | Max relative RMS difference vs FP32 PyTorch | File size | Sampled process VRAM peak |
+|---|---:|---:|---:|---:|
+| Native FP32, safetensors | 226.3 ms | 0.0159% | 436 MiB | 1300 MiB |
+| GGUF F16 | 140.5 ms | 0.0714% | 436 MiB | 892 MiB |
+| GGUF Q8_0 | 154.2 ms | 0.5091% | 235 MiB | 712 MiB |
+
+PyTorch reference warm calls in the repeat preparation were
+332.0 and 343.5 ms (initial call 604.2 ms); these are not three
+warm benchmark replicates. Native timings exclude OBS transport
+and host-rate conversion. Native VRAM is sampled process memory
+from nvidia-smi, not framework tensor allocator measurements.
+All 3 native variants returned named 44.1 kHz stereo vocals and
+instrumental, same lengths, finite, mixture reconstruction at most
+2.98e-8. Relative RMS is a comparison to the reference, not
+ground-truth source separation quality. F16 is the preferred
+speed/accuracy profile for this tested card; Q8_0 is a lower-memory
+option. Do not assume a speed advantage on other GPUs.

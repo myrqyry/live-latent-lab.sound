@@ -2,6 +2,18 @@
 
 ## Normal use: inside OBS
 
+**Native-enabled RoFormer build:** Native CUDA (GGUF; no Python) is
+selected by default. The compiled helper ships with its own matched
+audio.cpp runtime, isolated from the OBS process and the RVC runtime.
+A blank GGUF model override resolves to
+`<Sound Model Library>/Mel-Band-RoFormer-GGUF/mel-band-roformer-f16.gguf`.
+Select another qualified GGUF (such as Q8_0) directly in the picker.
+No Python environment, saved stem profile or command is needed
+for this backend. If the native model/runtime is missing, the filter
+mutes and reports an error rather than silently falling back.
+Uncheck Native CUDA to explicitly use the previous Python
+compatibility path. Demucs still uses the managed Python backend.
+
 Add the Buffered stem or RoFormer stems filter to an audio source.
 The default **Automatic (OBS manages worker)** mode starts its own
 private local CUDA worker when audio arrives, using the saved local
