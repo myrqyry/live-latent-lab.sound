@@ -24,12 +24,14 @@ struct StemFilter {
     explicit StemFilter(uint32_t rate)
         : sample_rate(rate),pipeline(rate),client(stopping) {}
     uint32_t sample_rate;
-    stts::LiveStemPipeline pipeline;
+    stts::LiveStemMixPipeline pipeline;
     stts::RtWake wake;
     std::atomic<bool> stopping{false};
     stts::LiveStemClient client;
     std::mutex control; // settings/worker only
-    int selected=3; // drums=0 bass=1 other=2 vocals=3
+    // Q12 gains packed into one lock-free atomic, independent of model revision.
+    static_assert(std::atomic<uint64_t>::is_always_lock_free);
+    std::atomic<uint64_t> mix{stts::pack_stem_gains({0,0,0,1})};
     std::string socket_path;
     uint64_t revision=0;
     enum Status{Buffering,Ready,Error};
@@ -41,8 +43,19 @@ struct StemFilter {
 const char* get_name(void*) {
     return "LLL.sound Buffered stem (experimental)";
 }
+constexpr const char* gain_keys[]={"drums_gain","bass_gain","other_gain","vocals_gain"};
+constexpr const char* mute_keys[]={"drums_mute","bass_mute","other_mute","vocals_mute"};
+constexpr const char* solo_keys[]={"drums_solo","bass_solo","other_solo","vocals_solo"};
+constexpr const char* stem_names[]={"Drums","Bass","Other","Vocals"};
+
 void defaults(obs_data_t* settings) {
     obs_data_set_default_int(settings,"stem",3);
+    obs_data_set_default_int(settings,"mix_mode",0);
+    for(size_t i=0;i<4;++i){
+        obs_data_set_default_double(settings,gain_keys[i],1.);
+        obs_data_set_default_bool(settings,mute_keys[i],false);
+        obs_data_set_default_bool(settings,solo_keys[i],false);
+    }
     const char* dir=std::getenv("XDG_RUNTIME_DIR");
     if(dir && *dir){
         const std::string path=std::string(dir)+"/lll-sound-stems.sock";
@@ -53,12 +66,20 @@ void update(void* ptr,obs_data_t* settings) {
     auto* data=static_cast<StemFilter*>(ptr);
     if(!data)return;
     int selected=int(obs_data_get_int(settings,"stem"));
-    if(selected<0 || selected>3)selected=3;
+    int mode=int(obs_data_get_int(settings,"mix_mode"));
+    stts::StemGains gains{};unsigned muted=0,solo=0;
+    for(size_t i=0;i<4;++i){
+        gains[i]=float(obs_data_get_double(settings,gain_keys[i]));
+        if(obs_data_get_bool(settings,mute_keys[i]))muted|=1u<<i;
+        if(obs_data_get_bool(settings,solo_keys[i]))solo|=1u<<i;
+    }
+    const auto mix=stts::pack_stem_gains(stts::resolve_stem_gains(mode,selected,gains,muted,solo));
     std::string path=obs_data_get_string(settings,"socket_path");
     std::lock_guard<std::mutex> lock(data->control);
-    if(!data->revision||path!=data->socket_path||selected!=data->selected){
+    data->mix.store(mix,std::memory_order_release);
+    if(!data->revision||path!=data->socket_path){
         if(data->revision)data->pipeline.invalidate();
-        data->socket_path=std::move(path);data->selected=selected;
+        data->socket_path=std::move(path);
         ++data->revision;data->status=StemFilter::Buffering;data->wake.notify();
     }
 }
@@ -78,20 +99,40 @@ void snapshot(void* ptr,calldata_t* d){
     calldata_set_int(d,"automatic_retries",data->retries.load());
     calldata_set_int(d,"delay_ms",12000);
 }
+bool mix_mode_changed(obs_properties_t* props,obs_property_t*,obs_data_t* settings){
+    const auto mode=obs_data_get_int(settings,"mix_mode");
+    obs_property_set_visible(obs_properties_get(props,"stem"),mode==0);
+    obs_property_set_visible(obs_properties_get(props,"custom_mix"),mode==2);
+    return true;
+}
 obs_properties_t* properties(void* ptr) {
     auto* props=obs_properties_create();
     obs_properties_add_text(props,"socket_path",
         "Local worker socket (live reload)",OBS_TEXT_DEFAULT);
+    auto* mode=obs_properties_add_list(props,"mix_mode","Output mode",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
+    obs_property_list_add_int(mode,"Single stem",0);
+    obs_property_list_add_int(mode,"Instrumental (no vocals)",1);
+    obs_property_list_add_int(mode,"Custom mix",2);
+    obs_property_set_modified_callback(mode,mix_mode_changed);
     auto* list=obs_properties_add_list(props,"stem","Separated stereo stem",
         OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
     obs_property_list_add_int(list,"Vocals",3);
     obs_property_list_add_int(list,"Drums",0);
     obs_property_list_add_int(list,"Bass",1);
     obs_property_list_add_int(list,"Other",2);
+    auto* custom=obs_properties_create();
+    for(size_t i=0;i<4;++i){
+        const auto label=std::string(stem_names[i]);
+        obs_properties_add_float_slider(custom,gain_keys[i],(label+" level (linear)").c_str(),0.,2.,.01);
+        obs_properties_add_bool(custom,mute_keys[i],(label+" mute").c_str());
+        obs_properties_add_bool(custom,solo_keys[i],(label+" solo").c_str());
+    }
+    obs_properties_add_group(props,"custom_mix","Stem mixer",OBS_GROUP_NORMAL,custom);
     obs_properties_add_text(props,"delay_note",
         "Fixed 12 s delay; first 12 s silent. Needs local 8 s HTDemucs worker. "
-        "One selected stereo stem per filter. Faults mute and retry up to three times; "
-        "recovery or a changed stem/socket starts a fresh 12 s silent prefill. "
+        "All four stereo stems share one inference and playback clock. "
+        "Mix controls change without rebuffering. Levels are linear; allow headroom when summing. "
+        "Faults mute and retry up to three times; a changed socket starts fresh prefill. "
         "Never plays dry music as a stem.",OBS_TEXT_INFO);
     obs_properties_add_button2(props,"retry_worker","Retry worker",retry_worker,ptr);
     return props;
@@ -99,17 +140,17 @@ obs_properties_t* properties(void* ptr) {
 
 void worker_loop(StemFilter* data) {
     const auto frames=data->pipeline.window_frames();
-    std::vector<float> input_l(frames),input_r(frames),output_l(frames),output_r(frames);
+    std::vector<float> input_l(frames),input_r(frames);
     // Four healthy eight-second windows replenish the shared retry budget.
     // The external sidecar is user-owned: reconnect, never spawn or kill it.
     stts::WorkerRecovery budget(4);
     uint64_t attempt_revision=0;
     uint32_t seq=0;
     while(!data->stopping.load()){
-        std::string path;int stem;uint64_t revision,epoch;
+        std::string path;uint64_t revision,epoch;
         {
             std::lock_guard<std::mutex> lock(data->control);
-            revision=data->revision;path=data->socket_path;stem=data->selected;
+            revision=data->revision;path=data->socket_path;
             if(revision!=attempt_revision){budget.reset();attempt_revision=revision;}
             if(!data->pipeline.ok()&&!data->pipeline.restart())return;
             epoch=data->pipeline.epoch();data->status=StemFilter::Buffering;
@@ -122,12 +163,13 @@ void worker_loop(StemFilter* data) {
                 if(!data->stopping.load()&&current())data->wake.wait(ticket,100);
                 continue;
             }
-            if(!data->client.exchange(path,data->sample_rate,seq++,
-                    input_l.data(),input_r.data(),frames,stem,
-                    output_l.data(),output_r.data(),current)){
+            if(!data->client.exchange_batch(path,data->sample_rate,seq++,
+                    input_l.data(),input_r.data(),frames,current,
+                    [&](const float* batch,size_t count){
+                        return data->pipeline.push_output_batch(batch,count);
+                    })){
                 data->pipeline.fault(epoch);break;
             }
-            if(!data->pipeline.push_output_window(output_l.data(),output_r.data()))break;
             {
                 std::lock_guard<std::mutex> lock(data->control);
                 if(data->revision!=revision||!current())break;
@@ -216,7 +258,8 @@ obs_audio_data* filter_audio(void* ptr,obs_audio_data* packet){
     auto* left=reinterpret_cast<float*>(packet->data[0]);
     auto* right=reinterpret_cast<float*>(packet->data[1]);
     const bool was_valid=data->pipeline.ok();
-    data->pipeline.process(left,right,packet->frames);
+    data->pipeline.process_mix(left,right,packet->frames,
+        stts::unpack_stem_gains(data->mix.load(std::memory_order_acquire)));
     if((was_valid&&!data->pipeline.ok())||data->pipeline.input_ready())data->wake.notify();
     for(size_t ch=2;ch<MAX_AUDIO_CHANNELS;++ch)
         if(packet->data[ch])

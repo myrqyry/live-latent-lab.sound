@@ -164,6 +164,53 @@ int main(int argc,char**argv){
 #endif
         return pass?0:1;
     }
+    if(std::getenv("SOUND_STEM_MIX")){
+        Measure warm,instrumental,custom,solo,muted,restore;
+        stream(warm,15);auto initial=snapshot();
+        auto mix=[&](int mode,Measure& stats){
+            obs_data_set_int(settings,"mix_mode",mode);
+            obs_source_update(filter,settings);stream(stats,2);
+        };
+        mix(1,instrumental);
+        obs_data_set_double(settings,"drums_gain",.5);
+        obs_data_set_double(settings,"other_gain",1.5);
+        obs_data_set_bool(settings,"bass_mute",true);
+        obs_data_set_bool(settings,"vocals_mute",true);
+        mix(2,custom);
+        obs_data_set_bool(settings,"other_solo",true);
+        mix(2,solo);
+        obs_data_set_bool(settings,"other_mute",true);
+        mix(2,muted);
+        mix(0,restore);
+        auto last=snapshot();
+        auto energy_per_frame=[](Measure& stats){
+            return stats.total_energy.load()/double(stats.frames.load());
+        };
+        bool pass=properties&&initial.status=="ready"&&last.status=="ready"&&
+            initial.retries==last.retries&&last.windows>initial.windows&&
+            warm.early_energy==0&&warm.total_energy>0&&instrumental.total_energy>0&&
+            custom.total_energy>0&&solo.total_energy>0&&muted.total_energy==0&&restore.total_energy>0;
+        for(auto* m:{&instrumental,&custom,&solo,&muted,&restore})
+            pass=pass&&m->frames>=96000;
+        if(std::getenv("SOUND_STEM_MIX_FIXTURE")){
+            auto eq=[&](Measure& m,double units){
+                const double expected=units*units*(.025*.025+.0375*.0375);
+                return std::abs(energy_per_frame(m)-expected)<1e-7;
+            };
+            pass=pass&&eq(instrumental,6)&&eq(custom,5)&&eq(solo,4.5)&&eq(muted,0)&&eq(restore,4);
+        }
+        printf("STEM_LIVE_MIX windows=%lld->%lld retries=%lld->%lld energy_per_frame=%g,%g,%g,%g,%g pass=%d\n",
+            initial.windows,last.windows,initial.retries,last.retries,
+            energy_per_frame(instrumental),energy_per_frame(custom),energy_per_frame(solo),
+            energy_per_frame(muted),energy_per_frame(restore),pass);
+        obs_set_output_source(1,nullptr);obs_source_dec_active(input);
+        obs_source_filter_remove(input,filter);obs_source_release(filter);obs_source_release(input);
+        obs_data_release(settings);obs_shutdown();
+#ifdef SOUND_RT_PROBE
+        pass=rt_probe::report(1400,{4})&&pass;
+#endif
+        return pass?0:1;
+    }
     if(std::getenv("SOUND_STEM_RECOVER")){
         Measure before,failed,recovered;
         stream(before,15);

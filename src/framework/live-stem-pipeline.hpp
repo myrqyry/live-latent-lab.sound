@@ -2,6 +2,8 @@
 // Fixed-delay, stereo, single-producer/single-consumer bridge for the opt-in
 // HTDemucs sidecar. OBS audio callbacks never allocate, wait or use sockets.
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -64,9 +66,93 @@ private:
     alignas(64) std::atomic<size_t> tail_{0};
 };
 
-class LiveStemPipeline {
+using StemGains = std::array<float,4>;
+// Mode 0 is the original single-stem selection; 1 is instrumental;
+// 2 is a custom linear mix. Explicit mute always overrides solo.
+inline StemGains resolve_stem_gains(int mode,int selected,StemGains gains,unsigned muted,unsigned solo){
+    if(mode==2){
+        for(size_t i=0;i<4;++i)
+            if((muted&(1u<<i))||((solo&15u)&&!(solo&(1u<<i))))gains[i]=0.f;
+        return gains;
+    }
+    if(mode==1)return {1,1,1,0};
+    StemGains result{};
+    result[selected>=0&&selected<4?selected:3]=1.f;
+    return result;
+}
+// A single atomic word publishes the complete mix (Q12, 0..2 gain).
+// No torn mute/solo/gain snapshot and no mutex on the audio thread.
+inline uint64_t pack_stem_gains(const StemGains& gains){
+    uint64_t bits=0;
+    for(size_t i=0;i<gains.size();++i){
+        float gain=std::isfinite(gains[i])?std::clamp(gains[i],0.f,2.f):0.f;
+        bits|=uint64_t(std::lround(gain*4096.f))<<(16*i);
+    }
+    return bits;
+}
+inline StemGains unpack_stem_gains(uint64_t bits){
+    StemGains gains{};
+    for(size_t i=0;i<gains.size();++i)gains[i]=float((bits>>(16*i))&0xffff)/4096.f;
+    return gains;
+}
+
+// Four stereo stems occupy one batch ring with a common publication and
+// consumption cursor. A failed batch cannot skew stems relative to each other.
+// The input layout is [stem][channel][frame], matching LLSTEM01.
+class StemBatchQueue {
 public:
-    explicit LiveStemPipeline(uint32_t sample_rate)
+    explicit StemBatchQueue(size_t capacity):capacity_(capacity),planes_(8*capacity){}
+    bool push_batch(const float* batch,size_t count,size_t frames){
+        if(!batch||!frames||frames>capacity_||count!=8*frames)return false;
+        auto head=head_.load(std::memory_order_relaxed);
+        auto tail=tail_.load(std::memory_order_acquire);
+        if(head-tail>capacity_-frames)return false;
+        const size_t offset=head%capacity_,first=std::min(frames,capacity_-offset);
+        for(size_t ch=0;ch<8;++ch){
+            auto* dst=planes_.data()+ch*capacity_;
+            const auto* src=batch+ch*frames;
+            std::memcpy(dst+offset,src,first*sizeof(float));
+            if(first<frames)std::memcpy(dst,src+first,(frames-first)*sizeof(float));
+        }
+        head_.store(head+frames,std::memory_order_release);
+        return true;
+    }
+    size_t discard_available(){
+        auto tail=tail_.load(std::memory_order_relaxed);
+        auto head=head_.load(std::memory_order_acquire);
+        tail_.store(head,std::memory_order_release);
+        return head-tail;
+    }
+    bool pop_mix(float* l,float* r,size_t frames,const StemGains& gains){
+        if(!l||!r||!frames||frames>capacity_)return false;
+        auto tail=tail_.load(std::memory_order_relaxed);
+        auto head=head_.load(std::memory_order_acquire);
+        if(head-tail<frames)return false;
+        size_t offset=tail%capacity_,first=std::min(frames,capacity_-offset);
+        std::fill_n(l,frames,0.f);std::fill_n(r,frames,0.f);
+        // Skip muted stems entirely; each span is contiguous for SIMD.
+        for(size_t stem=0;stem<4;++stem){
+            const float gain=gains[stem];
+            if(gain==0.f)continue;
+            auto* sl=planes_.data()+stem*2*capacity_;
+            auto* sr=sl+capacity_;
+            for(size_t i=0;i<first;++i){l[i]+=sl[offset+i]*gain;r[i]+=sr[offset+i]*gain;}
+            for(size_t i=first;i<frames;++i){l[i]+=sl[i-first]*gain;r[i]+=sr[i-first]*gain;}
+        }
+        tail_.store(tail+frames,std::memory_order_release);
+        return true;
+    }
+private:
+    const size_t capacity_;
+    std::vector<float> planes_;
+    alignas(64) std::atomic<size_t> head_{0};
+    alignas(64) std::atomic<size_t> tail_{0};
+};
+
+template<class OutputQueue>
+class BasicLiveStemPipeline {
+public:
+    explicit BasicLiveStemPipeline(uint32_t sample_rate)
         : rate_(sample_rate),inputs_(size_t(sample_rate)*32),
           outputs_(size_t(sample_rate)*24),
           state_(sample_rate==44100||sample_rate==48000?3:0) {}
@@ -119,9 +205,23 @@ public:
         if(!outputs_.push(l,r,window_frames())){fault(e);return false;}
         return current(e);
     }
+    bool push_output_batch(const float* data,size_t count){
+        auto e=worker_epoch_;
+        if(!current(e))return false;
+        if(!outputs_.push_batch(data,count,window_frames())){fault(e);return false;}
+        return current(e);
+    }
+    void process(float* left,float* right,size_t frames){
+        process_with(left,right,frames,[&](float* l,float* r,size_t n){return outputs_.pop(l,r,n);});
+    }
+    void process_mix(float* left,float* right,size_t frames,const StemGains& gains){
+        process_with(left,right,frames,[&](float* l,float* r,size_t n){return outputs_.pop_mix(l,r,n,gains);});
+    }
+private:
     // A recovered stream starts a new 12-second prefill on the first
     // captured packet. Never emit original dry audio, even during faults.
-    void process(float* left,float* right,size_t frames){
+    template<class Render>
+    void process_with(float* left,float* right,size_t frames,Render render){
         if(!left||!right||!frames)return;
         auto e=epoch();
         auto silence=[&]{std::fill_n(left,frames,0.f);std::fill_n(right,frames,0.f);};
@@ -138,7 +238,7 @@ public:
         size_t prefix=std::min<uint64_t>(frames,played_<delay?delay-played_:0);
         std::fill_n(left,prefix,0.f);std::fill_n(right,prefix,0.f);
         size_t n=frames-prefix;
-        if(n&&!outputs_.pop(left+prefix,right+prefix,n)){
+        if(n&&!render(left+prefix,right+prefix,n)){
             fault(e);silence();return;
         }
         if(!current(e)){silence();return;}
@@ -146,8 +246,11 @@ public:
     }
 private:
     const uint32_t rate_;
-    StereoSpscQueue inputs_,outputs_;
+    StereoSpscQueue inputs_;
+    OutputQueue outputs_;
     std::atomic<uint64_t> state_,audio_ack_{3},worker_ack_{3};
     uint64_t worker_epoch_=3,render_epoch_=3,played_=0;
 };
+using LiveStemPipeline = BasicLiveStemPipeline<StereoSpscQueue>;
+using LiveStemMixPipeline = BasicLiveStemPipeline<StemBatchQueue>;
 } // namespace stts

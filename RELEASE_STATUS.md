@@ -1136,3 +1136,40 @@ opt-in and baseline CI archive is unchanged in scope.
 Install the manifest and locale explicitly rather than copying the entire data directory.
 The preview CI stages a synthetic untracked canary and verifies the exact payload
 allowlist; local assets must not enter the distributed package.
+
+
+## Shared stereo stem mixer (2026-11-27)
+
+The historical multi-stem source and filter remain quarantined. Reused
+their workflow, not their mono inference, global output-slot ownership
+or independently drifting queues. The current buffered filter accepts
+a complete validated LLSTEM01 four-stem response into one 8-plane
+bounded batch ring with a single publication and playback cursor. No
+new model requests for selected stem, instrumental, custom level/mute/
+solo changes. Existing setting and source ID remain compatible. Gain
+snapshot is one lock-free Q12 word; changes apply at packet boundaries,
+not smoothed; user must allow summing headroom. The queue reserves 24 s
+of stereo for four stems (~35.2 MiB at 48kHz). Generation reset discards
+the whole batch stream; no dry leak and 12 s prefill unchanged.
+
+Model-free red/green tests for both rates, arbitrary packet sizes,
+mixes, mute/solo, restart and malformed batch passed, including UBSan.
+Protocol client receives all named planes in one request and rejects
+nonfinite values even in a different stem. Existing cancellation,
+stereo transport, generation and 12 Python tests/isolated registry
+passed. New real-libobs mix test with deterministic TEST ONLY peer
+checked exact instrumental/custom/solo/mute/restore energies, three
+requests and zero retries. Actual CUDA resident FP32, shifts 0,
+overlap .1, segment 4 with synthetic stereo fixture also passed
+the same live settings sequence (windows 1->3, zero retries, mute
+exact zero), auto reconnect and socket reload (one retry each,
+three recovered windows, zero stale/prefill energy). Nine requests
+processed .405-.442 s each; one model load across ten windows including
+warmup. 10,700 actual-model instrumented filter callbacks: no observed
+allocation, frees, locks, waits, or >10ms callbacks. Max wall 2.497ms
+mostly off CPU; two ordinary OBS instances were running, not stopped.
+Fixture callback test also passed (2,500 callbacks). This does not
+establish a hard real-time guarantee, music quality or end-to-end
+full expanded profile. Independent OBS outputs, integration routing,
+cross-window overlap-add and VRAM governor are separate work. No
+installation, push, or user scene changes.

@@ -49,6 +49,9 @@ cxx="${CXX:-c++}"
     "$root/tests/verify-stem-recovery.cpp" -o "$work/recovery"
 "$work/recovery"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
+    "$root/tests/verify-stem-mix.cpp" -o "$work/mix"
+"$work/mix"
+"$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-live-client.cpp" -o "$work/client"
 # The fake protocol server is self-contained and does not use the GPU.
 : "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is needed for private socket tests}"

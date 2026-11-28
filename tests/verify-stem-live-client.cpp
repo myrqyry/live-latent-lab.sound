@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -21,6 +22,7 @@ int main(int argc,char**argv){
  assert(listen(server,1)==0);
  std::atomic<bool> worker_ok{false};
  std::thread worker([&]{
+  for(int request=0;request<3;++request){
   int s=accept(server,nullptr,nullptr);assert(s>=0);
   unsigned char hdr[36]{};
   assert(stts::read_fully(s,hdr,sizeof hdr));
@@ -47,15 +49,31 @@ int main(int argc,char**argv){
       result[(stem*2+1)*384000+i]=-float(stem+1)*.07f;
     }
   }
+  if(request==2)result.back()=std::numeric_limits<float>::quiet_NaN();
   assert(stts::write_fully(s,result.data(),result.size()*sizeof(float)));
   worker_ok=true;
   close(s);
+  }
  });
  std::vector<float> l(384000,.2f),r(384000,-.12f),outl(384000),outr(384000);
  std::atomic<bool> stop{false};
  stts::LiveStemClient client(stop);
  assert(client.exchange(path,48000,45,l.data(),r.data(),384000,3,outl.data(),outr.data()));
  assert(std::abs(outl[200]-.4f)<1e-5 && std::abs(outr[200]+.28f)<1e-5);
+ int batches=0;
+ assert(client.exchange_batch(path,48000,45,l.data(),r.data(),384000,
+    []{return true;},[&](const float* data,size_t count){
+       ++batches;assert(count==8*384000);
+       for(size_t stem=0;stem<4;++stem){
+          assert(std::abs(data[(stem*2)*384000+200]-float(stem+1)*.1f)<1e-5);
+          assert(std::abs(data[(stem*2+1)*384000+200]+float(stem+1)*.07f)<1e-5);
+       }
+       return true;
+    }));
+ assert(batches==1);
+ assert(!client.exchange_batch(path,48000,45,l.data(),r.data(),384000,
+    []{return true;},[&](const float*,size_t){++batches;return true;}));
+ assert(batches==1); // reject an invalid unselected stem too
  worker.join();
  // Reject untrusted world-readable sockets before any IO or connection.
  assert(chmod(path.c_str(),0666)==0);

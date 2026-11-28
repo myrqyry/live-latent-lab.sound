@@ -57,13 +57,15 @@ public:
         std::lock_guard<std::mutex> lock(socket_mutex_);
         if(socket_>=0)::shutdown(socket_,SHUT_RDWR);
     }
-    template<class Current>
-    bool exchange(const std::string& path,uint32_t rate,uint32_t seq,
+    // Worker-only. The response is borrowed until the next request; the
+    // consumer must copy/publish it synchronously, never retain the pointer.
+    template<class Current,class Publish>
+    bool exchange_batch(const std::string& path,uint32_t rate,uint32_t seq,
                   const float* in_l,const float* in_r,size_t frames,
-                  int stem,float* out_l,float* out_r,Current&& current){
+                  Current&& current,Publish&& publish){
         if(stopping_.load() || !current() || (rate!=44100 && rate!=48000)
-           || frames!=size_t(rate)*8 || stem<0 || stem>3
-           || !in_l || !in_r || !out_l || !out_r ||
+           || frames!=size_t(rate)*8
+           || !in_l || !in_r ||
            path.empty() || path.size()>=sizeof(sockaddr_un{}.sun_path))
             return false;
         // The socket is owned by this user and is not a world-exposed server.
@@ -79,13 +81,27 @@ public:
             if(stopping_.load()){::close(fd);return false;}
             socket_=fd;
         }
-        const bool success=exchange_fd(fd,path,rate,seq,in_l,in_r,frames,stem,out_l,out_r,current);
+        const bool success=exchange_fd(fd,path,rate,seq,in_l,in_r,frames,current);
         {
             std::lock_guard<std::mutex> lock(socket_mutex_);
             if(socket_==fd)socket_=-1;
             ::close(fd);
         }
-        return success && !stopping_.load() && current();
+        return success && !stopping_.load() && current() &&
+            publish(response_.data(),response_.size()) && current();
+    }
+    template<class Current>
+    bool exchange(const std::string& path,uint32_t rate,uint32_t seq,
+                  const float* in_l,const float* in_r,size_t frames,
+                  int stem,float* out_l,float* out_r,Current&& current){
+        if(stem<0||stem>3||!out_l||!out_r)return false;
+        return exchange_batch(path,rate,seq,in_l,in_r,frames,current,
+            [&](const float* data,size_t){
+                const size_t offset=size_t(stem)*2*frames;
+                std::memcpy(out_l,data+offset,frames*sizeof(float));
+                std::memcpy(out_r,data+offset+frames,frames*sizeof(float));
+                return true;
+            });
     }
     bool exchange(const std::string& path,uint32_t rate,uint32_t seq,
                   const float* in_l,const float* in_r,size_t frames,
@@ -96,7 +112,7 @@ private:
     template<class Current>
     bool exchange_fd(int fd,const std::string& path,uint32_t rate,uint32_t seq,
                      const float* in_l,const float* in_r,size_t frames,
-                     int stem,float* out_l,float* out_r,Current& current){
+                     Current& current){
         // One absolute request deadline, not a fresh timeout for each
         // partial transfer. Check generation and shutdown every poll.
         using Clock=std::chrono::steady_clock;
@@ -138,9 +154,6 @@ private:
         auto& data=response_;
         if(!transfer(data.data(),data.size()*sizeof(float),false))return false;
         for(float value:data)if(!std::isfinite(value))return false;
-        const size_t offset=size_t(stem)*2*frames;
-        std::memcpy(out_l,data.data()+offset,frames*sizeof(float));
-        std::memcpy(out_r,data.data()+offset+frames,frames*sizeof(float));
         return true;
     }
     std::atomic<bool>& stopping_;

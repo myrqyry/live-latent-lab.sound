@@ -207,8 +207,12 @@ The existing worker is external and user-owned: the OBS filter
 reconnects to its socket, rather than spawning or terminating it.
 Three automatic attempts use 250/500/1000 ms backoff; four successful
 eight-second windows replenish the budget. A missing endpoint
-remains silent while attempting recovery. Changes to the socket or
-selected stem reload live and start a new silent prefill. **Retry
+remains silent while attempting recovery. Changes to the socket reload live and start a new silent prefill.
+Single stem selection, instrumental and custom mix are live controls;
+all four stereo stems share the same batch cursor, so these changes
+do not rebuffer. Custom mix exposes linear levels (0–2), mute and
+solo; mute overrides solo. Summed stems are not automatically limited,
+so allow headroom. Changes apply at packet boundaries. **Retry
 worker** explicitly resets the budget after exhaustion. The read-only
 `sound_stem_live_v1` procedure reports status (buffering, ready, error),
 cumulative successful windows, automatic retries and delay_ms. Ready
@@ -222,8 +226,8 @@ and one 12-second transfer deadline. The audio deadline still governs
 output: the longer transfer cap is not permission to play late stems.
 Closing the socket does not cancel an ongoing model call inside the
 external sidecar. The next request may contend with that old work.
-No dry bypass, shared multistem fanout or in-memory inference has been
-added by this recovery change.
+No dry bypass. The resident backend and shared mix are available;
+independent OBS source fanout is a separate milestone.
 The worker CLI can be changed before launching/restarting it.
 A global OBS graphical worker manager remains future work.
 
