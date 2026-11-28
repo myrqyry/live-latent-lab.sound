@@ -226,8 +226,49 @@ and one 12-second transfer deadline. The audio deadline still governs
 output: the longer transfer cap is not permission to play late stems.
 Closing the socket does not cancel an ongoing model call inside the
 external sidecar. The next request may contend with that old work.
-No dry bypass. The resident backend and shared mix are available;
-independent OBS source fanout is a separate milestone.
+No dry bypass while the filter is enabled. The resident backend,
+shared mix and independent OBS output sources are available.
+### Independent stereo stem sources
+
+1. Attach **LLL.sound Buffered stem (experimental)** to an active stereo
+   input source and choose the local worker socket. A direct audio-capable
+   input is required for source fanout; do not put the producer on a
+   Stem Output or on an OBS scene containing its own outputs.
+2. Choose **Separate outputs (silent parent)** to avoid double mixing.
+3. Add four ordinary **LLL.sound Stem Output** sources to the scene,
+   select the same parent filter in each, and choose Drums, Bass, Other
+   or Vocals respectively. Additional copies can consume the same stem.
+4. Use OBS's native source volume, mute, monitoring and recording-track
+   controls on those sources. Custom mix levels on the parent control
+   its combined output only, not the independently routed raw stems.
+
+The stored binding is the filter UUID, not its display name. No global
+audio-device slots are reserved or changed. Keep the upstream input
+active; the child sources do not activate it automatically. The filter's
+callback consumes one common eight-plane ring and, when subscribers
+exist, publishes a complete timestamped packet to a bounded dispatch
+queue. A separate worker emits ordinary OBS audio packets, never
+calling OBS source-output APIs from the filter callback. All siblings
+share the same packet timestamp and frame count. On queue saturation,
+invalidate the entire separation generation instead of allowing one
+stem to advance independently. On socket/revision faults, stale
+dispatch packets are silent; explicit disable/enable or detach starts
+a fresh generation. An already-dispatching packet may finish during
+a control change. Disabling/removing the filter bypasses it in OBS;
+the parent original input can then be audible by design. Missing
+parent or inactive input means no child packets; OBS handles silence.
+The shared output ring holds 24 s; the dispatch queue is bounded to
+64 packets of up to 1024 stereo frames per stem (~2 MiB).
+
+`sound_stem_fanout_v1` reports dispatched packets, queue drops and
+bound subscribers. Direct input timestamps are used; hardware-clock
+drift and timestamp discontinuities remain unqualified. Long-run
+contention, source rebind, enable/disable and arbitrary scene lifecycle
+stress need more tests. The ordinary source type and UUID are
+compatible with Aftermarket's routing and HyperShaderFX's audio
+source discovery by source inspection; combined plugin runtime
+qualification remains outstanding.
+
 The worker CLI can be changed before launching/restarting it.
 A global OBS graphical worker manager remains future work.
 

@@ -29,6 +29,7 @@ extern struct obs_source_info demucs_filter;
 #endif
 #if defined(SOUND_WITH_STEM_LIVE)
 extern struct obs_source_info stem_live_filter;
+extern struct obs_source_info stem_live_output;
 #endif
 #if defined(SOUND_WITH_DEEPFILTER)
 extern struct obs_source_info deepfilter_filter;
@@ -105,6 +106,7 @@ bool obs_module_load(void)
 #endif
 #if defined(SOUND_WITH_STEM_LIVE)
     obs_register_source(&stem_live_filter);
+    obs_register_source(&stem_live_output);
 #endif
 #if defined(SOUND_WITH_DEEPFILTER)
     obs_register_source(&deepfilter_filter);

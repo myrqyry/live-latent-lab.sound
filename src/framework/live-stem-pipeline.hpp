@@ -76,6 +76,7 @@ inline StemGains resolve_stem_gains(int mode,int selected,StemGains gains,unsign
         return gains;
     }
     if(mode==1)return {1,1,1,0};
+    if(mode==3)return {}; // independent OBS outputs; mute parent
     StemGains result{};
     result[selected>=0&&selected<4?selected:3]=1.f;
     return result;
@@ -123,13 +124,18 @@ public:
         tail_.store(head,std::memory_order_release);
         return head-tail;
     }
-    bool pop_mix(float* l,float* r,size_t frames,const StemGains& gains){
+    bool pop_mix(float* l,float* r,size_t frames,const StemGains& gains,float* const* raw=nullptr){
         if(!l||!r||!frames||frames>capacity_)return false;
         auto tail=tail_.load(std::memory_order_relaxed);
         auto head=head_.load(std::memory_order_acquire);
         if(head-tail<frames)return false;
         size_t offset=tail%capacity_,first=std::min(frames,capacity_-offset);
         std::fill_n(l,frames,0.f);std::fill_n(r,frames,0.f);
+        if(raw)for(size_t ch=0;ch<8;++ch){
+            const auto* src=planes_.data()+ch*capacity_;
+            std::memcpy(raw[ch],src+offset,first*sizeof(float));
+            if(first<frames)std::memcpy(raw[ch]+first,src,(frames-first)*sizeof(float));
+        }
         // Skip muted stems entirely; each span is contiguous for SIMD.
         for(size_t stem=0;stem<4;++stem){
             const float gain=gains[stem];
@@ -217,32 +223,43 @@ public:
     void process_mix(float* left,float* right,size_t frames,const StemGains& gains){
         process_with(left,right,frames,[&](float* l,float* r,size_t n){return outputs_.pop_mix(l,r,n,gains);});
     }
+    void process_mix_and_stems(float* left,float* right,size_t frames,const StemGains& gains,
+                               const std::array<float*,8>& stems){
+        auto clear=[&]{for(auto* ch:stems)std::fill_n(ch,frames,0.f);};
+        clear();
+        if(!process_with(left,right,frames,[&](float* l,float* r,size_t n){
+            auto planes=stems;
+            for(auto& ch:planes)ch+=l-left;
+            return outputs_.pop_mix(l,r,n,gains,planes.data());
+        }))clear();
+    }
 private:
     // A recovered stream starts a new 12-second prefill on the first
     // captured packet. Never emit original dry audio, even during faults.
     template<class Render>
-    void process_with(float* left,float* right,size_t frames,Render render){
-        if(!left||!right||!frames)return;
+    bool process_with(float* left,float* right,size_t frames,Render render){
+        if(!left||!right||!frames)return false;
         auto e=epoch();
         auto silence=[&]{std::fill_n(left,frames,0.f);std::fill_n(right,frames,0.f);};
-        if(!(e&1)){silence();return;}
+        if(!(e&1)){silence();return false;}
         if(audio_ack_.load(std::memory_order_relaxed)!=e)
             audio_ack_.store(e,std::memory_order_release);
-        if(worker_ack_.load(std::memory_order_acquire)!=e){silence();return;}
+        if(worker_ack_.load(std::memory_order_acquire)!=e){silence();return false;}
         if(render_epoch_!=e){
             outputs_.discard_available();render_epoch_=e;played_=0;
         }
-        if(!current(e)){silence();return;}
-        if(!inputs_.push(left,right,frames)){fault(e);silence();return;}
+        if(!current(e)){silence();return false;}
+        if(!inputs_.push(left,right,frames)){fault(e);silence();return false;}
         auto delay=delay_frames();
         size_t prefix=std::min<uint64_t>(frames,played_<delay?delay-played_:0);
         std::fill_n(left,prefix,0.f);std::fill_n(right,prefix,0.f);
         size_t n=frames-prefix;
         if(n&&!render(left+prefix,right+prefix,n)){
-            fault(e);silence();return;
+            fault(e);silence();return false;
         }
-        if(!current(e)){silence();return;}
+        if(!current(e)){silence();return false;}
         played_+=frames;
+        return true;
     }
 private:
     const uint32_t rate_;

@@ -15,13 +15,17 @@ int main(){
         std::fill_n(batch.data()+stem*2*window,window,float(stem+1)/16);
         std::fill_n(batch.data()+(stem*2+1)*window,window,-float(stem+1)/32);
     }
+    std::array<std::vector<float>,8> raw;
+    std::array<float*,8> planes{};
+    for(size_t i=0;i<8;++i){raw[i].resize(l.size());planes[i]=raw[i].data();}
     size_t clock=0,origin=0,windows=0;
     auto feed=[&](size_t n,const StemGains& gains,bool active,bool drain,float expected){
         std::fill_n(l.data(),n,.75f);std::fill_n(r.data(),n,-.5f);
-        p.process_mix(l.data(),r.data(),n,gains);
+        p.process_mix_and_stems(l.data(),r.data(),n,gains,planes);
         for(size_t i=0;i<n;++i){
             bool wet=active&&clock+i>=origin+delay;
             assert(l[i]==(wet?expected:0.f));assert(r[i]==(wet?-expected/2:0.f));
+            for(size_t ch=0;ch<8;++ch)assert(raw[ch][i]==(wet?batch[ch*window]:0.f));
         }
         clock+=n;
         if(drain)while(p.read_input_window(in_l.data(),in_r.data())){
@@ -35,6 +39,7 @@ int main(){
     const StemGains vocals{0,0,0,1},instrumental{1,1,1,0},custom{.5f,0,1.5f,0},muted{};
     assert(resolve_stem_gains(0,3,custom,0,0)==vocals);
     assert(resolve_stem_gains(1,3,custom,0,0)==instrumental);
+    assert(resolve_stem_gains(3,3,custom,0,0)==muted);
     assert(resolve_stem_gains(2,3,custom,1,0)==(StemGains{0,0,1.5f,0}));
     assert(resolve_stem_gains(2,3,custom,0,1)==(StemGains{.5f,0,0,0}));
     assert(resolve_stem_gains(2,3,custom,1,1)==muted);

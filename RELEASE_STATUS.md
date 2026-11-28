@@ -1173,3 +1173,81 @@ establish a hard real-time guarantee, music quality or end-to-end
 full expanded profile. Independent OBS outputs, integration routing,
 cross-window overlap-add and VRAM governor are separate work. No
 installation, push, or user scene changes.
+
+
+## Independent shared stem sources (2026-11-27)
+
+Restored the old Multi-Stem Source workflow as ordinary public OBS
+input sources, `stem_live_output` (LLL.sound Stem Output), under the
+same opt-in `stem_live` effect gate. The existing filter now supports
+Separate outputs (silent parent). Each child stores filter UUID and
+named stereo stem, works even if created before parent attachment,
+and uses the regular OBS mixer/routing path. No global OBS output
+slots are allocated, no automatic scene mutation or upstream source
+activation. Parent custom mix controls affect combined output only.
+The old source IDs and ONNX engine remain quarantined.
+
+One capture/render cursor yields both the optional combined mix and
+all eight raw planes. A bounded 64-slot, up-to-1024-frame packet ring
+publishes one timestamped batch from the audio callback to a separate
+dispatch worker. Worker-only registry with weak OBS source references
+and immutable bindings; no registry locks, reference management,
+OBS output calls or allocations on the parent callback. Child source
+updates/destruction invalidate old bindings; attach/detach and explicit
+enable transitions invalidate the parent generation. Queue overflow
+faults the entire generation; stale queued packets emit silence if
+dispatched while still attached. A packet already in dispatch may
+finish during a concurrent control change. Child sources remain
+independent of producer lifetime. Direct input timestamps; no
+hardware-clock/discontinuity correction. The sidecar protocol and
+four-second processing allowance / 12-second prefill unchanged.
+
+Evidence:
+- Red registry test confirmed old module lacked Stem Output.
+- Queue wrap/full/empty and 20,000 concurrent complete packets passed;
+  both-rate raw-plane + mix exact tests, recovery, malformed batches
+  and existing stereo queue tests passed under UBSan. All 12 Python
+  tests, client cancellation/contract, isolated module registry
+  (two IDs under stem_live, old quarantined IDs absent) passed.
+- Deterministic TEST ONLY peer: four normal sources each captured
+  1,152,000 frames, identical timestamps and exact expected independent
+  stereo energies; three requests, zero retries, parent exact silence.
+- Actual local resident CUDA FP32, shifts 0, overlap .1, segment 4:
+  real libobs scene with four sources, each 1,152,000 frames, exact
+  packet timestamp equality, four distinct nonzero stereo energies,
+  zero initial dry energy, parent muted, two completed requests,
+  no retries; renaming producer did not break UUID binding.
+- Final source revision (module SHA256
+  e87a9bc96fe1c6a0e7739d55576df15a0741d4d9f13f89a0bc9709cb1ccbbf17):
+  49 s actual CUDA fanout with socket removed from settings at 15 s
+  and restored at 25 s. All four sources each 2,352,000 frames,
+  identical timestamp sequences, fault and fresh prefill exactly zero,
+  all recovered nonzero, parent zero throughout. 4,900 dispatched
+  packets, zero drops, four subscribers, three completed inference
+  windows, one automatic retry. Filter picker found real UUID;
+  producer detached while children remained alive, no further child
+  packets during one-second feed. Existing test-harness global slot
+  and empty slots 2-5 unchanged. Model loads=1 including warmup,
+  window times .407/.455/.439 s. 4,900 instrumented filter callbacks
+  no observed allocations/frees/locks/waits or >10ms; wall p99 27.241us,
+  max .620ms, CPU p99 18.935us. Earlier real normal fanout 2,400
+  callbacks p99 26.048us and no observed violations. Fixture normal
+  fanout 2,400 callbacks also passed. Instrumentation is the parent
+  callback, not a guarantee about OBS internals or arbitrary subscribers.
+- Aftermarket ObsRouting::list enumerates audio-capable non-filter
+  sources by UUID; HyperShaderFX uses scene/unplaced audio-capable
+  source picker by UUID and obs_source_add_audio_capture_callback.
+  Normal Stem Output sources fit these interfaces without a new API.
+  Source inspection only; actual combined plugin runtime is not tested.
+
+Runner now includes raw plane/dispatch unit coverage, real mix and
+fanout normal/recovery cases. Protocol fixture wrapper includes normal
+fanout; full extended wrappers were not run end-to-end. Real OBS
+fanout measured at 48 kHz only (44.1 kHz transport tested model-free).
+Explicit enable toggle/rebind/scene reload/long soak, queue overrun
+recovery in actual OBS, clock discontinuity, actual multitrack
+recording and combined plugin runtime need further qualification.
+No installation, push or changes to user scenes or running OBS
+instances. Remaining roadmap: cross-window overlap-add, latency
+reduction only after measurement, source lifecycle stress, shared
+worker controls and VRAM governance.

@@ -16,6 +16,8 @@
 #include <vector>
 #include "framework/live-stem-pipeline.hpp"
 #include "framework/live-stem-client.hpp"
+#include "framework/live-stem-dispatch.hpp"
+#include "framework/live-stem-outputs.hpp"
 #include "framework/rt_wake.hpp"
 #include "framework/worker_recovery.hpp"
 
@@ -38,6 +40,14 @@ struct StemFilter {
     std::atomic<int> status{Buffering};
     std::atomic<uint64_t> windows{0},retries{0};
     std::thread worker;
+    obs_source_t* context=nullptr; // valid until both workers join in destroy
+    std::string fanout_uuid; // control lock
+    std::atomic<bool> fanout_allowed{false},fanout_ready{false};
+    stts::StemDispatchQueue dispatch_queue;
+    stts::RtWake dispatch_wake;
+    std::thread dispatcher;
+    std::atomic<uint64_t> dispatch_packets{0},dispatch_drops{0};
+    std::atomic<unsigned> dispatch_subscribers{0};
 };
 
 const char* get_name(void*) {
@@ -113,6 +123,7 @@ obs_properties_t* properties(void* ptr) {
     obs_property_list_add_int(mode,"Single stem",0);
     obs_property_list_add_int(mode,"Instrumental (no vocals)",1);
     obs_property_list_add_int(mode,"Custom mix",2);
+    obs_property_list_add_int(mode,"Separate outputs (silent parent)",3);
     obs_property_set_modified_callback(mode,mix_mode_changed);
     auto* list=obs_properties_add_list(props,"stem","Separated stereo stem",
         OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
@@ -131,7 +142,8 @@ obs_properties_t* properties(void* ptr) {
     obs_properties_add_text(props,"delay_note",
         "Fixed 12 s delay; first 12 s silent. Needs local 8 s HTDemucs worker. "
         "All four stereo stems share one inference and playback clock. "
-        "Mix controls change without rebuffering. Levels are linear; allow headroom when summing. "
+         "Mix controls change without rebuffering. Levels are linear; allow headroom when summing. "
+        "Add LLL.sound Stem Output sources and choose this filter for independent routing. "
         "Faults mute and retry up to three times; a changed socket starts fresh prefill. "
         "Never plays dry music as a stem.",OBS_TEXT_INFO);
     obs_properties_add_button2(props,"retry_worker","Retry worker",retry_worker,ptr);
@@ -209,6 +221,104 @@ void worker_entry(StemFilter* data){
     }
 }
 
+void dispatch_loop(StemFilter* data){
+    namespace outputs=stts::stem_outputs;
+    std::vector<std::shared_ptr<outputs::Binding>> bindings;
+    std::string last_key;
+    uint64_t last_revision=0;
+    std::array<float,stts::StemDispatchPacket::max_frames> silence{};
+    while(!data->stopping.load(std::memory_order_acquire)){
+        auto ticket=data->dispatch_wake.sequence();
+        std::string key;
+        if(data->fanout_allowed.load(std::memory_order_acquire)){
+            std::lock_guard<std::mutex> lock(data->control);
+            key=data->fanout_uuid;
+        }
+        const auto revision=outputs::revision.load(std::memory_order_acquire);
+        if(key!=last_key||revision!=last_revision){
+            bindings=outputs::find(key);last_key=std::move(key);last_revision=revision;
+        }
+        const bool allowed=!bindings.empty()&&data->fanout_allowed.load(std::memory_order_acquire)&&
+            obs_source_enabled(data->context);
+        data->fanout_ready.store(allowed,std::memory_order_release);
+        data->dispatch_subscribers.store(allowed?unsigned(bindings.size()):0,std::memory_order_relaxed);
+        if(const auto* packet=data->dispatch_queue.peek()){
+            if(allowed){
+                // All subscribers receive the same timestamp and frame count.
+                // A faulted or obsolete packet can only deliver silence.
+                bool valid=data->pipeline.current(packet->epoch);
+                for(auto& binding:bindings){
+                    if(!binding->live.load(std::memory_order_acquire))continue;
+                    auto* source=obs_weak_source_get_source(binding->weak);
+                    if(!source)continue;
+                    if(!obs_source_removed(source)&&obs_source_enabled(source)&&
+                        binding->live.load(std::memory_order_acquire)){
+                        obs_source_audio audio{};
+                        auto stem=size_t(binding->stem);
+                        auto* l=valid?packet->planes[stem*2].data():silence.data();
+                        auto* r=valid?packet->planes[stem*2+1].data():silence.data();
+                        audio.data[0]=reinterpret_cast<const uint8_t*>(l);
+                        audio.data[1]=reinterpret_cast<const uint8_t*>(r);
+                        audio.frames=packet->frames;audio.speakers=SPEAKERS_STEREO;
+                        audio.format=AUDIO_FORMAT_FLOAT_PLANAR;audio.samples_per_sec=data->sample_rate;
+                        audio.timestamp=packet->timestamp;
+                        obs_source_output_audio(source,&audio);
+                    }
+                    obs_source_release(source);
+                }
+                ++data->dispatch_packets;
+            }
+            data->dispatch_queue.consume();
+        }else data->dispatch_wake.wait(ticket,100);
+    }
+    data->fanout_ready.store(false,std::memory_order_release);
+}
+void dispatch_entry(StemFilter* data){
+    try{dispatch_loop(data);}
+    catch(...){
+        data->fanout_ready.store(false,std::memory_order_release);
+        data->pipeline.invalidate();data->wake.notify();
+        blog(LOG_WARNING,"[Sound stems] Output dispatcher failed; independent outputs stopped");
+    }
+}
+void filter_add(void* ptr,obs_source_t* parent){
+    auto* data=static_cast<StemFilter*>(ptr);
+    if(!data)return;
+    const char* uuid=obs_source_get_uuid(data->context);
+    {
+        std::lock_guard<std::mutex> lock(data->control);
+        data->fanout_uuid=uuid?uuid:"";
+    }
+    data->fanout_allowed.store(uuid&&*uuid&&stts::stem_outputs::allowed_parent(parent),std::memory_order_release);
+    data->dispatch_wake.notify();
+}
+void filter_remove(void* ptr,obs_source_t*){
+    auto* data=static_cast<StemFilter*>(ptr);
+    if(!data)return;
+    data->fanout_allowed.store(false,std::memory_order_release);
+    data->fanout_ready.store(false,std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(data->control);
+        data->pipeline.invalidate();++data->revision;data->status=StemFilter::Buffering;
+    }
+    data->dispatch_wake.notify();data->wake.notify();
+}
+void enabled_changed(void* ptr,calldata_t*){
+    auto* data=static_cast<StemFilter*>(ptr);
+    // Explicit disable/enable is a control discontinuity, not a failed
+    // inference retry. No captured audio may survive across this boundary.
+    {
+        std::lock_guard<std::mutex> lock(data->control);
+        data->pipeline.invalidate();++data->revision;data->status=StemFilter::Buffering;
+    }
+    data->wake.notify();data->dispatch_wake.notify();
+}
+void fanout_snapshot(void* ptr,calldata_t* d){
+    auto* data=static_cast<StemFilter*>(ptr);
+    calldata_set_int(d,"packets",data->dispatch_packets.load());
+    calldata_set_int(d,"drops",data->dispatch_drops.load());
+    calldata_set_int(d,"subscribers",data->dispatch_subscribers.load());
+}
 void* create(obs_data_t* settings,obs_source_t* source) {
     auto* audio=obs_get_audio();
     const uint32_t rate=audio?audio_output_get_sample_rate(audio):0;
@@ -219,24 +329,35 @@ void* create(obs_data_t* settings,obs_source_t* source) {
     StemFilter* data=nullptr;
     try{data=new StemFilter(rate);}catch(...){return nullptr;}
     if(!data)return nullptr;
+    data->context=source;
     try {
         update(data,settings);
         data->worker=std::thread(worker_entry,data);
+        data->dispatcher=std::thread(dispatch_entry,data);
     } catch(...) {
+        data->stopping.store(true,std::memory_order_release);
+        data->wake.notify();data->dispatch_wake.notify();data->client.cancel();
+        if(data->worker.joinable())data->worker.join();
+        if(data->dispatcher.joinable())data->dispatcher.join();
         delete data;return nullptr;
     }
     proc_handler_add(obs_source_get_proc_handler(source),
         "void sound_stem_live_v1(out string status, out int windows, out int automatic_retries, out int delay_ms)",snapshot,data);
+    proc_handler_add(obs_source_get_proc_handler(source),
+        "void sound_stem_fanout_v1(out int packets, out int drops, out int subscribers)",fanout_snapshot,data);
+    signal_handler_connect(obs_source_get_signal_handler(source),"enable",enabled_changed,data);
     blog(LOG_INFO,"[Sound stems] Experimental stereo delayed filter created (rate=%u, delay=12s)",rate);
     return data;
 }
 void destroy(void* ptr) {
     auto* data=static_cast<StemFilter*>(ptr);
     if(!data)return;
+    signal_handler_disconnect(obs_source_get_signal_handler(data->context),"enable",enabled_changed,data);
     data->stopping.store(true,std::memory_order_release);
-    data->wake.notify();
+    data->wake.notify();data->dispatch_wake.notify();
     data->client.cancel(); // interrupt the worker, never an OBS audio call
     if(data->worker.joinable())data->worker.join();
+    if(data->dispatcher.joinable())data->dispatcher.join();
     delete data;
 }
 obs_audio_data* filter_audio(void* ptr,obs_audio_data* packet){
@@ -258,8 +379,29 @@ obs_audio_data* filter_audio(void* ptr,obs_audio_data* packet){
     auto* left=reinterpret_cast<float*>(packet->data[0]);
     auto* right=reinterpret_cast<float*>(packet->data[1]);
     const bool was_valid=data->pipeline.ok();
-    data->pipeline.process_mix(left,right,packet->frames,
-        stts::unpack_stem_gains(data->mix.load(std::memory_order_acquire)));
+    auto gains=stts::unpack_stem_gains(data->mix.load(std::memory_order_acquire));
+    if(data->fanout_ready.load(std::memory_order_acquire)&&data->fanout_allowed.load(std::memory_order_acquire)){
+        size_t offset=0;
+        while(offset<packet->frames){
+            auto* out=data->dispatch_queue.reserve();
+            if(!out){
+                ++data->dispatch_drops;
+                data->pipeline.invalidate();
+                data->pipeline.process_mix(left+offset,right+offset,packet->frames-offset,gains);
+                data->dispatch_wake.notify();
+                break;
+            }
+            const auto n=std::min<size_t>(packet->frames-offset,stts::StemDispatchPacket::max_frames);
+            out->epoch=data->pipeline.epoch();
+            out->timestamp=packet->timestamp+uint64_t(offset)*1000000000ULL/data->sample_rate;
+            out->frames=uint32_t(n);
+            std::array<float*,8> planes{};
+            for(size_t ch=0;ch<8;++ch)planes[ch]=out->planes[ch].data();
+            data->pipeline.process_mix_and_stems(left+offset,right+offset,n,gains,planes);
+            data->dispatch_queue.publish();data->dispatch_wake.notify();
+            offset+=n;
+        }
+    }else data->pipeline.process_mix(left,right,packet->frames,gains);
     if((was_valid&&!data->pipeline.ok())||data->pipeline.input_ready())data->wake.notify();
     for(size_t ch=2;ch<MAX_AUDIO_CHANNELS;++ch)
         if(packet->data[ch])
@@ -280,5 +422,18 @@ struct obs_source_info stem_live_filter={
     .get_properties=properties,
     .update=update,
     .filter_audio=filter_audio,
+    .filter_remove=filter_remove,
+    .filter_add=filter_add,
+};
+struct obs_source_info stem_live_output={
+    .id=stts::stem_outputs::source_id,
+    .type=OBS_SOURCE_TYPE_INPUT,
+    .output_flags=OBS_SOURCE_AUDIO,
+    .get_name=stts::stem_outputs::name,
+    .create=stts::stem_outputs::create,
+    .destroy=stts::stem_outputs::destroy,
+    .get_defaults=stts::stem_outputs::defaults,
+    .get_properties=stts::stem_outputs::properties,
+    .update=stts::stem_outputs::update,
 };
 }

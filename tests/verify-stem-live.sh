@@ -8,13 +8,13 @@ combined=false
 tts=false
 stt=false
 effects="stem_live"
-count=1
+count=2
 case "${1:-}" in
   "") ;;
   --with-model) run_real=true ;;
-  --combined) run_real=true; combined=true; effects="stem_live;yamnet"; count=2 ;;
-  --combined-tts) run_real=true; combined=true; tts=true; effects="stem_live;yamnet;tts"; count=3 ;;
-  --combined-stt) run_real=true; combined=true; tts=true; stt=true; effects="stem_live;yamnet;tts;stt"; count=4 ;;
+  --combined) run_real=true; combined=true; effects="stem_live;yamnet"; count=3 ;;
+  --combined-tts) run_real=true; combined=true; tts=true; effects="stem_live;yamnet;tts"; count=4 ;;
+  --combined-stt) run_real=true; combined=true; tts=true; stt=true; effects="stem_live;yamnet;tts;stt"; count=5 ;;
   *) echo "Usage: $0 [--with-model|--combined|--combined-tts|--combined-stt]" >&2; exit 2 ;;
 esac
 work="$(mktemp -d /tmp/lll-sound-stem-live-XXXXXX)"
@@ -51,6 +51,9 @@ cxx="${CXX:-c++}"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-mix.cpp" -o "$work/mix"
 "$work/mix"
+"$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
+    "$root/tests/verify-stem-dispatch.cpp" -o "$work/dispatch"
+"$work/dispatch"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-live-client.cpp" -o "$work/client"
 # The fake protocol server is self-contained and does not use the GPU.
@@ -172,12 +175,22 @@ grep -F 'STEM_QUALITY' "$work/model.log"
 grep -F 'STEM_WARMUP' "$work/model.log"
 grep -F 'STEM_WINDOW seq=0' "$work/model.log"
 grep -F 'STEM_WINDOW seq=1' "$work/model.log"
-for mode in AUTO_RECOVER RECOVER;do
+for mode in MIX AUTO_RECOVER RECOVER;do
     env "SOUND_STEM_$mode"=1 QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 80 \
         "$work/obs-audio" "$module" "$work/stage/data" "$work/input-f32-stereo.bin" "$socket_dir/model.sock" \
         >"$work/stem-$mode.log" 2>&1 || { tail -45 "$work/stem-$mode.log";exit 1; }
     grep "STEM_LIVE_$mode.*pass=1" "$work/stem-$mode.log"
     grep '^RT_CALLBACK ' "$work/stem-$mode.log" || true
+done
+"$cxx" -std=gnu++17 -O2 -pthread -I"$inc" \
+    "$root/tests/verify-stem-output-obs.cpp" "${libs[@]}" "${probe_flags[@]}" -o "$work/obs-outputs"
+for recover in 0 1;do
+    env_args=()
+    if [[ "$recover" == 1 ]];then env_args=(SOUND_STEM_OUTPUT_RECOVER=1);fi
+    env "${env_args[@]}" QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 80 \
+        "$work/obs-outputs" "$module" "$work/stage/data" "$work/input-f32-stereo.bin" "$socket_dir/model.sock" \
+        >"$work/fanout-$recover.log" 2>&1 || { tail -60 "$work/fanout-$recover.log";exit 1; }
+    grep -E '^STEM_OUTPUT |^STEM_FANOUT_OBS |^RT_CALLBACK ' "$work/fanout-$recover.log"
 done
 echo "SOUND_STEM_LIVE_REAL_GPU_OBS_PASS=1"
 if [[ "$tts" == true ]]; then

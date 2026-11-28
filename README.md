@@ -15,7 +15,7 @@ All entries use the `LLL.sound` prefix in OBS.
 | Filter or source | Function | Build profile |
 | --- | --- | --- |
 | Native YAMNet (experimental) | Audio classification; dry stereo passthrough | Both |
-| Buffered stem (experimental) | CUDA HTDemucs four-stem stereo mix, instrumental or single stem, fixed 12-second delay | Expanded |
+| Buffered stem / Stem Output (experimental) | CUDA HTDemucs shared four-stem stereo mix and independent OBS sources, fixed 12-second delay | Expanded |
 | STT | Select Whisper, Parakeet or streaming Nemotron; optional [Zipformer CPU](docs/zipformer-stt.md); rolling captions | Expanded |
 | TTS | Select Kokoro ONNX/native CUDA, Piper, Chatterbox Nano/native Turbo CPU, TikTok or Edge | Expanded |
 | [Audio Diffusion](docs/audio-diffusion.md) | Local Stable Audio 3 music/SFX, continuous playback, capture and transformation, prompt/LoRA automation, optional resident SAME-S morph/texture and overlapping live wet output | Explicit opt-in |

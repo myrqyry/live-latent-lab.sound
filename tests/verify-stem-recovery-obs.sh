@@ -41,4 +41,16 @@ for mode in AUTO_RECOVER RECOVER;do
     grep '^RT_CALLBACK ' "$work/$mode.log" || true
     kill "$pid";wait "$pid" 2>/dev/null || true;pid=""
 done
+# Four independent OBS sources, exact fixture stereo values and shared timestamps.
+"${CXX:-c++}" -std=gnu++17 -O2 -pthread -I"$inc" "$root/tests/verify-stem-output-obs.cpp" $(pkg-config --libs libobs) "${probe[@]}" -o "$work/outputs"
+endpoint="$work/outputs.sock"
+python3 "$root/tests/stem-protocol-fixture.py" "$endpoint" >"$work/outputs-peer.log" 2>&1 &
+pid=$!
+for ((i=0;i<100;i++));do
+    [[ -S "$endpoint" ]] && break
+    kill -0 "$pid";sleep .05
+done
+[[ -S "$endpoint" ]]
+SOUND_STEM_OUTPUT_FIXTURE=1 QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 45 "$work/outputs" "$SOUND_STEM_STAGE/bin/64bit/live-latent-lab-sound.so" "$SOUND_STEM_STAGE/data" "$fixture" "$endpoint" >"$work/outputs.log" 2>&1 || { tail -60 "$work/outputs.log";exit 1; }
+grep -E '^STEM_OUTPUT |^STEM_FANOUT_OBS |^RT_CALLBACK ' "$work/outputs.log"
 echo SOUND_STEM_RECOVERY_OBS_PROTOCOL_ONLY_PASS=1
