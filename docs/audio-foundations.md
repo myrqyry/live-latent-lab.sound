@@ -79,3 +79,24 @@ Start with **RVC or Whisper** using a known-compatible actual model and
 captured test audio. Record exact model I/O and sample-rate/timing behavior.
 Test a successful transformed/transcribed result and the no-model/error bypass
 as independent assertions before advertising the feature as live.
+
+### STT pre-roll storage
+
+The unified STT filter retains the latest 200 ms (3,200 samples at its
+16 kHz internal rate) of pre-speech audio in a worker-owned fixed-capacity
+circular buffer. Appending an audio frame uses at most two contiguous copies,
+without allocating or advancing a deque one sample at a time. At speech
+onset the chronological window is copied into the existing phrase vector;
+stream reset discards its logical contents. Audio callback ownership,
+silence thresholds, resampling and utterance boundaries are unchanged.
+
+The capture regression compares the buffer against the previous deque
+behavior across 200 variable-sized packets, wraparound, resets and oversized
+packets. Capture, wake, caption history, configuration and SPSC regressions
+pass. A fresh STT-only staged module passed actual libobs Whisper fixture
+checks at 48 and 44.1 kHz, including dry output, transcription, mute, stopped
+source flush, hot settings, and lifecycle recovery. An initial cold model
+load took 15.7 seconds and missed the existing 10-second readiness deadline;
+the warmed runs reached ready in 200 ms. No change to model loading or
+startup deadline, no measured CPU saving, no other backend or full
+combined-package qualification. Evidence: /tmp/sound-preroll.U1poYB.

@@ -10,7 +10,6 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -19,6 +18,7 @@
 #include <vector>
 #include "engines/stt_backend.hpp"
 #include "framework/stt_capture.hpp"
+#include "framework/stt_preroll.hpp"
 #include "framework/stt_config.hpp"
 #include "framework/stt_caption_history.hpp"
 #include "framework/stt_wake.hpp"
@@ -201,7 +201,7 @@ void run(State& s){
     std::vector<float> phrase;
     std::array<float,frame_size> frame{};
     size_t used=0;
-    std::deque<float> preroll;
+    stts::SttPreroll<hz/5> preroll;
     int speech_frames=0,quiet_frames=0;
     auto last_packet=std::chrono::steady_clock::now();
     auto clear_caption=[&]{
@@ -362,12 +362,11 @@ void run(State& s){
             double power=0;for(auto sample:frame)power+=sample*sample;
             const bool voice=power/frame.size()>=limit*limit;
             if(phrase.empty()&&!voice){
-                for(float sample:frame)preroll.push_back(sample);
-                while(preroll.size()>hz/5)preroll.pop_front();
+                preroll.push(frame.data(),frame.size());
                 continue;
             }
             if(phrase.empty()){
-                phrase.assign(preroll.begin(),preroll.end());preroll.clear();
+                preroll.copy_to(phrase);preroll.clear();
             }
             phrase.insert(phrase.end(),frame.begin(),frame.end());
             if(voice){++speech_frames;quiet_frames=0;}else ++quiet_frames;

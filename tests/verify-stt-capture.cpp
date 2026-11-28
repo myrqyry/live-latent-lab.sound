@@ -1,9 +1,31 @@
 #include "framework/stt_capture.hpp"
+#include "framework/stt_preroll.hpp"
+#include <deque>
+#include <vector>
 #include <atomic>
 #include <cassert>
 #include <iostream>
 #include <thread>
+static void preroll(){
+    stts::SttPreroll<3200> window;
+    std::deque<float> reference;
+    std::vector<float> actual;
+    std::array<float,4096> packet{};
+    for(size_t i=0;i<200;++i){
+        size_t n=i%11==0?4096:i%3==0?17:320;
+        for(size_t j=0;j<n;++j)packet[j]=float(i*4096+j);
+        window.push(packet.data(),n);
+        for(size_t j=0;j<n;++j)reference.push_back(packet[j]);
+        while(reference.size()>3200)reference.pop_front();
+        window.copy_to(actual);
+        assert(actual.size()==reference.size()&&std::equal(actual.begin(),actual.end(),reference.begin()));
+        if(i%19==0){window.clear();reference.clear();window.copy_to(actual);assert(actual.empty());}
+    }
+    window.push(nullptr,0);window.clear();window.copy_to(actual);assert(actual.empty());
+    std::cout<<"SOUND_STT_PREROLL_PASS=1\n";
+}
 int main(){
+    preroll();
     stts::SttCapture q(2);
     stts::SttBlock a{},b{},c{};
     a.epoch=1;a.timestamp=10;a.count=1;a.samples[0]=.25f;
