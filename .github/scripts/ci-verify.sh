@@ -109,6 +109,8 @@ count=$((count+1))
 "$cxx" -std=gnu++17 -O2 -I"$inc" tests/verify-model-picker-defaults.cpp $(pkg-config --libs libobs) -o "$work/model-picker-defaults"
 xvfb-run -a timeout 30 "$work/model-picker-defaults" "$stage/bin/64bit/$MODULE.so" "$stage/data" "$work/model-picker-config"
 count=$((count+1))
+xvfb-run -a timeout 30 "$work/model-picker-defaults" "$stage/bin/64bit/$MODULE.so" "$stage/data" "$work/fresh-model-picker-config" --fresh
+count=$((count+1))
 (( count >= MINIMUM_TESTS ))
 echo "Verified $count independent model-free test groups; no inference qualification implied."
 (cd "$stage"; while read -r file; do sha256sum "$file"; done < "$work/expected-files" > "$srcwork/PAYLOAD-SHA256SUMS"; sha256sum -c "$srcwork/PAYLOAD-SHA256SUMS"; tar -czf "$work/$ARCHIVE" -T "$work/expected-files")

@@ -6,7 +6,10 @@
 selected by default. The compiled helper ships with its own matched
 audio.cpp runtime, isolated from the OBS process and the RVC runtime.
 A blank GGUF model override resolves to
-`<Sound Model Library>/Mel-Band-RoFormer-GGUF/mel-band-roformer-f16.gguf`.
+`mel-band-roformer-f16.gguf` in the same family folder used by Browse.
+Without a custom library this is
+`<OBS plugin config>/models/Mel-Band-RoFormer-GGUF/`.
+A configured shared library or explicit family directory can override it.
 Select another qualified GGUF (such as Q8_0) directly in the picker.
 No Python environment, saved stem profile or command is needed
 for this backend. If the native model/runtime is missing, the filter

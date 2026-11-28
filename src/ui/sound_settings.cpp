@@ -45,7 +45,7 @@ QWidget* makePage(QWidget*parent){
     auto*form=new QFormLayout;layout->addLayout(form);
     auto picker=[&](const char*key,const QString&title){
         auto*row=new QWidget(body);auto*h=new QHBoxLayout(row);h->setContentsMargins(0,0,0,0);
-        auto*edit=new QLineEdit(pref(key),row);edit->setObjectName(key);edit->setReadOnly(true);edit->setPlaceholderText("System default");
+        auto*edit=new QLineEdit(pref(key),row);edit->setObjectName(key);edit->setReadOnly(true);edit->setPlaceholderText(std::string(key)=="models"?"Plugin model folders (automatic)":"System default");
         auto*browse=new QPushButton("Browse…",row);auto*clear=new QPushButton("Clear",row);
         h->addWidget(edit,1);h->addWidget(browse);h->addWidget(clear);form->addRow(title,row);
         QObject::connect(browse,&QPushButton::clicked,row,[page,edit]{auto dir=QFileDialog::getExistingDirectory(page,"Choose folder",edit->text());if(!dir.isEmpty())edit->setText(dir);});

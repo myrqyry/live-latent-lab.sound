@@ -138,8 +138,8 @@ void update(void* ptr,obs_data_t* settings) {
     const bool native_backend=data->melband&&obs_data_get_bool(settings,"native_backend");
     std::string native_model=obs_data_get_string(settings,"native_model");
     if(native_backend&&native_model.empty()){
-        auto root=sound_preferences::directory();
-        if(!root.empty())native_model=(std::filesystem::u8path(root)/"Mel-Band-RoFormer-GGUF"/"mel-band-roformer-f16.gguf").string();
+        auto root=sound_preferences::model_directory("roformer","Mel-Band-RoFormer-GGUF");
+        if(!root.empty())native_model=(std::filesystem::u8path(root)/"mel-band-roformer-f16.gguf").string();
     }
     std::lock_guard<std::mutex> lock(data->control);
     data->mix.store(mix,std::memory_order_release);

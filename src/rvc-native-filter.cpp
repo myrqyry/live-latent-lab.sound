@@ -203,7 +203,9 @@ void defaults(obs_data_t* d){
         std::string base=std::string(home)+"/.local/share/live-latent-lab-sound/rvc";
         obs_data_set_default_string(d,"helper",(base+"/rvc-native-worker-v3").c_str());
         obs_data_set_default_string(d,"library",(base+"/libaudiocpp.so.0.1.0").c_str());
-        obs_data_set_default_string(d,"model",(base+"/rvc-f16.gguf").c_str());
+        std::error_code ec;
+        if(std::filesystem::is_regular_file(std::filesystem::u8path(base+"/rvc-f16.gguf"),ec))
+            obs_data_set_default_string(d,"model",(base+"/rvc-f16.gguf").c_str());
     }
 }
 void update(void* ptr,obs_data_t* d){

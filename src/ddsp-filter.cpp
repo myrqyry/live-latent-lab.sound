@@ -174,7 +174,9 @@ void defaults(obs_data_t* d){
     if(const char* home=std::getenv("HOME")){
         const std::string root=std::string(home)+"/.local/share/live-latent-lab-sound/ddsp";
         obs_data_set_default_string(d,"runtime",(root+"/libLiteRt.so").c_str());
-        obs_data_set_default_string(d,"models",(root+"/models").c_str());
+        std::error_code ec;
+        if(std::filesystem::is_directory(std::filesystem::u8path(root+"/models"),ec))
+            obs_data_set_default_string(d,"models",(root+"/models").c_str());
     }
     if(const char* path=std::getenv("SOUND_DDSP_LIBRARY"))obs_data_set_default_string(d,"runtime",path);
     if(const char* path=std::getenv("SOUND_DDSP_MODELS"))obs_data_set_default_string(d,"models",path);

@@ -1637,3 +1637,24 @@ override. All 15 local model properties passed read-only verification.
 Whisper/Nemotron/Parakeet currently share their existing Mobile-Edge
 model directory; no files were moved to force a new layout. No new
 inference qualification implied.
+
+## Fresh-install model folders (2026-11-27)
+
+The preceding picker change relied on existing directories. Fresh
+user with no preferences and no model folders reproduced empty
+YAMNet Browse default. Corrected shared helper to lazily create
+the corresponding family under the writable OBS plugin config
+models/ directory. Existing explicit overrides and existing shared
+library family directories retain precedence. No installer privilege,
+model download or workstation path required. Only if local directory
+creation fails does it fall back to shared root/system chooser.
+Fresh native RoFormer default uses the same family directory;
+RVC and DDSP defaults no longer populate nonexistent legacy model
+paths that would override Browse. Existing valid legacy paths preserved.
+Actual libobs clean-HOME/empty-config expanded and Qt-free tests
+passed; all 15 model properties in expanded build resolve to
+newly created directories, no model selected. Configured and legacy
+quoted paths, runtime picker, missing override fallback, local
+override regression and 9-ID registry passed. Added fresh baseline
+test to CI; entire CI and graphical dialog click-through not run.
+No changes to local user preferences or installed module in this pass.
