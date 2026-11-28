@@ -269,3 +269,5 @@ For actual model and OBS lifecycle testing, follow the fixture and
 runtime requirements in [expanded-build.md](expanded-build.md).
 Model-free tests do not establish inference performance or music
 quality.
+
+Experimental named two-stem worker transport: [LLSTEM02 profile 1](stem-api-v2.md). This is not yet wired into the OBS filter.

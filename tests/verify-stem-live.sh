@@ -64,6 +64,9 @@ cxx="${CXX:-c++}"
 socket_dir="$(mktemp -d "$XDG_RUNTIME_DIR/lll-stem-test-XXXXXX")"
 chmod 700 "$socket_dir"
 "$work/client" "$socket_dir/fake.sock" | tee "$work/client.log"
+"$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
+    "$root/tests/verify-stem-v2-client.cpp" -o "$work/client-v2"
+"$work/client-v2" "$socket_dir/fake-v2.sock" --reject
 venv="${STEM_SPLITTER_PYTHON:?Set STEM_SPLITTER_PYTHON to the installed stem worker Python}"
 test -x "$venv"
 "$venv" -m unittest discover -s "$root/tests" -p "test_live_stem*.py" -v \

@@ -1342,3 +1342,26 @@ not SDR/ground truth, not live OBS. See docs/stem-model-families.md
 and tests/verify-stem-melband-readout.py. Next: qualified named
 two-stem streaming transport with explicit latency/model options;
 measure real end-to-end latency and recovery. No install/push.
+
+
+## Named two-stem worker transport (2026-11-27)
+
+Added explicit LLSTEM02 profile 1, pinned Mel-Band RoFormer CUDA FP32,
+2.8 s stereo context, named vocals and residual instrumental. Separate
+endpoint, no fallback, no fake four-stem mapping. Shared C++ client
+reuses existing bounded transfers and cancellation; v1 golden bytes
+unchanged. Extracted pinned model loader into tools/melband_model.py.
+18 Python tests, C++ v1 contract/cancellation and v2 wrong-profile,
+wrong-count and nonfinite rejection, existing timeline/mix/dispatch
+tests and exact isolated registry passed. Real C++ client to resident
+CUDA worker passed both rates, .2994/.3002 s server processing;
+finite outputs and mixture reconstruction checked. No OBS two-stem
+registration or streaming readout scheduling yet. No installed
+dependency changes. Current next step: generation-safe short-hop
+playback with named two-stem mixing and fanout.
+
+Prior checkpoint 0f0ba26 pushed to origin/main on request. Expanded
+seven-effect candidate staged and isolated registry passed eight IDs.
+Installation not applied because OBS remained running; do not
+overwrite a loaded module or interrupt the user session. No full
+expanded acceptance claimed.

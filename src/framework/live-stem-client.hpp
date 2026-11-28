@@ -63,8 +63,22 @@ public:
     bool exchange_batch(const std::string& path,uint32_t rate,uint32_t seq,
                   const float* in_l,const float* in_r,size_t frames,
                   Current&& current,Publish&& publish){
+        return exchange_profile(path,rate,seq,in_l,in_r,frames,0,current,publish);
+    }
+    // Explicit v2 profile: full 2.8 s context, Vocals then Instrumental.
+    template<class Current,class Publish>
+    bool exchange_melband(const std::string& path,uint32_t rate,uint32_t seq,
+                  const float* in_l,const float* in_r,size_t frames,
+                  Current&& current,Publish&& publish){
+        return exchange_profile(path,rate,seq,in_l,in_r,frames,1,current,publish);
+    }
+private:
+    template<class Current,class Publish>
+    bool exchange_profile(const std::string& path,uint32_t rate,uint32_t seq,
+                  const float* in_l,const float* in_r,size_t frames,uint32_t profile,
+                  Current& current,Publish& publish){
         if(stopping_.load() || !current() || (rate!=44100 && rate!=48000)
-           || frames!=size_t(rate)*8
+           || frames!=(profile?size_t(rate)*28/10:size_t(rate)*8)
            || !in_l || !in_r ||
            path.empty() || path.size()>=sizeof(sockaddr_un{}.sun_path))
             return false;
@@ -73,7 +87,7 @@ public:
         if(::lstat(path.c_str(),&statbuf) || !S_ISSOCK(statbuf.st_mode)
            || statbuf.st_uid!=::geteuid() || (statbuf.st_mode & 077))
             return false;
-        response_.resize(size_t(4)*2*frames);
+        response_.resize(size_t(profile?2:4)*2*frames);
         int fd=::socket(AF_UNIX,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
         if(fd<0)return false;
         {
@@ -81,7 +95,7 @@ public:
             if(stopping_.load()){::close(fd);return false;}
             socket_=fd;
         }
-        const bool success=exchange_fd(fd,path,rate,seq,in_l,in_r,frames,current);
+        const bool success=exchange_fd(fd,path,rate,seq,in_l,in_r,frames,profile,current);
         {
             std::lock_guard<std::mutex> lock(socket_mutex_);
             if(socket_==fd)socket_=-1;
@@ -90,6 +104,7 @@ public:
         return success && !stopping_.load() && current() &&
             publish(response_.data(),response_.size()) && current();
     }
+public:
     template<class Current>
     bool exchange(const std::string& path,uint32_t rate,uint32_t seq,
                   const float* in_l,const float* in_r,size_t frames,
@@ -112,7 +127,7 @@ private:
     template<class Current>
     bool exchange_fd(int fd,const std::string& path,uint32_t rate,uint32_t seq,
                      const float* in_l,const float* in_r,size_t frames,
-                     Current& current){
+                     uint32_t profile,Current& current){
         // One absolute request deadline, not a fresh timeout for each
         // partial transfer. Check generation and shutdown every poll.
         using Clock=std::chrono::steady_clock;
@@ -136,21 +151,25 @@ private:
         sockaddr_un address{};address.sun_family=AF_UNIX;
         std::memcpy(address.sun_path,path.c_str(),path.size()+1);
         if(::connect(fd,reinterpret_cast<const sockaddr*>(&address),sizeof(address)))return false;
-        unsigned char request[36]{};
-        std::memcpy(request,"LLSTEM01",8);
-        put_le32(request+8,1);put_le32(request+12,rate);
+        const auto* magic=profile?"LLSTEM02":"LLSTEM01";
+        const uint32_t version=profile?2:1;
+        const size_t header_bytes=profile?40:36;
+        unsigned char request[40]{};
+        std::memcpy(request,magic,8);
+        put_le32(request+8,version);put_le32(request+12,rate);
         put_le32(request+16,uint32_t(frames));
         put_le32(request+20,2);put_le32(request+24,seq);
-        if(!transfer(request,sizeof request,true)
+        if(profile)put_le32(request+36,profile);
+        if(!transfer(request,header_bytes,true)
            || !transfer(const_cast<float*>(in_l),frames*sizeof(float),true)
            || !transfer(const_cast<float*>(in_r),frames*sizeof(float),true))return false;
-        unsigned char response[36]{};
-        if(!transfer(response,sizeof response,false)
-           || std::memcmp(response,"LLSTEM01",8)
-           || get_le32(response+8)!=1 || get_le32(response+12)!=rate
+        unsigned char response[40]{};
+        if(!transfer(response,header_bytes,false)
+           || std::memcmp(response,magic,8)
+           || get_le32(response+8)!=version || get_le32(response+12)!=rate
            || get_le32(response+16)!=frames || get_le32(response+20)!=2
-           || get_le32(response+24)!=seq || get_le32(response+28)!=4
-           || get_le32(response+32)!=0)return false;
+           || get_le32(response+24)!=seq || get_le32(response+28)!=(profile?2u:4u)
+           || get_le32(response+32)!=0 || (profile&&get_le32(response+36)!=profile))return false;
         auto& data=response_;
         if(!transfer(data.data(),data.size()*sizeof(float),false))return false;
         for(float value:data)if(!std::isfinite(value))return false;
