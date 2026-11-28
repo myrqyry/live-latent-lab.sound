@@ -2,7 +2,7 @@
 
 # Sound: verified audio foundation (2026-10-13)
 
-This is a deliberately narrow verification checkpoint for Live Latent Lab: Sound.
+This is a deliberately narrow verification checkpoint for lll.sound.
 A successful CMake build is **not** evidence that an AI effect works with its
 model or even that OBS can load the plugin.
 

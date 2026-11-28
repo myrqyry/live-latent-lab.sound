@@ -176,3 +176,8 @@ void obs_module_unload(void)
 #endif
     obs_log(LOG_INFO, "Sound quarantine module unloaded");
 }
+
+const char *obs_module_name(void)
+{
+    return "lll.sound";
+}

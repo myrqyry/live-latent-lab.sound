@@ -66,7 +66,7 @@ int main(int argc, char **argv)
         return 3;
     }
     bool initialized = obs_init_module(module);
-    bool matched = initialized;
+    bool matched = initialized && std::string(obs_get_module_name(module)) == "lll.sound";
     int registered = 0;
     for (const auto &item : effects) {
         obs_properties_t *props = initialized ? obs_get_source_properties(item.id) : nullptr;
@@ -75,7 +75,7 @@ int main(int argc, char **argv)
         if (found) {
             ++registered;
             const auto* label=obs_source_get_display_name(item.id);
-            if (!label || std::strncmp(label,"LLL.sound ",10)!=0) {
+            if (!label || std::strncmp(label,"lll.sound ",10)!=0) {
                 std::fprintf(stderr,"DISPLAY_NAMESPACE_MISMATCH id=%s\n",item.id);
                 matched=false;
             }

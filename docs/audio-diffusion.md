@@ -1,6 +1,6 @@
 # Audio Diffusion (opt-in native source)
 
-**LLL.sound Audio Diffusion** is a local music and sound generator, independent
+**lll.sound Audio Diffusion** is a local music and sound generator, independent
 of the quarantined MusicGen source. It uses the pinned native SA3 V1 C ABI
 qualified in [sa3-native-qualification.md](sa3-native-qualification.md).
 
@@ -27,7 +27,7 @@ the actual selected compute device.
 Enable `-DSOUND_DIFFUSION_DOCK=ON` with the diffusion effect and matching
 OBS frontend API / Qt 6 Widgets development packages. This is independent
 of the historical Tools menu and defaults off for headless builds.
-Open **LLL.sound Audio Diffusion** from OBS Docks. Select an existing
+Open **lll.sound Audio Diffusion** from OBS Docks. Select an existing
 Audio Diffusion source by UUID; no additional source is created. The
 dock displays real V3 generation progress, playback, lookahead and
 underrun status every 500 ms while visible. Generate, Continuous, Finish

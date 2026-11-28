@@ -1,4 +1,4 @@
-# Live Latent Lab: Sound — Hugging Face stem candidates and no-fake-stems checkpoint
+# lll.sound — Hugging Face stem candidates and no-fake-stems checkpoint
 
 Date: 2026-11-12. This is an evidence-led integration note, not a claim that live separation works.
 

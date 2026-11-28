@@ -740,7 +740,7 @@ void* create(obs_data_t* settings,obs_source_t* context){
     sound_signals::register_broker(context);
     return s;
 }
-const char* name(void*){return "LLL.sound TTS";}
+const char* name(void*){return "lll.sound TTS";}
 obs_source_info info(){
     obs_source_info x{};
     x.id="sound_tts_source";x.type=OBS_SOURCE_TYPE_INPUT;x.output_flags=OBS_SOURCE_AUDIO;

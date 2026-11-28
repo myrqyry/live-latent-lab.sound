@@ -37,7 +37,7 @@
     }
   },
   "name": "live-latent-lab-sound",
-  "displayName": "Live Latent Lab Sound",
+  "displayName": "lll.sound",
   "version": "0.3.0",
   "author": "myrqyry",
   "website": "https://github.com/myrqyry/live-latent-lab.sound"

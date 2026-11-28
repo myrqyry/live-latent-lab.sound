@@ -40,7 +40,7 @@ QWidget* makePage(QWidget*parent){
     auto*root=new QVBoxLayout(page);root->setContentsMargins(8,6,8,6);
     auto*scroll=new QScrollArea(page);scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);root->addWidget(scroll);
     auto*body=new QWidget(scroll);auto*layout=new QVBoxLayout(body);scroll->setWidget(body);
-    auto*heading=new QLabel("Sound · Models and runtimes",body);auto font=heading->font();font.setBold(true);heading->setFont(font);layout->addWidget(heading);
+    auto*heading=new QLabel("lll.sound · Models and runtimes",body);auto font=heading->font();font.setBold(true);heading->setFont(font);layout->addWidget(heading);
     auto*hint=new QLabel("Choose or enter starting folders for model and runtime file pickers. Reset restores the plugin default. Existing sources and explicit family overrides keep their own settings.",body);
     hint->setWordWrap(true);layout->addWidget(hint);
     auto*form=new QFormLayout;layout->addLayout(form);
@@ -119,7 +119,7 @@ bool savePage(QWidget*page){
         const QSignalBlocker blocker(edit);
         edit->setText(values[i]);
     }
-    status->setText(ok?"Sound preferences saved.":"Could not save Sound preferences.");
+    status->setText(ok?"lll.sound preferences saved.":"Could not save lll.sound preferences.");
     return ok;
 }
 }
@@ -134,7 +134,7 @@ std::string legacy_directory(bool runtime){
 }
 void register_sound_settings(){
     if(section||!qobject_cast<QApplication*>(QCoreApplication::instance()))return;
-    section=std::make_unique<plugin_settings::Section>("lll.sound","LLL.sound",makePage,savePage);
+    section=std::make_unique<plugin_settings::Section>("lll.sound","lll.sound",makePage,savePage);
     section->scan();
     blog(LOG_INFO,"[Sound] Native plugin settings bridge registered");
 }

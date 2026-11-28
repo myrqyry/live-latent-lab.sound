@@ -194,7 +194,7 @@ void run(State* s){
         }
     }
 }
-const char* name(void*){return "LLL.sound Voice Conversion (RVC CUDA)";}
+const char* name(void*){return "lll.sound Voice Conversion (RVC CUDA)";}
 void defaults(obs_data_t* d){
     obs_data_set_default_double(d,"mix",1);obs_data_set_default_int(d,"pitch",0);obs_data_set_default_double(d,"retrieval",0);
     obs_data_set_default_string(d,"packaged_voice","default");obs_data_set_default_int(d,"speaker_id",0);

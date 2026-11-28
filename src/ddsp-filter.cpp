@@ -162,7 +162,7 @@ void run(Filter* f){
         }
     }
 }
-const char* name(void*){return "LLL.sound Neural Timbre (DDSP)";}
+const char* name(void*){return "lll.sound Neural Timbre (DDSP)";}
 float number(obs_data_t* d,const char* k,float fallback,float low,float high){
     double v=obs_data_get_double(d,k);return std::isfinite(v)?std::clamp(float(v),low,high):fallback;
 }

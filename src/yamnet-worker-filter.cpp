@@ -284,7 +284,7 @@ obs_properties_t* properties(void* ptr){
     obs_properties_add_button2(props,"retry_models","Retry models",retry_models,ptr);
     return props;
 }
-const char* get_name(void*){return "LLL.sound Native YAMNet (experimental)";}
+const char* get_name(void*){return "lll.sound Native YAMNet (experimental)";}
 void* create(obs_data_t* settings,obs_source_t* source){
     auto* audio=obs_get_audio();
     const uint32_t rate=audio?audio_output_get_sample_rate(audio):0;

@@ -67,7 +67,7 @@ inline void update(void* ptr,obs_data_t* settings){
         add(d->binding);
     }
 }
-inline const char* name(void*){return "LLL.sound Stem Output";}
+inline const char* name(void*){return "lll.sound Stem Output";}
 inline void defaults(obs_data_t* settings){obs_data_set_default_int(settings,"stem",3);}
 inline void* create(obs_data_t* settings,obs_source_t* source){
     try{
@@ -124,7 +124,7 @@ inline obs_properties_t* properties(void*){
     obs_property_list_add_int(stem,"Drums",0);obs_property_list_add_int(stem,"Bass",1);
     obs_property_list_add_int(stem,"Other",2);obs_property_list_add_int(stem,"Vocals",3);
     obs_property_list_add_int(stem,"Instrumental (RoFormer)",4);
-    obs_properties_add_text(p,"note","Uses an existing LLL.sound Buffered stem filter. Add as a normal scene source; select Separate outputs on the parent to avoid duplicating its mix. Use OBS mixer for volume, monitoring and tracks. Keep the parent input active. Unbound or unavailable outputs are silent.",OBS_TEXT_INFO);
+    obs_properties_add_text(p,"note","Uses an existing lll.sound Buffered stem filter. Add as a normal scene source; select Separate outputs on the parent to avoid duplicating its mix. Use OBS mixer for volume, monitoring and tracks. Keep the parent input active. Unbound or unavailable outputs are silent.",OBS_TEXT_INFO);
     return p;
 }
 }

@@ -224,7 +224,7 @@ static obs_properties_t *bridge_properties(void*) {
     obs_properties_add_text(props,"socket_path","Private Unix socket (local only)",OBS_TEXT_DEFAULT);
     return props;
 }
-static const char* bridge_name(void*) {return "LLL.sound MeanVC2 bridge (experimental, external sidecar)";}
+static const char* bridge_name(void*) {return "lll.sound MeanVC2 bridge (experimental, external sidecar)";}
 struct obs_source_info meanvc2_bridge_source=[]{
     obs_source_info i{};
     i.id="meanvc2_bridge_source";

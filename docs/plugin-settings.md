@@ -5,7 +5,7 @@ updating plugins. Sound does not replace it or modify its state.
 
 The optional Qt settings bridge attaches a single **Plugins** category to
 the existing OBS Settings list and page stack. Sound contributes its
-own **LLL.sound** tab; other plugins can independently use the same
+own **lll.sound** tab; other plugins can independently use the same
 versioned widget convention in `src/ui/plugin-settings-page.hpp`.
 No dependency on Aftermarket, no cross-module C++ object exchange,
 and no changes to OBS's native page definitions. This approach is based

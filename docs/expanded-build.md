@@ -57,7 +57,7 @@ before replacing a working runtime.
 
 ## Unified STT filter
 
-Use the existing **LLL.sound STT** filter. Choose the recognition engine,
+Use the existing **lll.sound STT** filter. Choose the recognition engine,
 then its model and compute device. Caption destination, energy gate, phrase
 timing, caption hold and muted-audio policy occupy the same positions for
 all supported engines. Engine-specific options follow the shared controls.
@@ -252,7 +252,7 @@ launcher and real socket probes.
 
 ### Experimental RoFormer stereo separation
 
-The same stem_live gate adds **LLL.sound RoFormer stems
+The same stem_live gate adds **lll.sound RoFormer stems
 (experimental)**, with the shared Stem Output source, native routing
 and mixer. Its managed LLSTEM02 profile 1 worker requires the pinned
 local Mel-Band checkpoint and CUDA FP32. Its 2.1-second sample-count
@@ -263,12 +263,12 @@ do not connect this producer to the v1 HTDemucs socket.
 
 ### Independent stereo stem sources
 
-1. Attach **LLL.sound Buffered stem (experimental)** to an active stereo
+1. Attach **lll.sound Buffered stem (experimental)** to an active stereo
    input source and choose the local worker socket. A direct audio-capable
    input is required for source fanout; do not put the producer on a
    Stem Output or on an OBS scene containing its own outputs.
 2. Choose **Separate outputs (silent parent)** to avoid double mixing.
-3. Add four ordinary **LLL.sound Stem Output** sources to the scene,
+3. Add four ordinary **lll.sound Stem Output** sources to the scene,
    select the same parent filter in each, and choose Drums, Bass, Other
    or Vocals respectively. Additional copies can consume the same stem.
 4. Use OBS's native source volume, mute, monitoring and recording-track

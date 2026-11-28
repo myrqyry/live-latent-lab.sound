@@ -567,7 +567,7 @@ static enum gs_color_space whisper_get_color_space(void *data_ptr, size_t idx,
 /* ------------------------------------------------------------------------- */
 
 static const char *whisper_get_name(void *) {
-    return "LLL.sound Animated Captions";
+    return "lll.sound Animated Captions";
 }
 
 static void *whisper_create(obs_data_t *settings, obs_source_t *context) {

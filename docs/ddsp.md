@@ -9,7 +9,7 @@ port of the JUCE plugin.
 
 ## Using the filter
 
-Add **LLL.sound Neural Timbre (DDSP)** to a microphone or other
+Add **lll.sound Neural Timbre (DDSP)** to a microphone or other
 monophonic source. The default runtime and model paths on Linux are
 `~/.local/share/live-latent-lab-sound/ddsp/libLiteRt.so` and
 `~/.local/share/live-latent-lab-sound/ddsp/models`. Environment

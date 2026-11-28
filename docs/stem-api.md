@@ -118,8 +118,8 @@ Both registrations require the experimental `stem_live` build gate.
 
 | Source ID | OBS type | Display name |
 | --- | --- | --- |
-| stem_live_buffered_filter | Audio filter | LLL.sound Buffered stem (experimental) |
-| stem_live_output | Audio input | LLL.sound Stem Output |
+| stem_live_buffered_filter | Audio filter | lll.sound Buffered stem (experimental) |
+| stem_live_output | Audio input | lll.sound Stem Output |
 
 The filter uses a fixed 12-second sample-count prefill (not a wall-clock
 guarantee) with 8-second inference windows. Roughly four seconds remain

@@ -1,4 +1,4 @@
-# Live Latent Lab: Sound
+# lll.sound
 
 Native audio processing and inference tools for OBS Studio.
 
@@ -10,7 +10,7 @@ Native audio processing and inference tools for OBS Studio.
 
 ## Linux x86_64 candidate
 
-All entries use the `LLL.sound` prefix in OBS.
+All entries use the `lll.sound` prefix in OBS.
 
 | Filter or source | Function | Build profile |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ All entries use the `LLL.sound` prefix in OBS.
 
 ### Speech and shared signals
 
-Add one **LLL.sound TTS** source and select its speech backend in the
+Add one **lll.sound TTS** source and select its speech backend in the
 properties. Each engine remembers its own voice. There are no separate
 per-engine source registrations.
 
@@ -60,7 +60,7 @@ Other historical effects stay quarantined.
 Enable the optional native Settings integration with
 `-DSOUND_SETTINGS_PAGE=ON` (the Audio Diffusion dock build enables it by
 default unless explicitly disabled). In OBS, open **Settings → Plugins →
-LLL.sound** to select starting folders for model and runtime file pickers
+lll.sound** to select starting folders for model and runtime file pickers
 and access backend-specific model, setup and licensing resources.
 Apply/OK saves preferences; Cancel discards unapplied changes.
 Existing sources retain their own selected models and devices.

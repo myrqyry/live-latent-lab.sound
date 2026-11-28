@@ -287,7 +287,7 @@ static void demucs_source_update(void *data_ptr, obs_data_t *settings) {
 
 static const char *stem_source_get_name(void *type_data) {
     UNUSED_PARAMETER(type_data);
-    return "LLL.sound Demucs Stem Output";
+    return "lll.sound Demucs Stem Output";
 }
 
 static void *stem_source_create(obs_data_t *settings, obs_source_t *context) {
@@ -385,7 +385,7 @@ static bool demucs_source_audio_render(void *data_ptr, uint64_t *ts_out,
 /* ------------------------------------------------------------------------- */
 
 static const char *demucs_source_get_name(void *) {
-    return "LLL.sound Multi-Stem Source";
+    return "lll.sound Multi-Stem Source";
 }
 
 static void *demucs_source_create(obs_data_t *settings, obs_source_t *context) {

@@ -195,7 +195,7 @@ static void stts_defaults(obs_data_t* settings) {
 
 static const char *stts_get_name(void *unused) {
     UNUSED_PARAMETER(unused);
-    return "LLL.sound Voice Transform";
+    return "lll.sound Voice Transform";
 }
 
 static void *stts_create(obs_data_t *settings, obs_source_t *context) {

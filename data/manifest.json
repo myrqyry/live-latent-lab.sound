@@ -1,5 +1,6 @@
 {
-  "name": "Live Latent Lab Sound",
+  "display_name": "lll.sound",
+  "name": "live-latent-lab-sound",
   "id": "live-latent-lab-sound",
   "version": "0.3.0",
   "author": "myrqyry",

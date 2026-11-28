@@ -1697,3 +1697,14 @@ consistency. Added CI test; Qt-free, expanded fresh and configured
 picker tests, legacy Qt preferences, actual local read-only picker
 regression and nine-ID module registry passed. No full CI or native
 OBS dialog click-through; no local module installation or push.
+
+## Lowercase plugin branding (2026-11-27)
+
+Display names, settings tab/heading, diffusion dock, manifest display_name,
+buildspec displayName, documentation and registry assertions now use
+lll.sound. Module display name is lll.sound. Manifest name is the
+existing technical module ID. Package ID, binary filename, source IDs,
+socket names, model/runtime paths and saved configuration unchanged.
+Expanded nine-ID actual libobs namespace and module-name test passed
+with packaged manifest; real settings page in simulated dialog passed.
+No installation or push in this pass.

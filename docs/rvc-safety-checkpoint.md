@@ -2,7 +2,7 @@
 
 Status: **partially repaired, still quarantined** (2026-10-13).
 
-The `rvc` experiment in Live Latent Lab: Sound is **not** verified voice
+The `rvc` experiment in lll.sound is **not** verified voice
 conversion. The default plugin still builds with **zero** effect registrations.
 
 ## Reproduce this boundary

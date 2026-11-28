@@ -49,7 +49,7 @@ the connection cannot interrupt inference already running.
 ## Experimental OBS playback
 
 The `stem_live` effect gate now registers the separate producer filter
-`stem_live_melband_filter` (**LLL.sound RoFormer stems (experimental)**)
+`stem_live_melband_filter` (**lll.sound RoFormer stems (experimental)**)
 and reuses the ordinary `stem_live_output` source. The existing Demucs
 filter ID and default geometry are unchanged. Use the separate v2
 socket (default `$XDG_RUNTIME_DIR/lll-sound-melband.sock`).

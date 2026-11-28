@@ -39,7 +39,7 @@ int main(int argc,char**argv){
  });
  obs_module_t*m=nullptr;CHECK(obs_open_module(&m,argv[1],argv[2])==MODULE_SUCCESS&&obs_init_module(m));
  obs_post_load_modules();
- auto*tabs=dialog.findChild<QTabWidget*>("plugin-settings-tabs-v1");CHECK(tabs&&tabs->count()==1);
+ auto*tabs=dialog.findChild<QTabWidget*>("plugin-settings-tabs-v1");CHECK(tabs&&tabs->count()==1&&tabs->tabText(0)=="lll.sound");
  auto*page=tabs->widget(0);
  auto*models=page->findChild<QLineEdit*>("models"),*runtimes=page->findChild<QLineEdit*>("runtimes");
  CHECK(models&&runtimes);

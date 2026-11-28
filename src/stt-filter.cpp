@@ -586,7 +586,7 @@ obs_properties_t* properties(void* ptr){
     backend_visibility(p,selected);
     return p;
 }
-const char* name(void*){return "LLL.sound STT";}
+const char* name(void*){return "lll.sound STT";}
 void* create(obs_data_t* d,obs_source_t* source){
     auto* a=obs_get_audio();if(!a)return nullptr;
     auto rate=audio_output_get_sample_rate(a);auto channels=audio_output_get_channels(a);

@@ -8,8 +8,8 @@ it is not a generic network pub/sub bus or durable event log.
 
 ## User-facing routing
 
-On an ordinary input, attach **LLL.sound STT** and choose a model.
-In **LLL.sound TTS**, Speech input -> **STT filter (speech-to-speech)**
+On an ordinary input, attach **lll.sound STT** and choose a model.
+In **lll.sound TTS**, Speech input -> **STT filter (speech-to-speech)**
 lists compatible providers discovered from the same shared inventory
 used by external plugins. Parent/filter UUIDs are stable channel IDs;
 the visible label is the input/filter's display name. Renaming does

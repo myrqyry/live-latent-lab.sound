@@ -68,7 +68,7 @@ struct StemFilter {
 };
 
 const char* get_name(void*) {
-    return "LLL.sound Buffered stem (experimental)";
+    return "lll.sound Buffered stem (experimental)";
 }
 constexpr const char* gain_keys[]={"drums_gain","bass_gain","other_gain","vocals_gain"};
 constexpr const char* mute_keys[]={"drums_mute","bass_mute","other_mute","vocals_mute"};
@@ -95,7 +95,7 @@ constexpr const char* mel_gain_keys[]={"vocals_gain","instrumental_gain"};
 constexpr const char* mel_mute_keys[]={"vocals_mute","instrumental_mute"};
 constexpr const char* mel_solo_keys[]={"vocals_solo","instrumental_solo"};
 constexpr const char* mel_names[]={"Vocals","Instrumental"};
-const char* mel_name(void*){return "LLL.sound RoFormer stems (experimental)";}
+const char* mel_name(void*){return "lll.sound RoFormer stems (experimental)";}
 void mel_defaults(obs_data_t* settings){
     defaults(settings);
 #ifdef SOUND_WITH_STEM_NATIVE
@@ -288,7 +288,7 @@ obs_properties_t* properties_for(void* ptr,bool melband) {
         "Fixed 12 s delay; first 12 s silent. Uses local 8 s HTDemucs inference. "
         "All four stereo stems share one inference and playback clock. "
          "Mix controls change without rebuffering. Levels are linear; allow headroom when summing. "
-        "Add LLL.sound Stem Output sources and choose this filter for independent routing. "
+        "Add lll.sound Stem Output sources and choose this filter for independent routing. "
         "Faults mute and retry up to three times; a changed socket starts fresh prefill. "
         "Never plays dry music as a stem.",OBS_TEXT_INFO);
     obs_properties_add_button2(props,"retry_worker","Retry worker",retry_worker,ptr);

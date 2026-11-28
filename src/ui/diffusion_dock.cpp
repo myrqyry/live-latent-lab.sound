@@ -19,7 +19,7 @@ void event(obs_frontend_event e,void*){
     if(e==OBS_FRONTEND_EVENT_FINISHED_LOADING&&!panel){
         if(!qobject_cast<QApplication*>(QCoreApplication::instance())||!obs_frontend_get_main_window())return;
         auto* widget=new DiffusionPanel;
-        if(!obs_frontend_add_dock_by_id(dock_id,"LLL.sound Audio Diffusion",widget)){
+        if(!obs_frontend_add_dock_by_id(dock_id,"lll.sound Audio Diffusion",widget)){
             delete widget;
             blog(LOG_WARNING,"[Sound/Diffusion] Dock registration failed");return;
         }

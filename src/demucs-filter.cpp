@@ -260,7 +260,7 @@ static void demucs_update(void *data_ptr, obs_data_t *settings) {
 /* ------------------------------------------------------------------------- */
 
 static const char *demucs_get_name(void *) {
-    return "LLL.sound Stem Separator";
+    return "lll.sound Stem Separator";
 }
 
 static void *demucs_create(obs_data_t *settings, obs_source_t *context) {

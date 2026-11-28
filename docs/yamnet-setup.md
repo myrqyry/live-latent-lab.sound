@@ -41,7 +41,7 @@ With OBS closed, copy only the staged Sound plugin files into its own
 user plugin directory, normally
 `~/.config/obs-studio/plugins/live-latent-lab-sound/` on native Linux.
 Do not overwrite a working installation without a backup.
-Restart OBS, add **LLL.sound Native YAMNet (experimental)** to an audio
+Restart OBS, add **lll.sound Native YAMNet (experimental)** to an audio
 source's filter list and specify the two files and CPU delegate.
 Model/runtime/delegate changes reload live. Missing or incompatible
 assets leave classification unavailable while the original audio is

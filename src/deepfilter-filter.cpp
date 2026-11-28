@@ -95,7 +95,7 @@ static void df_process_thread(df_filter_data *data) {
 /* ------------------------------------------------------------------------- */
 
 static const char *df_get_name(void *) {
-    return "LLL.sound AI Noise Suppression";
+    return "lll.sound AI Noise Suppression";
 }
 
 static void df_update(void *data_ptr, obs_data_t *settings) {

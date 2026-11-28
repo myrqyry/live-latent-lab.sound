@@ -1326,7 +1326,7 @@ void destroy(void* p){
     if(s->worker.joinable())s->worker.join();
     delete s;
 }
-const char* name(void*){return "LLL.sound Audio Diffusion";}
+const char* name(void*){return "lll.sound Audio Diffusion";}
 }
 void register_sound_diffusion(){
     static obs_source_info i=[]{
