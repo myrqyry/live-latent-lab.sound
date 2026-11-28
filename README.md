@@ -16,7 +16,7 @@ All entries use the `lll.sound` prefix in OBS.
 | --- | --- | --- |
 | Native YAMNet (experimental) | Audio classification; dry stereo passthrough | Both |
 | [Buffered stem / Stem Output (experimental)](docs/stem-api.md) | CUDA HTDemucs shared four-stem stereo mix and independent OBS sources, fixed 12-second delay | Expanded |
-| [RoFormer stems (experimental)](docs/stem-api-v2.md) | CUDA Mel-Band vocals and residual instrumental, shared mixer/routing, fixed 2.1-second delay | Expanded |
+| [RoFormer stems (experimental)](docs/stem-api-v2.md) | CUDA Mel-Band vocals and residual instrumental, shared mixer/routing, fixed 2.1-second delay; optional resident native CUDA GGUF worker | Expanded |
 | STT | Select Whisper, Parakeet or streaming Nemotron; optional [Zipformer CPU](docs/zipformer-stt.md); rolling captions | Expanded |
 | TTS | Select Kokoro ONNX/native CUDA, Piper, Chatterbox Nano/native Turbo CPU, TikTok or Edge | Expanded |
 | [Audio Diffusion](docs/audio-diffusion.md) | Local Stable Audio 3 music/SFX, continuous playback, capture and transformation, prompt/LoRA automation, optional resident SAME-S morph/texture and overlapping live wet output | Explicit opt-in |
@@ -62,6 +62,7 @@ Enable the optional native Settings integration with
 default unless explicitly disabled). In OBS, open **Settings → Plugins →
 lll.sound** to select starting folders for model and runtime file pickers
 and access backend-specific model, setup and licensing resources.
+Fresh installations use one writable `models/` directory and a separate `runtimes/` directory under the plugin configuration folder. File pickers start at the effective model library and keep their own filters; existing custom family folders and valid legacy overrides are respected. The preferences are editable browsing defaults, not automatic model selection or downloads.
 Apply/OK saves preferences; Cancel discards unapplied changes.
 Existing sources retain their own selected models and devices.
 See [plugin settings integration](docs/plugin-settings.md).
@@ -115,7 +116,7 @@ a retry. The previous seven-effect module (including four-stem overlap) is insta
 [Release evidence and history](RELEASE_STATUS.md) · [Model settings audit](docs/model-settings-audit.md)
 · [Build checks](https://github.com/myrqyry/live-latent-lab.sound/actions)
 
-The shared Linux CI driver builds the small YAMNet profile and verifies
+The [verified Actions run](https://github.com/myrqyry/live-latent-lab.sound/actions/runs/46102540365) at `48e5e60` passed the Linux OBS 32.2.0 source-preview qualification and produced model-free binary and corresponding source archives. The shared Linux CI driver builds the small YAMNet profile and verifies
 registration, quarantine, ring buffer, STT configuration, public links, and the optional settings bridge and actual property-picker defaults.
 It uploads a model-free test archive and corresponding source, not an
 expanded installer. Actual classification requires the external assets above.
