@@ -15,6 +15,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileInfo>
+#include <QSignalBlocker>
 
 namespace {
 std::unique_ptr<plugin_settings::Section> section;
@@ -40,16 +41,18 @@ QWidget* makePage(QWidget*parent){
     auto*scroll=new QScrollArea(page);scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);root->addWidget(scroll);
     auto*body=new QWidget(scroll);auto*layout=new QVBoxLayout(body);scroll->setWidget(body);
     auto*heading=new QLabel("Sound · Models and runtimes",body);auto font=heading->font();font.setBold(true);heading->setFont(font);layout->addWidget(heading);
-    auto*hint=new QLabel("Choose starting folders for model and runtime file pickers. Existing sources keep their own settings. Downloads open in your browser.",body);
+    auto*hint=new QLabel("Choose or enter starting folders for model and runtime file pickers. Reset restores the plugin default. Existing sources and explicit family overrides keep their own settings.",body);
     hint->setWordWrap(true);layout->addWidget(hint);
     auto*form=new QFormLayout;layout->addLayout(form);
     auto picker=[&](const char*key,const QString&title){
         auto*row=new QWidget(body);auto*h=new QHBoxLayout(row);h->setContentsMargins(0,0,0,0);
-        auto*edit=new QLineEdit(pref(key),row);edit->setObjectName(key);edit->setReadOnly(true);edit->setPlaceholderText(std::string(key)=="models"?"Plugin models folder (automatic)":"System default");
-        auto*browse=new QPushButton("Browse…",row);auto*clear=new QPushButton("Clear",row);
-        h->addWidget(edit,1);h->addWidget(browse);h->addWidget(clear);form->addRow(title,row);
+        auto*edit=new QLineEdit(pref(key),row);edit->setObjectName(key);edit->setPlaceholderText("Default folder unavailable");
+        auto*browse=new QPushButton("Browse…",row);auto*reset=new QPushButton("Reset",row);reset->setObjectName(QString("reset-")+key);
+        h->addWidget(edit,1);h->addWidget(browse);h->addWidget(reset);form->addRow(title,row);
         QObject::connect(browse,&QPushButton::clicked,row,[page,edit]{auto dir=QFileDialog::getExistingDirectory(page,"Choose folder",edit->text());if(!dir.isEmpty())edit->setText(dir);});
-        QObject::connect(clear,&QPushButton::clicked,edit,&QLineEdit::clear);
+        QObject::connect(reset,&QPushButton::clicked,edit,[edit,runtime=std::string(key)=="runtimes"]{
+            edit->setText(QString::fromStdString(sound_preferences::default_directory(runtime)));
+        });
         QObject::connect(edit,&QLineEdit::textChanged,page,[page]{if(section)section->markDirty(page);});
     };
     picker("models","Model library");picker("runtimes","Runtime library");
@@ -88,12 +91,35 @@ QWidget* makePage(QWidget*parent){
 bool savePage(QWidget*page){
     auto path=configPath();if(path.isEmpty())return false;
     if(!QDir().mkpath(QFileInfo(path).absolutePath()))return false;
+    auto*status=page->findChild<QLabel*>("sound-preferences-status");
+    QString values[2],defaults[2];
+    const char*keys[]={"models","runtimes"};
+    for(int i=0;i<2;++i){
+        auto* edit=page->findChild<QLineEdit*>(keys[i]);
+        defaults[i]=QString::fromStdString(sound_preferences::default_directory(i==1));
+        auto value=edit->text();
+        if(value.isEmpty())value=defaults[i];
+        if(value.isEmpty()||!QDir::isAbsolutePath(value)||!QFileInfo(value).isDir()){
+            status->setText(QString("Choose an existing absolute %1 folder.").arg(i==0?"model":"runtime"));
+            return false;
+        }
+        values[i]=QDir::cleanPath(value);
+    }
     config_t* settings=nullptr;
     if(config_open(&settings,path.toUtf8().constData(),CONFIG_OPEN_ALWAYS)!=CONFIG_SUCCESS)return false;
-    for(auto key:{"models","runtimes"})config_set_string(settings,"General",key,page->findChild<QLineEdit*>(key)->text().toUtf8().constData());
+    for(int i=0;i<2;++i){
+        // Store automatic mode, not an installation-specific absolute default.
+        auto value=values[i]==defaults[i]?QString{}:values[i];
+        config_set_string(settings,"General",keys[i],value.toUtf8().constData());
+    }
     bool ok=config_save_safe(settings,"tmp","bak")==CONFIG_SUCCESS;
     config_close(settings);
-    page->findChild<QLabel*>("sound-preferences-status")->setText(ok?"Sound preferences saved.":"Could not save Sound preferences.");
+    if(ok)for(int i=0;i<2;++i){
+        auto* edit=page->findChild<QLineEdit*>(keys[i]);
+        const QSignalBlocker blocker(edit);
+        edit->setText(values[i]);
+    }
+    status->setText(ok?"Sound preferences saved.":"Could not save Sound preferences.");
     return ok;
 }
 }

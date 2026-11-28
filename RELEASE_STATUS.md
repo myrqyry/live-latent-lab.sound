@@ -1678,3 +1678,22 @@ profile: 48 kHz, 24 seconds, 32 windows, zero retries/drops,
 max 5.96046e-8; zero observed callback allocations/locks/waits.
 Previous installed plugin and custom preferences untouched;
 graphical file dialog click-through and full CI not run.
+
+## Prefilled library settings (2026-11-27)
+
+The Model library and Runtime library fields now display their
+effective writable plugin-owned models/ and runtimes/ paths on
+fresh installation, or existing configured paths. Shared helper
+keeps chooser defaults consistent even in Qt-free builds. Editable
+path fields, Browse and Reset; Reset restores the corresponding
+default. Apply validates both existing absolute directories before
+writing; automatic defaults saved as empty overrides for portability.
+Explicit family overrides, selected source settings and existing
+custom paths preserved. Red actual settings-page test reproduced
+blank defaults. Green real module page in simulated OBS settings
+dialog verifies prefill, directory creation, no premature preference
+write, custom path Apply, invalid path rejection, Reset and picker
+consistency. Added CI test; Qt-free, expanded fresh and configured
+picker tests, legacy Qt preferences, actual local read-only picker
+regression and nine-ID module registry passed. No full CI or native
+OBS dialog click-through; no local module installation or push.

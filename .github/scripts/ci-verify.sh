@@ -105,6 +105,9 @@ cmake --install "$work/settings-build" --prefix "$work/settings-stage"
 "$cxx" -std=gnu++17 -O2 -fPIC -I"$inc" tests/verify-settings-picker.cpp $(pkg-config --cflags --libs Qt6Core) $(pkg-config --libs libobs) -o "$work/settings-picker"
 xvfb-run -a timeout 30 "$work/settings-picker" "$work/settings-stage/bin/64bit/$MODULE.so" "$work/settings-stage/data"
 count=$((count+1))
+"$cxx" -std=gnu++17 -O2 -fPIC -I"$inc" tests/verify-sound-settings-defaults.cpp $(pkg-config --cflags --libs Qt6Widgets) $(pkg-config --libs libobs) -o "$work/settings-defaults"
+xvfb-run -a timeout 30 "$work/settings-defaults" "$work/settings-stage/bin/64bit/$MODULE.so" "$work/settings-stage/data"
+count=$((count+1))
 # Preferences must also apply without Qt; exercise the exact staged baseline.
 "$cxx" -std=gnu++17 -O2 -I"$inc" tests/verify-model-picker-defaults.cpp $(pkg-config --libs libobs) -o "$work/model-picker-defaults"
 xvfb-run -a timeout 30 "$work/model-picker-defaults" "$stage/bin/64bit/$MODULE.so" "$stage/data" "$work/model-picker-config"

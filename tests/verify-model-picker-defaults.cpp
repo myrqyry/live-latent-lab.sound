@@ -23,7 +23,7 @@ int main(int argc,char**argv){
  CHECK(obs_startup("en-US",base.string().c_str(),nullptr));
  obs_module_t*m=nullptr;CHECK(obs_open_module(&m,argv[1],argv[2])==MODULE_SUCCESS&&obs_init_module(m));
  char* path=obs_module_get_config_path(m,"preferences.ini");CHECK(path);
- if(fresh){CHECK(!fs::exists(path));models=fs::path(path).parent_path()/"models";}
+ if(fresh){CHECK(!fs::exists(path));models=fs::path(path).parent_path()/"models";runtime=fs::path(path).parent_path()/"runtimes";}
  if(!installed&&!fresh)fs::create_directories(fs::path(path).parent_path());
  config_t* c=nullptr;
  if(!installed&&!fresh){CHECK(config_open(&c,path,CONFIG_OPEN_ALWAYS)==CONFIG_SUCCESS);
@@ -52,7 +52,7 @@ int main(int argc,char**argv){
      obs_properties_destroy(p);return ok;
  };
  CHECK(check("yamnet_classifier_source","yamnet_model",fresh?models:models/"yamnet"));
- if(!installed)CHECK(check("yamnet_classifier_source","mediapipe_library",fresh?fs::path{}:runtime));
+ if(!installed)CHECK(check("yamnet_classifier_source","mediapipe_library",runtime));
  if(expanded){
    if(fresh){
        auto* ddsp=obs_get_source_defaults("sound_ddsp_filter");
@@ -95,7 +95,7 @@ int main(int argc,char**argv){
  config_set_string(c,"General","models",(base/"missing").string().c_str());
  CHECK(config_save(c)==CONFIG_SUCCESS);config_close(c);
  CHECK(check("yamnet_classifier_source","yamnet_model",fs::path(path).parent_path()/"models"));}
- if(fresh){CHECK(fs::is_directory(models));CHECK(fs::is_empty(models));CHECK(!fs::exists(path));}
+ if(fresh){CHECK(fs::is_directory(models));CHECK(fs::is_empty(models));CHECK(fs::is_directory(runtime));CHECK(fs::is_empty(runtime));CHECK(!fs::exists(path));}
  bfree(path);obs_shutdown();
  puts("SOUND_MODEL_PICKER_DEFAULTS_PASS=1");
 }

@@ -12,7 +12,7 @@ namespace sound_preferences {
 // Older Qt-written INI values may use QSettings-specific quoting/escapes.
 std::string legacy_directory(bool runtime);
 #endif
-inline std::string directory(bool runtime=false){
+inline std::string configured_directory(bool runtime=false){
     char* path=obs_module_config_path("preferences.ini");
     if(!path)return {};
     config_t* config=nullptr;
@@ -32,6 +32,24 @@ inline std::string directory(bool runtime=false){
     return {};
 #endif
 }
+// Shared writable defaults for both the settings page and every picker.
+inline std::string default_directory(bool runtime=false){
+    namespace fs=std::filesystem;
+    char* local=obs_module_config_path(runtime?"runtimes":"models");
+    std::string result=local?local:"";
+    bfree(local);
+    if(result.empty())return {};
+    auto dir=fs::u8path(result);
+    if(!dir.is_absolute())return {};
+    std::error_code ec;
+    fs::create_directories(dir,ec);
+    ec.clear();
+    return fs::is_directory(dir,ec)?result:std::string{};
+}
+inline std::string directory(bool runtime=false){
+    auto root=configured_directory(runtime);
+    return root.empty()?default_directory(runtime):root;
+}
 // One plugin-owned models directory by default. Existing custom library
 // layouts and explicit family overrides remain compatible.
 inline std::string model_directory(const char* family,const char* relative){
@@ -47,29 +65,12 @@ inline std::string model_directory(const char* family,const char* relative){
     }
     bfree(path);
     if(!override_dir.empty()&&valid(fs::u8path(override_dir)))return override_dir;
-    auto root=directory(false);
+    auto root=configured_directory(false);
     if(!root.empty()){
         auto specific=fs::u8path(root)/relative;
         if(valid(specific))return specific.u8string();
         return root;
     }
-    // A fresh user has neither preferences.ini nor model directories.
-    // OBS's user-owned plugin config directory is writable even when the
-    // installed plugin data directory is read-only (e.g. system packages).
-    // Lazily create just one shared folder; no imposed subdirectories.
-    char* local=obs_module_config_path("models");
-    std::string local_dir=local?local:"";
-    bfree(local);
-    if(!local_dir.empty()){
-        auto dir=fs::u8path(local_dir);
-        if(dir.is_absolute()){
-            std::error_code ec;
-            fs::create_directories(dir,ec);
-            if(valid(dir))return local_dir;
-        }
-    }
-    // Permission errors or an obstructing non-directory: never hand OBS
-    // a nonexistent path. Let OBS use its normal system chooser.
-    return {};
+    return default_directory(false);
 }
 }

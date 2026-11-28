@@ -23,7 +23,7 @@ on unload; the category disappears when its last contributor is removed.
   Setup guides explain required runtime/model provenance; model
   downloads and license decisions remain user-initiated.
 
-Choose an existing folder, or Clear to use the automatic plugin models folder (for runtime library, the normal system default). Qt-free builds also read the same plugin preferences.ini ([General], models and runtimes); only editing via the embedded settings page requires Qt. Missing model directories fall back to the plugin-owned shared models folder. Qt-enabled builds also recognize legacy QSettings-escaped paths and save them in the common format on Apply; Qt-free users with an older escaped path can re-save from the settings-enabled build. The preference is a starting location, not automatic model selection.
+Both library fields are prefilled with their effective paths. On a fresh installation these are the plugin-owned `models/` and `runtimes/` folders. Type or paste an existing absolute directory, or use Browse. Reset restores the plugin default. Apply validates both paths before saving; invalid paths do not replace the saved preferences. Defaults are stored as automatic (empty override), not an installation-specific absolute path. Qt-free builds also read the same plugin preferences.ini ([General], models and runtimes); only editing via the embedded settings page requires Qt. Missing configured directories fall back to their plugin-owned defaults. Qt-enabled builds also recognize legacy QSettings-escaped paths and save them in the common format on Apply; Qt-free users with an older escaped path can re-save from the settings-enabled build. The preference is a starting location, not automatic model selection.
 Apply or OK saves the preferences in the plugin's own config directory.
 Cancel discards unsaved changes. A native validation rejection must not
 commit the draft. This does not set or migrate a source's selected model,
@@ -65,5 +65,4 @@ retain precedence. If a custom library has no matching family folder,
 Browse opens the configured root. If no valid library is configured,
 the plugin-owned shared models folder is used. If it cannot be created,
 the normal system chooser is the fallback. No existing model file or
-selected source setting is moved or changed. Runtime and reference
-audio selectors are unchanged.
+selected source setting is moved or changed. Runtime selectors likewise start in the unified plugin-owned `runtimes/` directory unless a valid custom runtime library is configured. Reference audio selectors are unchanged.
