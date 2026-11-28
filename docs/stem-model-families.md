@@ -195,3 +195,49 @@ LLSTEM02 and does not register the two-stem model as four stems.
 The separately committed opt-in HTDemucs cross-window blend is
 already wired and verified in real OBS; its quality effect needs
 its own comparative music experiment.
+
+## Native Mel-Band candidate preparation
+
+The reproducible local-only preparation scripts in tests preserve
+the exact cached Kijai checkpoint's tensor values: split twelve fused
+QKV tensors into separate Q/K/V and omit twelve stored rotary frequency
+tensors (the native runtime derives them). The prepared package uses
+the same 2.8-second, 44.1 kHz context, model dimensions and single-pass
+overlap policy as the Python comparison. The 696 resulting tensors
+were independently reproduced and compared for exact equality.
+This is a layout conversion, not native numerical parity.
+
+A dedicated native build uses audio.cpp checkout 26b8927, only
+roformer/demucs families, CUDA architecture 75, NCCL and CUDA graphs
+disabled. The cached v0.9.6 Colab server checksum matched its manifest
+but failed to launch because libnccl.so.2 was not available. Do not
+replace the existing RVC/VAD runtime with this experimental build.
+
+```sh
+cmake -S /path/to/audio.cpp -B /path/to/isolated-build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DAUDIOCPP_MODEL_SET=custom \
+  '-DAUDIOCPP_MODELS=roformer;demucs' -DAUDIOCPP_BUILD_C_API=ON \
+  -DENGINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 \
+  -DGGML_CUDA_NCCL=OFF -DENGINE_ENABLE_CUDA_GRAPHS=OFF \
+  -DBUILD_SHARED_LIBS=OFF
+cmake --build /path/to/isolated-build --target audiocpp audiocpp_cli audiocpp_gguf
+python tests/prepare-stem-native-melband.py \
+  --model /path/to/MelBandRoformer_fp16.safetensors --output-dir /path/to/prepared
+python tests/prepare-stem-native-reference.py \
+  --model /path/to/MelBandRoformer_fp16.safetensors \
+  --fixture /path/to/private-music-44100.wav --output-dir /path/to/reference
+```
+
+Use the same explicit safetensors package option as the local worker
+if needed. Reference PCM contains three matching 2.8-second stereo
+music contexts and corresponding CUDA FP32 vocal estimates; both
+input and output reproduced byte-for-byte. The resident C API probe
+compiles against the matched header and checks exact named stereo
+outputs, finite samples, mixture reconstruction, per-context relative
+RMS error and warm timing. It has not yet linked or executed a native
+model. Do not interpret the prepared source as a qualified GGUF.
+After successful native build, run the upstream GGUF converter with
+the prepared package and explicit family/model spec, compare F16 and
+Q8_0 against the reference, measure device memory and verify CUDA
+execution before integrating or copying a model into the user's
+configured library. No model downloads or public fixture artifacts.

@@ -1504,3 +1504,28 @@ Follow-up regression found Qt legacy quoted directory names (comma)
 were not decoded by libobs INI parser. Qt-enabled fallback preserves
 legacy QSettings paths; new shared-format paths with comma work in
 Qt-free and expanded builds. All three real picker harnesses passed.
+
+## Native CUDA separation preparation (2026-11-27)
+
+NVIDIA live skill catalog checked; no dedicated audio.cpp separation
+or GGUF model-conversion skill matched. Cached v0.9.6 Colab server
+matched its archive manifest hash but could not start (libnccl.so.2
+missing). No system libraries installed. Isolated source build
+26b8927 configured successfully with only roformer/demucs, CUDA
+sm75, NCCL/graphs off; bounded compile stopped at 344/429 tasks after
+240 s, before linking C API, CLI or GGUF converter. No native GPU
+inference or GGUF conversion claimed. Existing installed runtime
+unchanged, no build left running. Local continuation pointer:
+`/tmp/sound-native-sep-latest`; retained isolated build and prepared
+model, not committed binaries or private music data.
+
+Actual cached Kijai checkpoint hash validated; two independent
+layout preparations (684 input tensors to 696 output, split 12
+QKV, omit 12 derived RoPE tensors) compared exactly equal, no
+precision change. Three matching 2.8 s local music contexts and
+FP32 CUDA reference produced twice, input and reference bytes
+identical. Native C API benchmark compiled against source header
+only; native link/run not yet possible. Reproducers and build
+commands in docs/stem-model-families.md. Resume isolated build
+before comparing native F16/Q8 or adding a live backend. Model
+quality and GPU contention still unqualified.
