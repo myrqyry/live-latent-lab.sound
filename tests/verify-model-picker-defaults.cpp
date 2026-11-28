@@ -40,7 +40,7 @@ int main(int argc,char**argv){
              if(chosen.is_absolute()&&fs::is_directory(chosen))return chosen;
          }
      }
-     return models/relative;
+     return fresh?models:models/relative;
  };
  auto check=[&](const char* id,const char* key,const fs::path& expected){
      auto* p=obs_get_source_properties(id);
@@ -51,7 +51,7 @@ int main(int argc,char**argv){
      printf("PICKER id=%s key=%s path=%s pass=%d\n",id,key,value?value:"(null)",ok);
      obs_properties_destroy(p);return ok;
  };
- CHECK(check("yamnet_classifier_source","yamnet_model",models/"yamnet"));
+ CHECK(check("yamnet_classifier_source","yamnet_model",fresh?models:models/"yamnet"));
  if(!installed)CHECK(check("yamnet_classifier_source","mediapipe_library",fresh?fs::path{}:runtime));
  if(expanded){
    if(fresh){
@@ -66,14 +66,14 @@ int main(int argc,char**argv){
    CHECK(check("sound_stt_filter","zipformer_model_dir",expected_dir("zipformer","STT/Zipformer")));
    CHECK(check("sound_stt_filter","nemotron_model_path",expected_dir("nemotron","STT/Nemotron")));
    CHECK(check("sound_stt_filter","parakeet_model_path",expected_dir("parakeet","STT/Parakeet")));
-   CHECK(check("sound_ddsp_filter","models",models/"ddsp-vst-2022"));
-   CHECK(check("stts_rvc_filter","model",models/"RVC-GGUF"));
+   CHECK(check("sound_ddsp_filter","models",(fresh?models:models/"ddsp-vst-2022")));
+   CHECK(check("stts_rvc_filter","model",(fresh?models:models/"RVC-GGUF")));
    CHECK(check("stts_rvc_filter","voice_checkpoint",((installed||fresh)?expected_dir("rvc_voices","RVC-GGUF/voices"):base/"external voices")));
    CHECK(check("stts_rvc_filter","retrieval_index",((installed||fresh)?expected_dir("rvc_voices","RVC-GGUF/voices"):base/"external voices")));
-   CHECK(check("sound_audio_diffusion_source","models_dir",models/"sa3-gguf"));
-   CHECK(check("sound_audio_diffusion_source","lora_a",models/"sa3-gguf"));
-   CHECK(check("sound_audio_diffusion_source","lora_b",models/"sa3-gguf"));
-   CHECK(check("stem_live_melband_filter","native_model",models/"Mel-Band-RoFormer-GGUF"));
+   CHECK(check("sound_audio_diffusion_source","models_dir",(fresh?models:models/"sa3-gguf")));
+   CHECK(check("sound_audio_diffusion_source","lora_a",(fresh?models:models/"sa3-gguf")));
+   CHECK(check("sound_audio_diffusion_source","lora_b",(fresh?models:models/"sa3-gguf")));
+   CHECK(check("stem_live_melband_filter","native_model",(fresh?models:models/"Mel-Band-RoFormer-GGUF")));
    CHECK(check("stem_live_melband_filter","worker_model",expected_dir("melband","Mel-Band-RoFormer")));
    CHECK(check("stem_live_buffered_filter","worker_model",expected_dir("demucs","Demucs")));
  }
@@ -82,9 +82,7 @@ int main(int argc,char**argv){
  obs_data_release(defaults);
  if(!installed&&!fresh){
      fs::remove(models/"yamnet");
-     auto local=fs::path(path).parent_path()/"models/yamnet";
-     CHECK(check("yamnet_classifier_source","yamnet_model",local));CHECK(fs::is_directory(local));
-     CHECK(check("yamnet_classifier_source","yamnet_model",local));fs::remove(local);
+     CHECK(check("yamnet_classifier_source","yamnet_model",models));
      // A broken absolute override must not mask the existing family folder.
      fs::create_directories(models/"yamnet");
      CHECK(config_open(&c,path,CONFIG_OPEN_EXISTING)==CONFIG_SUCCESS);
@@ -96,7 +94,8 @@ int main(int argc,char**argv){
  if(!installed&&!fresh){CHECK(config_open(&c,path,CONFIG_OPEN_EXISTING)==CONFIG_SUCCESS);
  config_set_string(c,"General","models",(base/"missing").string().c_str());
  CHECK(config_save(c)==CONFIG_SUCCESS);config_close(c);
- CHECK(check("yamnet_classifier_source","yamnet_model",fs::path(path).parent_path()/"models/yamnet"));}
+ CHECK(check("yamnet_classifier_source","yamnet_model",fs::path(path).parent_path()/"models"));}
+ if(fresh){CHECK(fs::is_directory(models));CHECK(fs::is_empty(models));CHECK(!fs::exists(path));}
  bfree(path);obs_shutdown();
  puts("SOUND_MODEL_PICKER_DEFAULTS_PASS=1");
 }

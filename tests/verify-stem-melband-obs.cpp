@@ -49,7 +49,9 @@ int main(int argc,char** argv){
     if(argc!=5)return 2;
     const bool managed=std::string(argv[4])=="--managed";
     const char* native_library=std::getenv("SOUND_MELBAND_NATIVE_LIBRARY");
-    if(native_library&&!managed)return 2;
+    const char* fresh_model=std::getenv("SOUND_MELBAND_FRESH_MODEL");
+    if((native_library||fresh_model)&&!managed)return 2;
+    if(native_library&&fresh_model)return 2;
     const bool recover=std::getenv("SOUND_MELBAND_RECOVER");
     const bool mix=std::getenv("SOUND_MELBAND_MIX");
     if((mix&&recover)||(managed&&(mix||recover)))return 2;
@@ -67,25 +69,37 @@ int main(int argc,char** argv){
     if(!obs_reset_audio(&ai))return 5;
     obs_module_t* module=nullptr;
     if(obs_open_module(&module,argv[1],argv[2])!=MODULE_SUCCESS||!obs_init_module(module))return 6;
-    if(native_library){
+    if(native_library||fresh_model){
         if(!std::getenv("SOUND_MELBAND_OBS_CONFIG"))return 2;
         auto* path=obs_module_get_config_path(module,"preferences.ini");
         if(!path)return 6;
-        std::filesystem::create_directories(std::filesystem::path(path).parent_path());
-        config_t* pref=nullptr;
-        if(config_open(&pref,path,CONFIG_OPEN_ALWAYS)!=CONFIG_SUCCESS){bfree(path);return 6;}
-        config_set_string(pref,"General","models",native_library);
-        bool saved=config_save(pref)==CONFIG_SUCCESS;config_close(pref);bfree(path);
-        if(!saved)return 6;
+        namespace fs=std::filesystem;
+        const auto config_path=fs::u8path(path);bfree(path);
+        const auto local=config_path.parent_path()/"models";
+        fs::path expected;
+        if(fresh_model){
+            if(fs::exists(config_path)||fs::exists(local))return 6;
+            expected=local;
+        }else{
+            fs::create_directories(config_path.parent_path());
+            config_t* pref=nullptr;
+            if(config_open(&pref,config_path.u8string().c_str(),CONFIG_OPEN_ALWAYS)!=CONFIG_SUCCESS)return 6;
+            config_set_string(pref,"General","models",native_library);
+            bool saved=config_save(pref)==CONFIG_SUCCESS;config_close(pref);
+            if(!saved)return 6;
+            expected=fs::u8path(native_library)/"Mel-Band-RoFormer-GGUF";
+            if(!fs::is_directory(expected))expected=fs::u8path(native_library);
+        }
         auto* def=obs_get_source_defaults("stem_live_melband_filter");
         bool enabled=def&&obs_data_get_bool(def,"native_backend")&&std::string(obs_data_get_string(def,"native_model")).empty();
         obs_data_release(def);
         auto* props=obs_get_source_properties("stem_live_melband_filter");
         auto* picker=props?obs_properties_get(props,"native_model"):nullptr;
         const char* initial=picker?obs_property_path_default_path(picker):nullptr;
-        bool rooted=initial&&std::filesystem::path(initial)==std::filesystem::path(native_library)/"Mel-Band-RoFormer-GGUF";
+        bool rooted=initial&&fs::u8path(initial)==expected&&fs::is_directory(expected);
         if(props)obs_properties_destroy(props);
         if(!enabled||!rooted)return 6;
+        if(fresh_model){fs::create_symlink(fs::absolute(fs::u8path(fresh_model)),local/"mel-band-roformer-f16.gguf");if(fs::exists(config_path))return 6;}
         printf("MELBAND_NATIVE_DEFAULT picker=%d enabled=%d\n",rooted,enabled);
     }
     obs_register_source(&input_info);
@@ -215,7 +229,7 @@ int main(int argc,char** argv){
         auto* name=calldata_string(&w,"state");
         bool ready=state&&name&&std::string(name)=="Managed worker ready";
         const char* detail=calldata_string(&w,"detail");
-        if(native_library)ready=ready&&detail&&std::string(detail)=="Native CUDA GGUF";
+        if(native_library||fresh_model)ready=ready&&detail&&std::string(detail)=="Native CUDA GGUF";
         printf("MELBAND_MANAGED_START first_wet_s=%g ready=%d backend=%s\n",double(first)/rate,ready,detail?detail:"");
         pass=pass&&ready;calldata_free(&w);
     }

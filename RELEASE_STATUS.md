@@ -1658,3 +1658,23 @@ quoted paths, runtime picker, missing override fallback, local
 override regression and 9-ID registry passed. Added fresh baseline
 test to CI; entire CI and graphical dialog click-through not run.
 No changes to local user preferences or installed module in this pass.
+
+## Unified default models folder (2026-11-27)
+
+Supersedes the per-family fresh-install layout: one writable
+OBS plugin config models/ directory, lazily created by Browse
+property queries. No mandatory family folders, no preferences
+file, no model moves. Existing custom library root, matching
+existing subfolders and explicit family overrides remain supported.
+Native RoFormer default loading uses the shared folder and also
+recognizes its former optional subfolder when needed.
+Clean HOME/empty-config expanded tests verify all 15 model picker
+paths are identical, a single empty directory is created, no
+preferences file is written; Qt-free, legacy Qt, custom library
+and nine-ID registry passed. Actual fresh-config native CUDA
+RoFormer F16 OBS test used a model in the flat folder, no saved
+profile: 48 kHz, 24 seconds, 32 windows, zero retries/drops,
+2400 synchronized packets, first wet at 2.76s, reconstruction
+max 5.96046e-8; zero observed callback allocations/locks/waits.
+Previous installed plugin and custom preferences untouched;
+graphical file dialog click-through and full CI not run.

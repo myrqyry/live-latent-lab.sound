@@ -139,7 +139,17 @@ void update(void* ptr,obs_data_t* settings) {
     std::string native_model=obs_data_get_string(settings,"native_model");
     if(native_backend&&native_model.empty()){
         auto root=sound_preferences::model_directory("roformer","Mel-Band-RoFormer-GGUF");
-        if(!root.empty())native_model=(std::filesystem::u8path(root)/"mel-band-roformer-f16.gguf").string();
+        if(!root.empty()){
+            namespace fs=std::filesystem;
+            const auto directory=fs::u8path(root);
+            auto model=directory/"mel-band-roformer-f16.gguf";
+            // Recognize the former optional subfolder without moving models
+            // or changing the new shared Browse location.
+            std::error_code ec;
+            const auto previous=directory/"Mel-Band-RoFormer-GGUF"/"mel-band-roformer-f16.gguf";
+            if(!fs::is_regular_file(model,ec)&&fs::is_regular_file(previous,ec))model=previous;
+            native_model=model.u8string();
+        }
     }
     std::lock_guard<std::mutex> lock(data->control);
     data->mix.store(mix,std::memory_order_release);

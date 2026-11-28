@@ -23,7 +23,7 @@ on unload; the category disappears when its last contributor is removed.
   Setup guides explain required runtime/model provenance; model
   downloads and license decisions remain user-initiated.
 
-Choose an existing folder, or Clear to use automatic plugin model folders (for runtime library, the normal system default). Qt-free builds also read the same plugin preferences.ini ([General], models and runtimes); only editing via the embedded settings page requires Qt. Missing model directories fall back to the plugin-owned family folder. Qt-enabled builds also recognize legacy QSettings-escaped paths and save them in the common format on Apply; Qt-free users with an older escaped path can re-save from the settings-enabled build. The preference is a starting location, not automatic model selection.
+Choose an existing folder, or Clear to use the automatic plugin models folder (for runtime library, the normal system default). Qt-free builds also read the same plugin preferences.ini ([General], models and runtimes); only editing via the embedded settings page requires Qt. Missing model directories fall back to the plugin-owned shared models folder. Qt-enabled builds also recognize legacy QSettings-escaped paths and save them in the common format on Apply; Qt-free users with an older escaped path can re-save from the settings-enabled build. The preference is a starting location, not automatic model selection.
 Apply or OK saves the preferences in the plugin's own config directory.
 Cancel discards unsaved changes. A native validation rejection must not
 commit the draft. This does not set or migrate a source's selected model,
@@ -48,26 +48,22 @@ other OBS versions are not qualified. Aftermarket's existing separate
 page has not been migrated. Other plugins have not yet adopted the bridge.
 
 
-### Per-model browsing folders
+### Unified model browsing folder
 
-On a fresh install, no preferences file or shared model library is
-required. Sound creates a writable model folder under its own OBS
-plugin configuration directory when the corresponding properties
-are requested. On Linux this is normally
+On a fresh install, no preferences file or external model library is
+required. Sound lazily creates one writable `models/` directory under
+its OBS plugin configuration directory. On Linux this is normally
 `~/.config/obs-studio/plugin_config/live-latent-lab-sound/models/`.
-Each picker starts in its matching family subdirectory: `yamnet`, `ddsp-vst-2022`,
-`sa3-gguf`, `RVC-GGUF` (custom voices under `voices`),
-`Mel-Band-RoFormer-GGUF`, `Mel-Band-RoFormer`, `Demucs`, or
-`STT/Whisper`, `STT/Zipformer`, `STT/Nemotron`, `STT/Parakeet`.
-An existing absolute path in the `[ModelDirectories]` section of
-preferences.ini takes precedence for the corresponding family key:
-yamnet, ddsp, sa3, rvc, rvc_voices, roformer, melband, demucs,
-whisper, zipformer, nemotron, parakeet. This is useful when models
-are already stored elsewhere. When a shared library is configured, its existing family folder
-is preferred. Otherwise Sound creates and uses
-`models/<family subdirectory>` in the plugin config directory.
-If the folder cannot be created, the existing shared root or system
-chooser is the fallback. These are browsing locations only, not model selection,
-downloads or relocation. Runtime and reference audio pickers are
-unchanged. A selected valid path continues to take precedence in
-the file chooser.
+All model Browse controls start here and retain their own file-type
+filters. Models needing multiple files may be organized in subfolders;
+no model-family directory tree is imposed.
+
+A custom Model Library preference remains supported. For compatibility,
+existing matching family subdirectories within that library and
+existing absolute `[ModelDirectories]` overrides in preferences.ini
+retain precedence. If a custom library has no matching family folder,
+Browse opens the configured root. If no valid library is configured,
+the plugin-owned shared models folder is used. If it cannot be created,
+the normal system chooser is the fallback. No existing model file or
+selected source setting is moved or changed. Runtime and reference
+audio selectors are unchanged.

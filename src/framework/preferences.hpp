@@ -32,7 +32,8 @@ inline std::string directory(bool runtime=false){
     return {};
 #endif
 }
-// Browse the matching family directory, even on a fresh installation.
+// One plugin-owned models directory by default. Existing custom library
+// layouts and explicit family overrides remain compatible.
 inline std::string model_directory(const char* family,const char* relative){
     namespace fs=std::filesystem;
     auto valid=[](const fs::path& p){std::error_code ec;return p.is_absolute()&&fs::is_directory(p,ec);};
@@ -50,13 +51,13 @@ inline std::string model_directory(const char* family,const char* relative){
     if(!root.empty()){
         auto specific=fs::u8path(root)/relative;
         if(valid(specific))return specific.u8string();
+        return root;
     }
     // A fresh user has neither preferences.ini nor model directories.
     // OBS's user-owned plugin config directory is writable even when the
     // installed plugin data directory is read-only (e.g. system packages).
-    // Lazily create only the family being requested, with no model download.
-    auto local_relative=std::string("models/")+relative;
-    char* local=obs_module_config_path(local_relative.c_str());
+    // Lazily create just one shared folder; no imposed subdirectories.
+    char* local=obs_module_config_path("models");
     std::string local_dir=local?local:"";
     bfree(local);
     if(!local_dir.empty()){
@@ -68,7 +69,7 @@ inline std::string model_directory(const char* family,const char* relative){
         }
     }
     // Permission errors or an obstructing non-directory: never hand OBS
-    // a nonexistent path. Use the configured root or the system chooser.
-    return root;
+    // a nonexistent path. Let OBS use its normal system chooser.
+    return {};
 }
 }

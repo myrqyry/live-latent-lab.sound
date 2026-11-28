@@ -8,7 +8,9 @@ audio.cpp runtime, isolated from the OBS process and the RVC runtime.
 A blank GGUF model override resolves to
 `mel-band-roformer-f16.gguf` in the same family folder used by Browse.
 Without a custom library this is
-`<OBS plugin config>/models/Mel-Band-RoFormer-GGUF/`.
+`<OBS plugin config>/models/`. The former optional
+`Mel-Band-RoFormer-GGUF/` subfolder is also recognized for default
+model loading without moving existing weights.
 A configured shared library or explicit family directory can override it.
 Select another qualified GGUF (such as Q8_0) directly in the picker.
 No Python environment, saved stem profile or command is needed
