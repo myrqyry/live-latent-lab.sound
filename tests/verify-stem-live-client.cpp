@@ -26,6 +26,13 @@ int main(int argc,char**argv){
   int s=accept(server,nullptr,nullptr);assert(s>=0);
   unsigned char hdr[36]{};
   assert(stts::read_fully(s,hdr,sizeof hdr));
+  // Fixed documented v1 bytes, independent of the header codec.
+  constexpr unsigned char golden_request[]={
+      0x4c,0x4c,0x53,0x54,0x45,0x4d,0x30,0x31,
+      1,0,0,0, 0x80,0xbb,0,0, 0,0xdc,5,0, 2,0,0,0,
+      45,0,0,0, 0,0,0,0, 0,0,0,0};
+  static_assert(sizeof golden_request==36);
+  assert(std::memcmp(hdr,golden_request,36)==0);
   assert(std::memcmp(hdr,"LLSTEM01",8)==0);
   assert(stts::get_le32(hdr+8)==1);
   assert(stts::get_le32(hdr+12)==48000);
@@ -41,7 +48,13 @@ int main(int argc,char**argv){
   stts::put_le32(reply+16,384000);stts::put_le32(reply+20,2);
   stts::put_le32(reply+24,45);stts::put_le32(reply+28,4);
   stts::put_le32(reply+32,0);
-  assert(stts::write_fully(s,reply,36));
+  constexpr unsigned char golden_success[]={
+      0x4c,0x4c,0x53,0x54,0x45,0x4d,0x30,0x31,
+      1,0,0,0, 0x80,0xbb,0,0, 0,0xdc,5,0, 2,0,0,0,
+      45,0,0,0, 4,0,0,0, 0,0,0,0};
+  static_assert(sizeof golden_success==36);
+  assert(std::memcmp(reply,golden_success,36)==0);
+  assert(stts::write_fully(s,golden_success,36));
   std::vector<float> result(4*2*384000);
   for(size_t stem=0;stem<4;++stem){
     for(size_t i=0;i<384000;++i){

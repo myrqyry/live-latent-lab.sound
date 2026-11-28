@@ -31,6 +31,56 @@ class FakeSeparator:
         return outputs
 
 class TestLiveStemProtocol(unittest.TestCase):
+    def test_v1_documented_wire_vectors(self):
+        # Read the independently specified golden bytes, not a second
+        # calculation using the implementation's own format constants.
+        import re
+        doc=(path.parents[1]/"docs/stem-api.md").read_text()
+        vectors=re.findall(r"```text\n([0-9a-f ]+)\n```",doc)
+        self.assertEqual(len(vectors),3)
+        request,success,error=map(bytes.fromhex,vectors)
+        expected=(b"LLSTEM01",1,48000,384000,2,45)
+        self.assertEqual(sidecar.REQUEST.size,36)
+        self.assertEqual(sidecar.REQUEST.pack(*expected,0,0),request)
+        self.assertEqual(sidecar.REQUEST.pack(*expected,4,0),success)
+        self.assertEqual(sidecar.REQUEST.pack(*expected,0,1),error)
+        self.assertEqual(sidecar.parse_request(request),(1,48000,384000,45))
+        self.assertEqual(sidecar.STEMS,("Drums","Bass","Other","Vocals"))
+        for offset in (0,8,12,16,20,28,32):
+            malformed=bytearray(request)
+            malformed[offset]^=1
+            with self.subTest(offset=offset),self.assertRaises(ValueError):
+                sidecar.parse_request(malformed)
+
+    def test_v1_error_header_no_payload(self):
+        import re
+        vectors=re.findall(r"```text\n([0-9a-f ]+)\n```",(path.parents[1]/"docs/stem-api.md").read_text())
+        request,_,error=map(bytes.fromhex,vectors)
+        class NeverInfer:
+            def separate_pcm(self,pcm):
+                raise AssertionError("Invalid input reached model")
+        for invalid_header in (False,True):
+            a,b=socket.socketpair()
+            def serve():
+                with b:sidecar.serve_client(b,NeverInfer(),None)
+            with a:
+                a.settimeout(5)
+                worker=threading.Thread(target=serve,daemon=True)
+                worker.start()
+                if invalid_header:
+                    a.sendall(b"BADMAGIC"+request[8:])
+                    expected=sidecar.REQUEST.pack(b"LLSTEM01",1,0,0,2,0,0,1)
+                else:
+                    a.sendall(request)
+                    pcm=np.zeros((2,384000),dtype="<f4")
+                    pcm[0,0]=np.nan
+                    a.sendall(pcm.tobytes())
+                    expected=error
+                self.assertEqual(sidecar.read_exact(a,36),expected)
+                self.assertEqual(a.recv(1),b"")
+                worker.join(5)
+                self.assertFalse(worker.is_alive())
+
     def test_request_header_is_bounded_and_exact(self):
         h=sidecar.REQUEST.pack(sidecar.MAGIC,1,48000,48000*8,2,21,0,0)
         self.assertEqual(len(h),sidecar.REQUEST.size)

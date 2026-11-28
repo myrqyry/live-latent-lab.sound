@@ -1251,3 +1251,28 @@ No installation, push or changes to user scenes or running OBS
 instances. Remaining roadmap: cross-window overlap-add, latency
 reduction only after measurement, source lifecycle stress, shared
 worker controls and VRAM governance.
+
+
+## Stem v1 compatibility reference (2026-11-27)
+
+Added docs/stem-api.md as the code-derived baseline for LLSTEM01 and
+the two native OBS snapshot procedures, linked from README and the
+expanded build guide. Exact 36-byte header/PCM plane layout, both rate
+payload sizes, error and local socket trust rules, persisted settings,
+source UUID bindings, timing and counter semantics are documented.
+Fanout counters are not per-destination delivery acknowledgements;
+the socket transfer cap is not the audio deadline. Preserve v1
+geometry and ABI; an incompatible extension requires versioning.
+No runtime behavior or default settings changed.
+
+The Python suite now reads the documented golden request, success
+and error bytes and checks the actual codec, rejects malformed header
+fields, and exercises the real server handler on nonfinite PCM and
+invalid headers (exact error header, no payload, no inference).
+The C++ client regression checks independent golden request/success
+bytes. Isolated model-free runner passed 14 Python tests, stereo
+transport/recovery, shared mix, dispatch, cancellation and exact
+two-type OBS registration. All 12 local reference links resolved.
+No new real-model measurement or combined-plugin acceptance; prior
+CUDA evidence remains unchanged. Next: evaluate overlap-add and
+lower latency against the unchanged v1 interface.

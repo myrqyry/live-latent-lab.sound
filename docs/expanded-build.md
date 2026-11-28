@@ -142,6 +142,9 @@ development and text-source components being installed.
 
 ### Resident HTDemucs (in-memory candidate)
 
+For exact wire headers, PCM layout, OBS settings, procedure signatures
+and compatibility policy, see [Sound stem interfaces v1](stem-api.md).
+
 The sidecar now supports `--backend resident`, keeping one local
 four-stem model on the requested device across windows. It bypasses the
 file adapter, per-request model construction, GPU cache clearing and WAV
@@ -166,7 +169,8 @@ The default remains `--backend file` for compatibility with other
 installed runtimes and settings. CPU, autocast, additional quality
 settings and concurrent users of a resident model are not qualified
 by this comparison. Residency retains GPU allocations between requests;
-it is not a general VRAM governor or a shared multistem fanout.
+it is not a general VRAM governor. OBS-side shared multistem fanout
+is described below.
 
 To reproduce the direct A/B comparison with an existing local 48 kHz
 interleaved stereo float32 fixture of at least 16 seconds:
@@ -228,6 +232,7 @@ Closing the socket does not cancel an ongoing model call inside the
 external sidecar. The next request may contend with that old work.
 No dry bypass while the filter is enabled. The resident backend,
 shared mix and independent OBS output sources are available.
+
 ### Independent stereo stem sources
 
 1. Attach **LLL.sound Buffered stem (experimental)** to an active stereo
