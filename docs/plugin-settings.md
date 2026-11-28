@@ -16,14 +16,14 @@ on unload; the category disappears when its last contributor is removed.
 ## Sound settings
 
 - Model library: initial browsing location for YAMNet, STT, DDSP, RVC,
-  Stable Audio and LoRA model selectors.
+  Stable Audio and LoRA model selectors, including custom RVC checkpoints/indexes. The Audio Diffusion dock uses the saved source directory when valid, otherwise the model library.
 - Runtime library: initial browsing location for supported native library
   and RVC helper selectors.
 - Backend-specific links for the effects compiled into the module.
   Setup guides explain required runtime/model provenance; model
   downloads and license decisions remain user-initiated.
 
-Choose an existing folder, or Clear to use the normal system default.
+Choose an existing folder, or Clear to use the normal system default. Qt-free builds also read the same plugin preferences.ini ([General], models and runtimes); only editing via the embedded settings page requires Qt. Missing directories fall back to the normal chooser. The preference is a starting location, not automatic model selection.
 Apply or OK saves the preferences in the plugin's own config directory.
 Cancel discards unsaved changes. A native validation rejection must not
 commit the draft. This does not set or migrate a source's selected model,

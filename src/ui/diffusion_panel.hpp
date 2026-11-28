@@ -18,6 +18,8 @@
 #include <QHideEvent>
 #include <QScrollArea>
 #include <QFileDialog>
+#include <QFileInfo>
+#include "../framework/preferences.hpp"
 #include <algorithm>
 #include <cstring>
 #include <memory>
@@ -160,6 +162,7 @@ class DiffusionPanel final : public QWidget {
     void pickModels(){
         auto s=source();if(!s||dirty_)return;
         auto* d=obs_source_get_settings(s.get());auto path=QString::fromUtf8(obs_data_get_string(d,"models_dir"));obs_data_release(d);
+        if(!QFileInfo(path).isDir())path=QString::fromStdString(sound_preferences::directory(false));
         const auto chosen=QFileDialog::getExistingDirectory(this,"Stable Audio 3 model directory",path);
         if(chosen.isEmpty()||obs_source_removed(s.get())||selected_!=QString::fromUtf8(obs_source_get_uuid(s.get())))return;
         d=obs_data_create();obs_data_set_string(d,"models_dir",chosen.toUtf8().constData());obs_source_update(s.get(),d);obs_data_release(d);

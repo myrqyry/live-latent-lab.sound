@@ -1475,3 +1475,27 @@ or pushed. Prior installed 0f0ba26 remains; RoFormer still staged.
 Next: isolate native audio.cpp separation build/conversion; qualify
 real named outputs and compare quality/compute. Concurrent CUDA
 contention and long-duration robustness remain unqualified.
+
+
+## Model-library browsing defaults (2026-11-27)
+
+Reproduced Qt-free build ignoring its saved library preference with
+real libobs property query. Shared reader now uses libobs config API
+in both builds; Qt settings writes the same INI via safe save. No
+Qt dependency added to baseline. RVC checkpoint/index picker uses
+configured model library before its old voice-directory fallback;
+Audio Diffusion dock uses selected existing directory before shared
+model library fallback. No source model selections changed.
+
+Local installed preference created privately (no existing file):
+~/.config/obs-studio/plugin_config/live-latent-lab-sound/preferences.ini
+with models=/media/myrqyry/Seagate Hub/AI-Library/Audio. Read-only
+property query against installed 0f0ba26 binary confirmed real path.
+Qt-free red/green actual picker test passed model/runtime directories
+with spaces, missing model dir fallback and empty model selection;
+new combined Qt-enabled seven-effect candidate registered nine IDs
+and passed 12 model picker properties plus one runtime property,
+and old Qt QSettings-written simple-path compatibility test. New
+model-picker regression added to baseline CI; entire CI not run.
+No actual OS dialog click-through or exotic legacy QSettings escaped
+paths tested. New candidate staged; installed binary unchanged.

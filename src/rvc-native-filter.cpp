@@ -236,8 +236,8 @@ obs_properties_t* properties(void* ptr){
     obs_properties_add_path(p,"helper","Native worker",OBS_PATH_FILE,"All files (*.*)",sound_preferences::directory(true).c_str());
     obs_properties_add_path(p,"library","CUDA runtime",OBS_PATH_FILE,"Shared library (*.so*)",sound_preferences::directory(true).c_str());
     obs_properties_add_path(p,"model","RVC GGUF package",OBS_PATH_FILE,"GGUF (*.gguf)",sound_preferences::directory(false).c_str());
-    std::string root;
-    if(const char* home=std::getenv("HOME"))root=std::string(home)+"/.local/share/live-latent-lab-sound/rvc/voice-library";
+    auto root=sound_preferences::directory(false);
+    if(root.empty())if(const char* home=std::getenv("HOME"))root=std::string(home)+"/.local/share/live-latent-lab-sound/rvc/voice-library";
     auto* voices=obs_properties_add_list(p,"packaged_voice","Packaged voice (if no checkpoint)",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     for(auto id:{"default","manthos","chocola","fraise"})obs_property_list_add_string(voices,id,id);
     obs_properties_add_int(p,"speaker_id","Speaker ID (checkpoint dependent)",0,65535,1);

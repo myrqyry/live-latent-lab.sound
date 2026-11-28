@@ -2,7 +2,7 @@
 #include "../framework/preferences.hpp"
 #include <obs-module.h>
 #include <util/bmem.h>
-#include <QSettings>
+#include <util/config-file.h>
 #include <QDir>
 #include <QLabel>
 #include <QLineEdit>
@@ -23,8 +23,7 @@ QString configPath(){
     auto path=QString::fromUtf8(p);bfree(p);return path;
 }
 QString pref(const char*key){
-    auto path=configPath();if(path.isEmpty())return {};
-    return QSettings(path,QSettings::IniFormat).value(key).toString();
+    return QString::fromStdString(sound_preferences::directory(std::string(key)=="runtimes"));
 }
 void link(QVBoxLayout*layout,QWidget*parent,const QString&title,const QString&url){
     auto*label=new QLabel(parent);label->setTextFormat(Qt::RichText);
@@ -69,7 +68,7 @@ QWidget* makePage(QWidget*parent){
     link(layout,body,"Native Chatterbox Turbo · model/runtime setup",docs+"native-turbo.md");
 #endif
 #ifdef SOUND_WITH_STEM_LIVE
-    link(layout,body,"HTDemucs · worker and model setup",docs+"expanded-build.md");
+    link(layout,body,"HTDemucs / RoFormer · local worker and model setup",docs+"stem-worker-setup.md");
 #endif
 #ifdef SOUND_WITH_DIFFUSION
     link(layout,body,"Stable Audio 3 / SAME-S · model and runtime setup",docs+"audio-diffusion.md");
@@ -87,18 +86,14 @@ QWidget* makePage(QWidget*parent){
 }
 bool savePage(QWidget*page){
     auto path=configPath();if(path.isEmpty())return false;
-    QSettings settings(path,QSettings::IniFormat);
-    for(auto key:{"models","runtimes"})settings.setValue(key,page->findChild<QLineEdit*>(key)->text());
-    settings.sync();
-    bool ok=settings.status()==QSettings::NoError;
+    if(!QDir().mkpath(QFileInfo(path).absolutePath()))return false;
+    config_t* settings=nullptr;
+    if(config_open(&settings,path.toUtf8().constData(),CONFIG_OPEN_ALWAYS)!=CONFIG_SUCCESS)return false;
+    for(auto key:{"models","runtimes"})config_set_string(settings,"General",key,page->findChild<QLineEdit*>(key)->text().toUtf8().constData());
+    bool ok=config_save_safe(settings,"tmp","bak")==CONFIG_SUCCESS;
+    config_close(settings);
     page->findChild<QLabel*>("sound-preferences-status")->setText(ok?"Sound preferences saved.":"Could not save Sound preferences.");
     return ok;
-}
-}
-namespace sound_preferences {
-std::string directory(bool runtime){
-    auto dir=pref(runtime?"runtimes":"models");
-    return QFileInfo(dir).isDir()&&!dir.isEmpty()?QDir::cleanPath(dir).toUtf8().toStdString():std::string{};
 }
 }
 void register_sound_settings(){
