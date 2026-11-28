@@ -53,9 +53,10 @@ def endpoint(profile):
     p=Path(runtime)/PROFILES[profile][0]
     return p
 
-def command(cfg,profile):
+def command(cfg,profile,private_socket=None):
+    if profile not in PROFILES:raise ValueError("Unknown profile")
     validate(cfg)
-    path=socket_path(str(endpoint(profile)))
+    path=socket_path(private_socket or str(endpoint(profile)))
     python=cfg["python"]
     if not os.access(python,os.X_OK) or not Path(python).is_file():
         raise ValueError("Python interpreter missing or not executable")
@@ -134,6 +135,12 @@ def main():
     for action in ("run","probe"):
         cmd=sub.add_parser(action,help="Run one worker in the foreground" if action=="run" else "Real silent socket roundtrip")
         cmd.add_argument("profile",choices=PROFILES)
+        if action=="run":
+            cmd.add_argument("--socket",help="Private managed endpoint")
+            cmd.add_argument("--parent-pid",type=int,help="Exit if owning OBS process dies")
+            cmd.add_argument("--python")
+            cmd.add_argument("--model")
+            cmd.add_argument("--safetensors-package")
     args=p.parse_args()
     try:
         if args.action=="configure":
@@ -141,12 +148,25 @@ def main():
             write_config(args.config,cfg);print(f"SOUND_STEMS_CONFIG={args.config}")
         elif args.action=="probe":print(json.dumps(probe(args.profile),indent=2))
         else:
-            cfg=read_config(args.config)
+            try:cfg=read_config(args.config)
+            except FileNotFoundError:
+                if args.action!="run" or not args.python or not args.model:raise
+                cfg={}
             if args.action=="doctor":
                 report=doctor(cfg);print(json.dumps(report,indent=2))
                 return 0 if all(x["status"]=="testable" for x in report.values()) else 2
-            argv=command(cfg,args.profile)
-            print(f"SOUND_STEMS_START profile={args.profile} endpoint={endpoint(args.profile)}",flush=True)
+            if args.parent_pid:
+                import ctypes, signal
+                # Linux PR_SET_PDEATHSIG persists across the ordinary execve.
+                # Check the parent after installing it to close the spawn race.
+                libc=ctypes.CDLL(None,use_errno=True)
+                if libc.prctl(1,signal.SIGKILL,0,0,0)!=0 or os.getppid()!=args.parent_pid:
+                    raise RuntimeError("Owning OBS process unavailable")
+            if args.python:cfg["python"]=args.python
+            if args.model:cfg["demucs_models" if args.profile=="demucs" else "melband_model"]=args.model
+            if args.safetensors_package:cfg["safetensors_package"]=args.safetensors_package
+            argv=command(cfg,args.profile,args.socket)
+            print(f"SOUND_STEMS_START profile={args.profile} endpoint={args.socket or endpoint(args.profile)}",flush=True)
             os.execve(argv[0],argv,worker_env())
     except (OSError,ValueError,RuntimeError,EOFError) as e:
         print(f"SOUND_STEMS_ERROR: {e}",file=sys.stderr);return 2

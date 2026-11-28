@@ -69,7 +69,9 @@ up with .7 s hops; faults invalidate the generation and mute.
 Three automatic retries use 250/500/1000 ms backoff; 40 successful
 responses replenish the budget. Retry worker and socket changes
 start a new generation, discarding old history/predicted tails.
-Model and GPU choice are explicit in the external worker; no fallback.
+Model and GPU choice are explicit in the managed or advanced external
+worker; no fallback. Automatic mode owns the private process. Cold
+model loading precedes sample-count prefill; see [worker setup](stem-worker-setup.md).
 
 The filter supports single stem, instrumental, custom mix
 (level/mute/solo on vocals and instrumental) and separate outputs
@@ -132,4 +134,4 @@ The runner tests both project rates and socket reload recovery at
 48 kHz. It uses real libobs source capture callbacks, not speaker
 or recording latency. See RELEASE_STATUS.md for evidence and limits.
 
-For one-command local startup and diagnostics, see [stem worker setup](stem-worker-setup.md).
+For automatic startup in OBS and optional diagnostics, see [stem worker setup](stem-worker-setup.md).

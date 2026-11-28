@@ -479,6 +479,11 @@ install(TARGETS live-latent-lab-sound LIBRARY DESTINATION ${OBS_PLUGIN_DESTINATI
 # Package only maintained runtime resources, never ignored local assets.
 install(FILES data/manifest.json DESTINATION "${OBS_DATA_DESTINATION}")
 install(FILES data/locale/en-US.ini DESTINATION "${OBS_DATA_DESTINATION}/locale")
+if(stem_live IN_LIST SOUND_SELECTED_EFFECTS)
+    install(FILES tools/sound-stems.py tools/live_stem_sidecar.py tools/live_stem_v2.py
+        tools/melband_model.py DESTINATION "${OBS_DATA_DESTINATION}/stem-worker")
+endif()
+
 
 if(SOUND_NEEDS_ONNX AND UNIX AND NOT APPLE)
     install(DIRECTORY "${onnxruntime_SOURCE_DIR}/lib/"

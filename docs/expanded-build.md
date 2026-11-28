@@ -207,8 +207,9 @@ socket failure or deadline miss. Each recovered stream has its own
 12-second silent prefill and discards the old queued audio. It never
 substitutes unseparated music for a stem.
 
-The existing worker is external and user-owned: the OBS filter
-reconnects to its socket, rather than spawning or terminating it.
+By default the OBS filter owns a private local CUDA worker, started
+on incoming audio. Cold load/warmup precedes prefill. Advanced external
+mode reconnects to a user-owned socket without spawning or killing it.
 Three automatic attempts use 250/500/1000 ms backoff; four successful
 model responses replenish the budget. A missing endpoint
 remains silent while attempting recovery. Changes to the socket reload live and start a new silent prefill.
@@ -246,13 +247,14 @@ No dry bypass while the filter is enabled. The resident backend,
 shared mix and independent OBS output sources are available.
 
 For both model families, [stem worker setup](stem-worker-setup.md)
-provides a local profile launcher, dependency checks and real socket probes.
+describes automatic OBS startup, model path overrides, optional external
+launcher and real socket probes.
 
 ### Experimental RoFormer stereo separation
 
 The same stem_live gate adds **LLL.sound RoFormer stems
 (experimental)**, with the shared Stem Output source, native routing
-and mixer. Its separate LLSTEM02 profile 1 worker requires the pinned
+and mixer. Its managed LLSTEM02 profile 1 worker requires the pinned
 local Mel-Band checkpoint and CUDA FP32. Its 2.1-second sample-count
 playback buffer uses the 2.8 s context/700 ms hop/350 ms future/
 140 ms blend configuration. Only vocals and residual instrumental

@@ -2,6 +2,9 @@
 // local HTDemucs sidecar. Its real-time callback never does model inference,
 // socket I/O, mutex locking, heap allocation or filesystem operations.
 #include <obs-module.h>
+#include <util/bmem.h>
+#include "framework/preferences.hpp"
+#include "framework/stem-managed-worker.hpp"
 #include <media-io/audio-io.h>
 #include <atomic>
 #include <algorithm>
@@ -39,7 +42,14 @@ struct StemFilter {
     // Q12 gains packed into one lock-free atomic, independent of model revision.
     static_assert(std::atomic<uint64_t>::is_always_lock_free);
     std::atomic<uint64_t> mix{stts::pack_stem_gains({0,0,0,1})};
-    std::string socket_path;
+    std::string socket_path,python,model,safetensors;
+    bool managed=true;
+    std::atomic<uint64_t> activity{0};
+    std::atomic<bool> attached{false};
+    enum WorkerState{Idle,Loading,Running,Unavailable,External};
+    std::atomic<int> worker_state{Idle};
+    std::string worker_detail;
+
     bool smooth_windows=false; // control lock
     uint64_t revision=0;
     enum Status{Buffering,Ready,Error};
@@ -65,6 +75,7 @@ constexpr const char* solo_keys[]={"drums_solo","bass_solo","other_solo","vocals
 constexpr const char* stem_names[]={"Drums","Bass","Other","Vocals"};
 
 void defaults(obs_data_t* settings) {
+    obs_data_set_default_int(settings,"worker_mode",-1);
     obs_data_set_default_int(settings,"stem",3);
     obs_data_set_default_int(settings,"mix_mode",0);
     obs_data_set_default_bool(settings,"smooth_windows",false);
@@ -92,6 +103,14 @@ void mel_defaults(obs_data_t* settings){
     const char* dir=std::getenv("XDG_RUNTIME_DIR");
     if(dir&&*dir)obs_data_set_default_string(settings,"socket_path",(std::string(dir)+"/lll-sound-melband.sock").c_str());
 }
+bool managed_mode(obs_data_t* settings,bool melband){
+    const auto mode=obs_data_get_int(settings,"worker_mode");
+    if(mode>=0)return mode!=1;
+    std::string path=obs_data_get_string(settings,"socket_path");
+    const char* dir=std::getenv("XDG_RUNTIME_DIR");
+    const auto default_path=dir&&*dir?std::string(dir)+(melband?"/lll-sound-melband.sock":"/lll-sound-stems.sock"):std::string{};
+    return path.empty()||path==default_path;
+}
 void update(void* ptr,obs_data_t* settings) {
     auto* data=static_cast<StemFilter*>(ptr);
     if(!data)return;
@@ -107,12 +126,18 @@ void update(void* ptr,obs_data_t* settings) {
         stts::resolve_melband_gains(mode,selected,gains,muted,solo):
         stts::resolve_stem_gains(mode,selected,gains,muted,solo));
     std::string path=obs_data_get_string(settings,"socket_path");
+    const bool managed=managed_mode(settings,data->melband);
+    std::string python=obs_data_get_string(settings,"worker_python"),model=obs_data_get_string(settings,"worker_model"),
+        safetensors=obs_data_get_string(settings,"worker_safetensors");
     std::lock_guard<std::mutex> lock(data->control);
     data->mix.store(mix,std::memory_order_release);
     const bool smooth=!data->melband&&obs_data_get_bool(settings,"smooth_windows");
-    if(!data->revision||path!=data->socket_path||smooth!=data->smooth_windows){
-        if(data->revision)data->pipeline.invalidate();
-        data->socket_path=std::move(path);data->smooth_windows=smooth;
+    if(!data->revision||path!=data->socket_path||smooth!=data->smooth_windows||managed!=data->managed||
+       python!=data->python||model!=data->model||safetensors!=data->safetensors){
+        if(data->revision||managed)data->pipeline.invalidate();
+        data->socket_path=std::move(path);data->smooth_windows=smooth;data->managed=managed;
+        data->python=std::move(python);data->model=std::move(model);data->safetensors=std::move(safetensors);
+        data->worker_state=managed?StemFilter::Idle:StemFilter::External;data->worker_detail.clear();
         ++data->revision;data->status=StemFilter::Buffering;data->wake.notify();
     }
 }
@@ -138,10 +163,60 @@ bool mix_mode_changed(obs_properties_t* props,obs_property_t*,obs_data_t* settin
     obs_property_set_visible(obs_properties_get(props,"custom_mix"),mode==2);
     return true;
 }
+const char* worker_state_name(int state){
+    switch(state){
+    case StemFilter::Idle:return "Waiting for audio";
+    case StemFilter::Loading:return "Loading local CUDA model";
+    case StemFilter::Running:return "Managed worker ready";
+    case StemFilter::External:return "External worker";
+    default:return "Worker unavailable";
+    }
+}
+void worker_snapshot(void* ptr,calldata_t* d){
+    auto* data=static_cast<StemFilter*>(ptr);
+    std::lock_guard<std::mutex> lock(data->control);
+    calldata_set_string(d,"state",worker_state_name(data->worker_state.load()));
+    calldata_set_string(d,"detail",data->worker_detail.c_str());
+}
+bool worker_mode_changed(obs_properties_t* props,obs_property_t*,obs_data_t* settings){
+    const auto mode=obs_data_get_int(settings,"worker_mode");
+    const bool external=mode==1||(mode==-1&&!managed_mode(settings,false)&&!managed_mode(settings,true));
+    obs_property_set_visible(obs_properties_get(props,"socket_path"),external);
+    for(auto key:{"worker_python","worker_model","worker_safetensors"})
+        if(auto* p=obs_properties_get(props,key))obs_property_set_visible(p,!external);
+    return true;
+}
+std::string status_text(StemFilter* data){
+    std::lock_guard<std::mutex> lock(data->control);
+    auto info=std::string(worker_state_name(data->worker_state.load()));
+    if(!data->worker_detail.empty())info+=": "+data->worker_detail;
+    return info;
+}
+bool refresh_worker_status(obs_properties_t* props,obs_property_t*,void* ptr){
+    if(!ptr)return false;
+    if(auto* p=obs_properties_get(props,"worker_status"))
+        obs_property_set_description(p,status_text(static_cast<StemFilter*>(ptr)).c_str());
+    return true;
+}
 obs_properties_t* properties_for(void* ptr,bool melband) {
     auto* props=obs_properties_create();
-    obs_properties_add_text(props,"socket_path",
-        "Local worker socket (live reload)",OBS_TEXT_DEFAULT);
+    auto* worker_mode=obs_properties_add_list(props,"worker_mode","Inference worker",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_INT);
+    obs_property_list_add_int(worker_mode,"Automatic (OBS manages worker)",-1);
+    obs_property_list_add_int(worker_mode,"Managed by OBS",0);
+    obs_property_list_add_int(worker_mode,"External socket (advanced)",1);
+    obs_property_set_modified_callback(worker_mode,worker_mode_changed);
+    obs_properties_add_text(props,"socket_path","Custom external socket (advanced)",OBS_TEXT_DEFAULT);
+    auto model_root=sound_preferences::directory();
+    auto runtime_root=sound_preferences::directory(true);
+    obs_properties_add_path(props,"worker_python","Python interpreter override",OBS_PATH_FILE,"Executables (*);;All files (*)",runtime_root.c_str());
+    obs_properties_add_path(props,"worker_model",melband?"Mel-Band model override":"Demucs model directory override",
+        melband?OBS_PATH_FILE:OBS_PATH_DIRECTORY,melband?"SafeTensors (*.safetensors);;All files (*)":nullptr,model_root.c_str());
+    if(melband)obs_properties_add_path(props,"worker_safetensors","Optional existing safetensors package",OBS_PATH_DIRECTORY,nullptr,runtime_root.c_str());
+    obs_properties_add_text(props,"managed_note","Automatic mode loads the configured local model when audio arrives. Overrides are optional with a saved local profile. Cold loading adds silence before the fixed playback delay; no model downloads or CPU fallback.",OBS_TEXT_INFO);
+    if(ptr){
+        obs_properties_add_text(props,"worker_status",status_text(static_cast<StemFilter*>(ptr)).c_str(),OBS_TEXT_INFO);
+        obs_properties_add_button2(props,"refresh_worker_status","Refresh worker status",refresh_worker_status,ptr);
+    }
     if(!melband){
     obs_properties_add_bool(props,"smooth_windows","Smooth window boundaries (2 s overlap)");
     obs_properties_add_text(props,"overlap_note",
@@ -172,8 +247,8 @@ obs_properties_t* properties_for(void* ptr,bool melband) {
     }
     obs_properties_add_group(props,"custom_mix","Stem mixer",OBS_GROUP_NORMAL,custom);
     obs_properties_add_text(props,"delay_note",melband?
-        "Experimental 2.1 s fixed delay, 2.8 s context / 700 ms hop / 350 ms lookahead. Needs the separate LLSTEM02 profile 1 CUDA worker. Vocals and residual instrumental only. Add Stem Output sources for independent routing. Faults mute, retry and restart prefill.":
-        "Fixed 12 s delay; first 12 s silent. Needs local 8 s HTDemucs worker. "
+        "Experimental 2.1 s fixed delay, 2.8 s context / 700 ms hop / 350 ms lookahead. Uses LLSTEM02 profile 1 CUDA. Vocals and residual instrumental only. Add Stem Output sources for independent routing. Faults mute, retry and restart prefill.":
+        "Fixed 12 s delay; first 12 s silent. Uses local 8 s HTDemucs inference. "
         "All four stereo stems share one inference and playback clock. "
          "Mix controls change without rebuffering. Levels are linear; allow headroom when summing. "
         "Add LLL.sound Stem Output sources and choose this filter for independent routing. "
@@ -186,30 +261,88 @@ obs_properties_t* properties_for(void* ptr,bool melband) {
 obs_properties_t* properties(void* ptr){return properties_for(ptr,false);}
 obs_properties_t* mel_properties(void* ptr){return properties_for(ptr,true);}
 
+// Only one managed instance of each family at a time until a shared
+// multi-session GPU scheduler is qualified. External endpoints stay user-owned.
+std::mutex managed_slots[2];
 void worker_loop(StemFilter* data) {
     const auto frames=data->pipeline.window_frames();
     stts::StemWindowOverlap overlap(frames,8);
     std::unique_ptr<stts::StemReadout> readout;
     if(data->melband)readout=std::make_unique<stts::StemReadout>(frames,
         data->sample_rate*7/10,data->sample_rate*35/100,data->sample_rate*14/100,4);
-    // Four healthy model responses replenish the shared retry budget.
-    // The external sidecar is user-owned: reconnect, never spawn or kill it.
     stts::WorkerRecovery budget(data->melband?40:4);
-    uint64_t attempt_revision=0;
+    uint64_t attempt_revision=0,seen_activity=0;
     uint32_t seq=0;
     while(!data->stopping.load()){
-        std::string path;uint64_t revision,epoch;bool smooth;
+        std::string path,python,model,safetensors;uint64_t revision,epoch=0;bool smooth,managed;
         {
             std::lock_guard<std::mutex> lock(data->control);
-            revision=data->revision;path=data->socket_path;smooth=data->smooth_windows;
+            revision=data->revision;path=data->socket_path;smooth=data->smooth_windows;managed=data->managed;
+            python=data->python;model=data->model;safetensors=data->safetensors;
             if(revision!=attempt_revision){budget.reset();attempt_revision=revision;}
-            if(!data->pipeline.ok()&&!data->pipeline.restart())return;
-            epoch=data->pipeline.epoch();data->status=StemFilter::Buffering;
+            if(managed)data->pipeline.invalidate();
+            data->status=StemFilter::Buffering;
+            data->worker_state=managed?StemFilter::Idle:StemFilter::External;
+            data->worker_detail.clear();
+        }
+        auto valid_revision=[&]{
+            if(data->stopping.load())return false;
+            std::lock_guard<std::mutex> lock(data->control);
+            return data->revision==revision;
+        };
+        std::unique_lock<std::mutex> slot(managed_slots[data->melband?1:0],std::defer_lock);
+        stts::StemManagedWorker child;
+        bool initialized=true,idle=false;
+        if(managed){
+            // No model load until real audio arrives. Invalid pipeline stays
+            // silent throughout cold startup instead of running out of prefill.
+            auto has_input=[&]{
+                return data->attached.load()&&obs_source_enabled(data->context)&&data->activity.load()!=seen_activity;
+            };
+            while(valid_revision()&&!has_input()){
+                auto ticket=data->wake.sequence();
+                if(!has_input())data->wake.wait(ticket,100);
+            }
+            if(!valid_revision())continue;
+            seen_activity=data->activity.load();
+            data->worker_state=StemFilter::Loading;
+            char* file=obs_module_file("stem-worker/sound-stems.py");
+            std::string script=file?file:"";bfree(file);
+            bool acquired=slot.try_lock();
+            initialized=acquired&&child.start(script,data->melband?"melband":"demucs",python,model,safetensors)&&
+                child.wait_ready(valid_revision,std::chrono::seconds(60));
+            if(!valid_revision())continue;
+            if(initialized){path=child.path();data->worker_state=StemFilter::Running;}
+            else{
+                std::lock_guard<std::mutex> lock(data->control);
+                data->worker_state=StemFilter::Unavailable;
+                data->worker_detail=acquired?"Local worker could not load. Check Python/model paths and OBS log.":"Another managed filter owns this model family.";
+                auto detail=child.error();
+                blog(LOG_WARNING,"[Sound stems] %s %s",data->worker_detail.c_str(),detail.c_str());
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(data->control);
+            if(data->revision!=revision||data->stopping.load())continue;
+            if(initialized){
+                if(!data->pipeline.ok()&&!data->pipeline.restart())return;
+                epoch=data->pipeline.epoch();
+            }
         }
         if(readout)readout->reset();else overlap.reset(smooth?size_t(data->sample_rate)*2:0);
         auto current=[&]{return data->pipeline.current(epoch);};
-        while(!data->stopping.load()&&current()){
+        auto activity=data->activity.load();
+        auto last=std::chrono::steady_clock::now();
+        while(initialized&&!data->stopping.load()&&current()){
             const auto ticket=data->wake.sequence();
+            auto now_activity=data->activity.load();
+            if(now_activity!=activity){activity=now_activity;last=std::chrono::steady_clock::now();}
+            if(managed){
+                if(!child.alive()){data->pipeline.fault(epoch);break;}
+                if(std::chrono::steady_clock::now()-last>std::chrono::seconds(30)){
+                    idle=true;seen_activity=activity;data->pipeline.fault(epoch);break;
+                }
+            }
             auto capture=[&](float* l,float* r,size_t n){return data->pipeline.read_input_frames(l,r,n);};
             if(!data->pipeline.worker_prepare()||
                !(readout?readout->capture(capture):overlap.capture(capture))){
@@ -225,21 +358,23 @@ void worker_loop(StemFilter* data) {
             bool exchanged=readout?
                 data->client.exchange_melband(path,data->sample_rate,seq++,readout->left(),readout->right(),frames,current,publish_batch):
                 data->client.exchange_batch(path,data->sample_rate,seq++,overlap.left(),overlap.right(),frames,current,publish_batch);
-            if(!exchanged){
-                data->pipeline.fault(epoch);break;
-            }
+            if(!exchanged){data->pipeline.fault(epoch);break;}
             {
                 std::lock_guard<std::mutex> lock(data->control);
                 if(data->revision!=revision||!current())break;
                 ++data->windows;data->status=StemFilter::Ready;budget.on_success();
             }
         }
+        child.stop();
+        if(slot.owns_lock())slot.unlock();
         if(data->stopping.load())return;
+        if(idle)continue;
         bool retry=false;
         {
             std::lock_guard<std::mutex> lock(data->control);
-            if(data->revision!=revision)continue;
-            data->pipeline.fault(epoch);data->status=StemFilter::Error;
+            if(data->revision!=revision){seen_activity=data->activity.load();continue;}
+            data->pipeline.invalidate();data->status=StemFilter::Error;
+            if(managed){data->worker_state=StemFilter::Unavailable;if(data->worker_detail.empty())data->worker_detail="Stream interrupted; retrying local worker.";}
             budget.on_fault();retry=budget.can_retry(true);
         }
         blog(LOG_WARNING,"[Sound stems] Stream invalidated; %s",
@@ -259,6 +394,7 @@ void worker_loop(StemFilter* data) {
         }
     }
 }
+
 void worker_entry(StemFilter* data){
     try{worker_loop(data);}
     catch(...){
@@ -338,11 +474,13 @@ void filter_add(void* ptr,obs_source_t* parent){
         data->fanout_uuid=uuid?uuid:"";
     }
     data->fanout_allowed.store(uuid&&*uuid&&stts::stem_outputs::allowed_parent(parent),std::memory_order_release);
-    data->dispatch_wake.notify();
+    data->attached.store(true,std::memory_order_release);
+    data->wake.notify();data->dispatch_wake.notify();
 }
 void filter_remove(void* ptr,obs_source_t*){
     auto* data=static_cast<StemFilter*>(ptr);
     if(!data)return;
+    data->attached.store(false,std::memory_order_release);
     data->fanout_allowed.store(false,std::memory_order_release);
     data->fanout_ready.store(false,std::memory_order_release);
     {
@@ -393,6 +531,8 @@ void* create_for(obs_data_t* settings,obs_source_t* source,bool melband) {
         melband?"void sound_stem_live_v2(out string status, out int windows, out int automatic_retries, out int delay_ms)":
         "void sound_stem_live_v1(out string status, out int windows, out int automatic_retries, out int delay_ms)",snapshot,data);
     proc_handler_add(obs_source_get_proc_handler(source),
+        "void sound_stem_worker_v1(out string state, out string detail)",worker_snapshot,data);
+    proc_handler_add(obs_source_get_proc_handler(source),
         "void sound_stem_fanout_v1(out int packets, out int drops, out int subscribers)",fanout_snapshot,data);
     signal_handler_connect(obs_source_get_signal_handler(source),"enable",enabled_changed,data);
     blog(LOG_INFO,"[Sound stems] Experimental stereo delayed filter created (rate=%u, delay=%dms)",rate,melband?2100:12000);
@@ -421,6 +561,8 @@ obs_audio_data* filter_audio(void* ptr,obs_audio_data* packet){
                             packet->frames,0.f);
     };
     if(!packet->frames)return packet;
+    data->activity.fetch_add(1,std::memory_order_relaxed);
+    if(!data->pipeline.ok())data->wake.notify();
     if(!packet->data[0] || !packet->data[1]){
         const auto epoch=data->pipeline.epoch();
         data->pipeline.fault(epoch);

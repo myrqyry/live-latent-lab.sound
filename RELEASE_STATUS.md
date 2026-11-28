@@ -1529,3 +1529,49 @@ only; native link/run not yet possible. Reproducers and build
 commands in docs/stem-model-families.md. Resume isolated build
 before comparing native F16/Q8 or adding a live backend. Model
 quality and GPU contention still unqualified.
+
+## OBS-owned stem workers (2026-11-27)
+
+Normal use no longer requires launching sound-stems in a terminal.
+Both producers default to managed startup on incoming audio, using
+the saved local profile or explicitly selected Python/model paths.
+The model picker starts in the configured model library. Separate
+mode preserves custom external sockets and never kills those workers.
+Four Python worker scripts are installed as stem-enabled module data.
+The launcher execs the configured local Python interpreter, with no
+downloads, service registration, or CPU fallback. Private mode-0700
+temporary socket/log directory, owned child PID and bounded teardown;
+Linux parent-death signal prevents the child surviving OBS's death
+(a crash may leave a private stale directory). One managed instance
+per family, independent Stem Output children reuse its inference.
+Cold startup holds the pipeline muted, then restarts the existing
+sample-count prefill after model warmup. Configuration changes,
+disable/detach, shutdown and 30-second inactivity release the child.
+Worker snapshot procedure and refresh/retry controls added.
+No additional work on the audio callback other than an atomic
+activity increment and nonblocking wake on invalid generation.
+
+Red/green owned-process tests cover readiness, cancellation, child
+exit/reaping and cleanup; 24 Python tests, v1/v2 protocol, timeline,
+mix, dispatch, recovery and three-type isolated registry passed.
+Actual managed CUDA 48k stereo OBS tests use isolated copies of the
+existing profile without a pre-launched service. First RoFormer run
+passed; a subsequent attachment guard cached enabled state too early
+in OBS construction, leaving Demucs silent. Corrected to query
+actual enabled state on the worker. Final 36 s HTDemucs run: five
+requests, four synchronized children, 3600 dispatch packets, zero
+retries/drops, detach stops child outputs. Final 24 s RoFormer run:
+first wet at 6.83 s including cold load, fixed 2.1 s sample delay,
+26 requests, 2400 packets, two valid children, incompatible child
+silent, zero retries/drops, reconstruction max 5.96046e-8. Both
+private worker directories removed after tests. Across 6000 observed
+callbacks, no allocations/frees/locks/waits/>10ms, worst measured
+wall p99 90.699 us (Demucs), max 5.008 ms mostly off CPU. New
+combined seven-effect module exact nine-type registration passed.
+These are cold-start/fanout/cleanup tests, not full managed
+idle-expiry, parent-crash, repeated enable/disable, simultaneous
+GPU families or long-duration acceptance. The real old external
+worker path was previously qualified; no new real external
+acceptance in this pass. Optional runner:
+tests/verify-stem-managed-obs.sh (syntax checked; same commands
+executed directly). Native GGUF work unchanged.

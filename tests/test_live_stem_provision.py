@@ -60,4 +60,13 @@ class TestProvision(unittest.TestCase):
         with patch.dict(os.environ,{"XDG_RUNTIME_DIR":str(self.root)}):
             self.assertIn("--safetensors-package",s.command(self.values,"melband"))
             self.assertNotIn("--safetensors-package",s.command(self.values,"demucs"))
+    def test_private_managed_endpoint(self):
+        with patch.dict(os.environ,{"XDG_RUNTIME_DIR":""}):
+            private=str(self.root/"private.sock")
+            for profile in ("demucs","melband"):
+                args=s.command(self.values,profile,private)
+                self.assertEqual(args[args.index("--socket")+1],private)
+            with self.assertRaises(ValueError):s.command(self.values,"unknown",private)
+            Path(private).touch()
+            with self.assertRaises(FileExistsError):s.command(self.values,"melband",private)
 if __name__=="__main__":unittest.main()

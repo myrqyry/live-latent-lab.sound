@@ -127,7 +127,9 @@ for the first window to be processed before playback. A missed playback
 deadline invalidates the generation; late results never catch up by
 playing stale audio. The 12-second socket transfer limit does not extend
 that audio budget. Failures mute the active filter and child stems; the
-external worker is user-owned and is not started or stopped by OBS.
+default managed worker is owned by OBS; an explicitly selected external
+worker is user-owned and is not started or stopped by OBS. Cold model
+loading adds silence before a new generation begins. See [worker setup](stem-worker-setup.md).
 Three automatic retry attempts use 250/500/1000 ms backoff; four
 successful windows replenish the budget. Retry worker, a socket change,
 disable/enable or detachment invalidate the prior generation. Disabling
@@ -273,3 +275,15 @@ quality.
 Experimental named two-stem worker and 2.1-second playback filter: [LLSTEM02 profile 1](stem-api-v2.md). The existing v1 procedure and producer settings are unchanged.
 
 For explicit local profile setup, startup and real socket probes, see [stem worker setup](stem-worker-setup.md).
+
+Managed worker state is available from either producer via
+`void sound_stem_worker_v1(out string state, out string detail)`.
+This is separate from the existing playback counters. State is a
+human-readable snapshot (Waiting for audio, Loading local CUDA model,
+Managed worker ready, External worker, Worker unavailable).
+The properties panel has a refresh button for this snapshot.
+Persisted worker_mode: -1 automatic (default, recognizes legacy
+nondefault external sockets), 0 managed, 1 explicit external.
+worker_python, worker_model, worker_safetensors are optional path
+overrides; the saved local profile supplies blank values. The default
+socket settings remain unchanged for the advanced external mode.

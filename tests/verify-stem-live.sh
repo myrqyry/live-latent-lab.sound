@@ -56,6 +56,8 @@ cxx="${CXX:-c++}"
 "$work/overlap"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" "$root/tests/verify-stem-readout.cpp" -o "$work/readout"
 "$work/readout"
+"$cxx" -std=c++17 -O2 -pthread -I"$root/src" "$root/tests/verify-stem-managed.cpp" -o "$work/managed"
+"$work/managed" "$work/managed-fixture"
 "$cxx" -std=c++17 -O2 -pthread -I"$root/src" \
     "$root/tests/verify-stem-dispatch.cpp" -o "$work/dispatch"
 "$work/dispatch"

@@ -44,11 +44,12 @@ static double energy(const Capture& s,size_t a,size_t b){
 }
 int main(int argc,char** argv){
     if(argc!=5)return 2;
+    const bool managed=std::string(argv[4])=="--managed";
     const bool recover=std::getenv("SOUND_MELBAND_RECOVER");
     const bool mix=std::getenv("SOUND_MELBAND_MIX");
-    if(mix&&recover)return 2;
+    if((mix&&recover)||(managed&&(mix||recover)))return 2;
     const uint32_t rate=std::getenv("SOUND_MELBAND_44100")?44100:48000;
-    const size_t seconds=recover?16:10,packet=rate/100,delay=rate*21/10;
+    const size_t seconds=managed?24:recover?16:10,packet=rate/100,delay=rate*21/10;
     std::ifstream in(argv[3],std::ios::binary);
     std::vector<float> pcm(24*48000*2),orig_l(seconds*rate),orig_r(seconds*rate);
     if(!in.read(reinterpret_cast<char*>(pcm.data()),pcm.size()*sizeof(float)))return 3;
@@ -64,7 +65,7 @@ int main(int argc,char** argv){
     obs_register_source(&input_info);
     auto* input=obs_source_create(input_info.id,"fixture",nullptr,nullptr);
     auto* settings=obs_data_create();
-    obs_data_set_int(settings,"mix_mode",3);obs_data_set_string(settings,"socket_path",argv[4]);
+    obs_data_set_int(settings,"mix_mode",3);if(!managed)obs_data_set_string(settings,"socket_path",argv[4]);
     auto* filter=obs_source_create("stem_live_melband_filter","RoFormer parent",settings,nullptr);
     if(!input||!filter||!obs_source_get_uuid(filter))return 7;
     std::string uuid=obs_source_get_uuid(filter);
@@ -142,11 +143,16 @@ int main(int argc,char** argv){
     bool pass=picker&&stats[2].l.empty()&&stats[0].packets==stats[1].packets&&
         stats[0].l.size()==seconds*rate&&stats[1].l.size()==seconds*rate&&parent.l.size()==seconds*rate&&
         (mix?energy(parent,0,delay)==0:energy(parent,0,parent.l.size())==0);
+    size_t first=delay;
+    if(managed&&pass){
+        while(first<seconds*rate&&stats[0].l[first]==0&&stats[0].r[first]==0&&stats[1].l[first]==0&&stats[1].r[first]==0)++first;
+        pass=first>=delay&&first<seconds*rate-3*rate;
+    }
     double maximum=0;
     if(pass){
         // First generation: complementary readout should reconstruct exact
         // delayed stereo mixture. All future/history and blend indices agree.
-        for(size_t i=delay;i<(recover?5:seconds)*rate;++i){
+        for(size_t i=first;i<(recover?5:seconds)*rate;++i){
             maximum=std::max(maximum,double(std::abs(stats[0].l[i]+stats[1].l[i]-orig_l[i-delay])));
             maximum=std::max(maximum,double(std::abs(stats[0].r[i]+stats[1].r[i]-orig_r[i-delay])));
         }
@@ -167,7 +173,7 @@ int main(int argc,char** argv){
     }
     for(size_t i=0;i<2;++i){
         auto& s=stats[i];
-        bool valid=energy(s,0,delay)==0&&energy(s,rate*3,rate*5)>0;
+        bool valid=energy(s,0,delay)==0&&(managed?energy(s,rate*21,rate*23)>0:energy(s,rate*3,rate*5)>0);
         if(recover)valid=valid&&energy(s,rate*51/10,rate*9)==0&&energy(s,rate*9,rate*111/10)==0&&energy(s,rate*12,rate*15)>0;
         pass&=valid;
         printf("MELBAND_OBS stem=%s frames=%zu early=%g initial=%g fault=%g fresh_prefill=%g restored=%g pass=%d\n",
@@ -178,6 +184,13 @@ int main(int argc,char** argv){
     auto windows=calldata_int(&d,"windows"),retries=calldata_int(&d,"automatic_retries"),delay_ms=calldata_int(&d,"delay_ms");calldata_free(&d);
     calldata_t f{};bool fan=proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_fanout_v1",&f);
     auto packets=calldata_int(&f,"packets"),drops=calldata_int(&f,"drops"),subscribers=calldata_int(&f,"subscribers");calldata_free(&f);
+    if(managed){
+        calldata_t w{};bool state=proc_handler_call(obs_source_get_proc_handler(filter),"sound_stem_worker_v1",&w);
+        auto* name=calldata_string(&w,"state");
+        bool ready=state&&name&&std::string(name)=="Managed worker ready";
+        printf("MELBAND_MANAGED_START first_wet_s=%g ready=%d\n",double(first)/rate,ready);
+        pass=pass&&ready;calldata_free(&w);
+    }
     pass=pass&&status&&fan&&delay_ms==2100&&windows>=8&&(recover?retries>=1:retries==0)&&packets==static_cast<long long>(seconds*100)&&drops==0&&subscribers==2;
     printf("MELBAND_OBS_SUMMARY rate=%u recovery=%d delay_ms=%lld windows=%lld retries=%lld packets=%lld drops=%lld subscribers=%lld picker=%d wrong_stem_silent=%d reconstruction_max=%g pass=%d\n",
         rate,recover,(long long)delay_ms,(long long)windows,(long long)retries,(long long)packets,(long long)drops,(long long)subscribers,picker,stats[2].l.empty(),maximum,pass);
