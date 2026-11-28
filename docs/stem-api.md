@@ -271,3 +271,5 @@ Model-free tests do not establish inference performance or music
 quality.
 
 Experimental named two-stem worker and 2.1-second playback filter: [LLSTEM02 profile 1](stem-api-v2.md). The existing v1 procedure and producer settings are unchanged.
+
+For explicit local profile setup, startup and real socket probes, see [stem worker setup](stem-worker-setup.md).

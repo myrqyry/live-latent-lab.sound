@@ -131,3 +131,5 @@ The synthetic stereo fixture is interleaved little-endian float32.
 The runner tests both project rates and socket reload recovery at
 48 kHz. It uses real libobs source capture callbacks, not speaker
 or recording latency. See RELEASE_STATUS.md for evidence and limits.
+
+For one-command local startup and diagnostics, see [stem worker setup](stem-worker-setup.md).

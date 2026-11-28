@@ -45,6 +45,8 @@ static double energy(const Capture& s,size_t a,size_t b){
 int main(int argc,char** argv){
     if(argc!=5)return 2;
     const bool recover=std::getenv("SOUND_MELBAND_RECOVER");
+    const bool mix=std::getenv("SOUND_MELBAND_MIX");
+    if(mix&&recover)return 2;
     const uint32_t rate=std::getenv("SOUND_MELBAND_44100")?44100:48000;
     const size_t seconds=recover?16:10,packet=rate/100,delay=rate*21/10;
     std::ifstream in(argv[3],std::ios::binary);
@@ -106,6 +108,16 @@ int main(int argc,char** argv){
     auto initial=os_gettime_ns();
     std::vector<float> l(packet),r(packet);
     for(size_t i=0;i<seconds*100;++i){
+        if(mix&&i>=300&&i<=900&&i%100==0){
+            int mode=i==300?0:i==400?1:i==800?3:2;
+            obs_data_set_int(settings,"mix_mode",mode);
+            obs_data_set_int(settings,"stem",3);
+            obs_data_set_double(settings,"vocals_gain",i==500?.5:1.);
+            obs_data_set_double(settings,"instrumental_gain",i==500?.25:1.);
+            obs_data_set_bool(settings,"vocals_solo",i==600||i==700);
+            obs_data_set_bool(settings,"vocals_mute",i==700);
+            obs_source_update(filter,settings);
+        }
         if(i==500){
             obs_source_set_name(filter,"renamed RoFormer parent");
             if(recover){
@@ -129,7 +141,7 @@ int main(int argc,char** argv){
     obs_source_remove_audio_capture_callback(input,capture,&parent);
     bool pass=picker&&stats[2].l.empty()&&stats[0].packets==stats[1].packets&&
         stats[0].l.size()==seconds*rate&&stats[1].l.size()==seconds*rate&&parent.l.size()==seconds*rate&&
-        energy(parent,0,parent.l.size())==0;
+        (mix?energy(parent,0,delay)==0:energy(parent,0,parent.l.size())==0);
     double maximum=0;
     if(pass){
         // First generation: complementary readout should reconstruct exact
@@ -139,6 +151,19 @@ int main(int argc,char** argv){
             maximum=std::max(maximum,double(std::abs(stats[0].r[i]+stats[1].r[i]-orig_r[i-delay])));
         }
         pass=maximum<2e-6;
+    }
+    if(mix&&pass){
+        const std::array<std::array<float,2>,7> expected={{{1,0},{0,1},{.5,.25},{1,0},{0,0},{0,0},{1,1}}};
+        double err=0;
+        for(size_t mode=0;mode<expected.size();++mode){
+            auto gains=expected[mode];
+            for(size_t i=(mode+3)*rate+rate/10;i<(mode+4)*rate-rate/10;++i){
+                err=std::max(err,double(std::abs(parent.l[i]-(stats[0].l[i]*gains[0]+stats[1].l[i]*gains[1]))));
+                err=std::max(err,double(std::abs(parent.r[i]-(stats[0].r[i]*gains[0]+stats[1].r[i]*gains[1]))));
+            }
+        }
+        pass=err<2e-6;
+        printf("MELBAND_LIVE_MIX modes=7 max_error=%g pass=%d\n",err,pass);
     }
     for(size_t i=0;i<2;++i){
         auto& s=stats[i];

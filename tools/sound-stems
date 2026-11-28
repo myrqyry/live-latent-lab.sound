@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+script_dir=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)
+exec python3 "$script_dir/sound-stems.py" "$@"

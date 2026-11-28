@@ -1,13 +1,36 @@
 """Pinned local-only Mel-Band RoFormer model loader."""
 import hashlib
 import importlib.metadata
+import importlib.util
+from pathlib import Path
+import sys
 import os
 import time
 
 SHA256 = "6119aef379a6c7264e0b37db65ae1e6488b8ca4a00baf56d6d244737b8488226"
 
 
-def load_model(model_path):
+def import_safetensors(package=None):
+    # Optional explicit existing dependency, never an entire foreign venv.
+    # Normal installations use their own safetensors package.
+    if package is not None:
+        path=Path(package).resolve(strict=True)
+        if path.name!="safetensors" or not (path/"__init__.py").is_file():
+            raise ValueError("Expected explicit safetensors package directory")
+        if "safetensors" in sys.modules:
+            loaded=Path(sys.modules["safetensors"].__file__).resolve().parent
+            if loaded!=path:raise RuntimeError("Different safetensors already loaded")
+        else:
+            spec=importlib.util.spec_from_file_location("safetensors",path/"__init__.py",submodule_search_locations=[str(path)])
+            if spec is None or spec.loader is None:raise RuntimeError("Invalid safetensors package")
+            mod=importlib.util.module_from_spec(spec);sys.modules["safetensors"]=mod
+            try:spec.loader.exec_module(mod)
+            except Exception:
+                sys.modules.pop("safetensors",None);raise
+    from safetensors.torch import load_file
+    return load_file
+
+def load_model(model_path, safetensors_package=None):
     os.environ["HF_HUB_OFFLINE"]="1"
     os.environ["TRANSFORMERS_OFFLINE"]="1"
     with model_path.open("rb") as stream:
@@ -18,7 +41,7 @@ def load_model(model_path):
     import torch
     if not torch.cuda.is_available():
         raise RuntimeError("Explicit CUDA unavailable")
-    from safetensors.torch import load_file
+    load_file=import_safetensors(safetensors_package)
     from audio_separator.separator.uvr_lib_v5.roformer.mel_band_roformer import MelBandRoformer
 
     started = time.monotonic()

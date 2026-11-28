@@ -245,6 +245,9 @@ external sidecar. The next request may contend with that old work.
 No dry bypass while the filter is enabled. The resident backend,
 shared mix and independent OBS output sources are available.
 
+For both model families, [stem worker setup](stem-worker-setup.md)
+provides a local profile launcher, dependency checks and real socket probes.
+
 ### Experimental RoFormer stereo separation
 
 The same stem_live gate adds **LLL.sound RoFormer stems

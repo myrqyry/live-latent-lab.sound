@@ -369,12 +369,16 @@ def main()->int:
             with StreamServer(str(endpoint),Handler,sep,Path(work)) as server:
                 os.chmod(endpoint,0o600)
                 print(f"STEM_SIDECAR_READY socket={endpoint} model=htdemucs window=8s backend={args.backend} precision={sep.effective_precision}",flush=True)
+                inode=endpoint.stat().st_ino
+                def stop(signum,frame):raise KeyboardInterrupt
+                signal.signal(signal.SIGTERM,stop)
                 try:server.serve_forever(poll_interval=.2)
                 except KeyboardInterrupt:pass
+                finally:
+                    if endpoint.is_socket() and endpoint.stat().st_ino==inode:
+                        endpoint.unlink()
         finally:
             os.umask(old_umask)
-            if endpoint.exists() and endpoint.is_socket():
-                endpoint.unlink()
     return 0
 
 if __name__=="__main__":

@@ -1439,3 +1439,39 @@ New RoFormer module is not installed or pushed. Installed prior
 0f0ba26 build remains unchanged. Next: real mixer switch/lifecycle
 stress, shared worker/model provisioning and isolated native GGUF
 candidate qualification.
+
+
+## Local stem provisioning and live mixer qualification (2026-11-27)
+
+Added tools/sound-stems and private explicit profiles for the two
+qualified resident CUDA workers. Doctor checks actual imports and CUDA;
+run starts one foreground model with the matching socket/geometry,
+probe checks a real silent inference response. No downloads, environment
+installation, CPU fallback or auto-start services. Explicit existing
+safetensors package directory supported without importing a whole foreign
+venv. SIGTERM and Ctrl-C clean up the owned socket, with inode guard.
+Model-free config tests cover private mode, no overwrite, symlink and
+unknown field rejection, model-specific arguments and occupied socket.
+Real isolated launcher startup/probe/SIGTERM passed both profiles:
+Demucs 481.8 ms client roundtrip (.366 s server inference), Mel-Band
+313.8 ms client roundtrip (.2971 s server processing). Both cached
+models strictly loaded with one actual CUDA worker per run. Neither
+worker remained running afterward. Configured user's existing asset
+paths at ~/.config/live-latent-lab-sound/stems.json (0600), installed
+~/.local/bin/sound-stems symlink, doctor passed both actual paths.
+No existing config or runtime overwritten.
+
+On the b1fe392 isolated RoFormer module, real 48 kHz OBS mixer
+switch test passed all seven modes: vocals, instrumental, custom
+.5/.25 mix, solo, mute-over-solo, separate outputs, unity mix.
+Parent samples exactly matched expected child sums in tested interior
+intervals (max error 0); both raw children kept same continuous
+timestamps and exact 2.1 s initial delay, 13 model requests,
+1000 packets, 0 drops/retries, 2 subscribers. No observed callback
+alloc/free/lock/wait/>10ms; wall p99 28.612 us, max .976 ms mostly
+off CPU. Model-free suite rerun (23 Python tests), v1/v2 contract,
+readout, mix, dispatch and registration passed. No new module installed
+or pushed. Prior installed 0f0ba26 remains; RoFormer still staged.
+Next: isolate native audio.cpp separation build/conversion; qualify
+real named outputs and compare quality/compute. Concurrent CUDA
+contention and long-duration robustness remain unqualified.

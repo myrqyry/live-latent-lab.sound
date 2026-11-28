@@ -7,6 +7,7 @@ import argparse
 import os
 from pathlib import Path
 import socketserver
+import signal
 import struct
 import time
 
@@ -48,9 +49,9 @@ def serve_client(conn,model):
         except OSError:pass
 
 class ResidentMelBand:
-    def __init__(self,path):
+    def __init__(self,path,safetensors_package=None):
         from melband_model import load_model
-        self.model=load_model(path)
+        self.model=load_model(path,safetensors_package)
     def __call__(self,pcm,rate):
         import numpy as np
         import torch
@@ -69,10 +70,11 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model",type=Path,required=True)
     p.add_argument("--socket",required=True,help="Separate private v2 endpoint")
+    p.add_argument("--safetensors-package",type=Path,help="Explicit trusted existing safetensors package directory")
     args=p.parse_args()
     endpoint=socket_path(args.socket)
     import numpy as np
-    model=ResidentMelBand(args.model)
+    model=ResidentMelBand(args.model,args.safetensors_package)
     model(np.zeros((2,123480),dtype="<f4"),44100)
     class Handler(socketserver.BaseRequestHandler):
         def handle(self):serve_client(self.request,model)
@@ -82,6 +84,8 @@ def main():
             os.chmod(endpoint,0o600)
             inode=endpoint.stat().st_ino
             print(f"STEM_V2_READY profile=1 names=Vocals,Instrumental socket={endpoint}",flush=True)
+            def stop(signum,frame):raise KeyboardInterrupt
+            signal.signal(signal.SIGTERM,stop)
             try:server.serve_forever(poll_interval=.2)
             except KeyboardInterrupt:pass
             finally:

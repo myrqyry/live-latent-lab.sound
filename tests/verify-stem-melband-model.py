@@ -3,7 +3,6 @@
 Not an OBS worker or a music-quality benchmark. No downloads or installation.
 """
 import argparse
-import importlib.util
 import os
 from pathlib import Path
 import sys
@@ -13,19 +12,9 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 def load_model(model_path, safetensors_package=None):
-    if safetensors_package is not None:
-        package = safetensors_package.resolve(strict=True)
-        spec = importlib.util.spec_from_file_location(
-            "safetensors", package / "__init__.py",
-            submodule_search_locations=[str(package)])
-        if spec is None or spec.loader is None:
-            raise RuntimeError("Invalid explicit safetensors package path")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["safetensors"] = mod
-        spec.loader.exec_module(mod)
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
     from melband_model import load_model as load_pinned
-    return load_pinned(model_path)
+    return load_pinned(model_path,safetensors_package)
 
 
 def main():

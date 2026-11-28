@@ -30,12 +30,12 @@ for ((i=0;i<200;i++));do
     sleep .2
 done
 test -S "$work/model.sock"
-for mode in 48000 44100 recovery;do
+for mode in 48000 44100 recovery mix;do
     extra=()
-    if [[ "$mode" == recovery ]];then extra=(SOUND_MELBAND_RECOVER=1);elif [[ "$mode" == 44100 ]];then extra=(SOUND_MELBAND_44100=1);fi
+    if [[ "$mode" == recovery ]];then extra=(SOUND_MELBAND_RECOVER=1);elif [[ "$mode" == 44100 ]];then extra=(SOUND_MELBAND_44100=1);elif [[ "$mode" == mix ]];then extra=(SOUND_MELBAND_MIX=1);fi
     env "${extra[@]}" QT_QPA_PLATFORM=offscreen xvfb-run -a timeout 40 "$work/obs" \
         "$SOUND_MELBAND_STAGE/bin/64bit/live-latent-lab-sound.so" "$SOUND_MELBAND_STAGE/data" \
         "$SOUND_MELBAND_FIXTURE" "$work/model.sock" >"$work/$mode.log" 2>&1 || { tail -50 "$work/$mode.log";exit 1; }
-    grep -E '^MELBAND_OBS|^RT_CALLBACK' "$work/$mode.log"
+    grep -E '^MELBAND_OBS|^MELBAND_LIVE_MIX|^RT_CALLBACK' "$work/$mode.log"
 done
 echo SOUND_MELBAND_REAL_OBS_PASS=1
