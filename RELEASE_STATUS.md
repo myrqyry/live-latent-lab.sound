@@ -1616,3 +1616,24 @@ GPU pressure and real music quality remain unqualified. Demucs
 still uses Python compatibility backend; no native four-stem claim.
 No redistributable binary package qualification; locally built
 runtime and licenses only. Native model assets not committed.
+
+## Family-specific model picker folders (2026-11-27)
+
+Corrected interpretation of the Model Library setting: retain the
+shared library root, but browse the existing family subdirectory by
+default. Explicit [ModelDirectories] overrides support already
+stored external models; plugin-config models/<family subdirectory>
+is a fallback before the shared root. Missing directories never
+become chooser defaults. No selected model values changed.
+Red actual libobs test reproduced shared-root picker; green expanded
+test verified 15 model fields, runtime property unchanged, missing
+folder fallback, existing per-plugin folder and invalid override
+fallback. Qt-free and legacy Qt preference tests passed. Native
+RoFormer harness now expects family-specific chooser root; its
+actual automatic F16 model resolution unchanged. Local preferences
+retain shared Audio root and add existing speech-model directories,
+Demucs and Mel-Band compatibility paths, and RVC voice-library
+override. All 15 local model properties passed read-only verification.
+Whisper/Nemotron/Parakeet currently share their existing Mobile-Edge
+model directory; no files were moved to force a new layout. No new
+inference qualification implied.

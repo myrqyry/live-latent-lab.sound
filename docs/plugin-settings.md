@@ -46,3 +46,24 @@ The OBS Settings integration relies on private Qt widget structure,
 not an official OBS extension API. It is verified on Linux OBS 32.2.0;
 other OBS versions are not qualified. Aftermarket's existing separate
 page has not been migrated. Other plugins have not yet adopted the bridge.
+
+
+### Per-model browsing folders
+
+The Model Library remains the common root. Model pickers start in
+the existing matching subdirectory: `yamnet`, `ddsp-vst-2022`,
+`sa3-gguf`, `RVC-GGUF` (custom voices under `voices`),
+`Mel-Band-RoFormer-GGUF`, `Mel-Band-RoFormer`, `Demucs`, or
+`STT/Whisper`, `STT/Zipformer`, `STT/Nemotron`, `STT/Parakeet`.
+An existing absolute path in the `[ModelDirectories]` section of
+preferences.ini takes precedence for the corresponding family key:
+yamnet, ddsp, sa3, rvc, rvc_voices, roformer, melband, demucs,
+whisper, zipformer, nemotron, parakeet. This is useful when models
+are already stored elsewhere. If no matching family folder exists
+under the shared library, an existing equivalent `models/<family
+subdirectory>` under the OBS plugin config directory is used.
+Otherwise the shared library (or system chooser if unset) is the
+fallback. These are browsing locations only, not model selection,
+downloads or relocation. Runtime and reference audio pickers are
+unchanged. A selected valid path continues to take precedence in
+the file chooser.

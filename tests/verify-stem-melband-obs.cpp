@@ -83,7 +83,7 @@ int main(int argc,char** argv){
         auto* props=obs_get_source_properties("stem_live_melband_filter");
         auto* picker=props?obs_properties_get(props,"native_model"):nullptr;
         const char* initial=picker?obs_property_path_default_path(picker):nullptr;
-        bool rooted=initial&&std::string(initial)==native_library;
+        bool rooted=initial&&std::filesystem::path(initial)==std::filesystem::path(native_library)/"Mel-Band-RoFormer-GGUF";
         if(props)obs_properties_destroy(props);
         if(!enabled||!rooted)return 6;
         printf("MELBAND_NATIVE_DEFAULT picker=%d enabled=%d\n",rooted,enabled);

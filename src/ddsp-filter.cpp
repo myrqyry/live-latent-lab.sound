@@ -204,7 +204,7 @@ bool retry_models(obs_properties_t*,obs_property_t*,void* data){
 obs_properties_t* properties(void* data){
     auto* p=obs_properties_create();
     obs_properties_add_path(p,"runtime","LiteRT CPU library",OBS_PATH_FILE,"Shared library (*.so)",sound_preferences::directory(true).c_str());
-    obs_properties_add_path(p,"models","DDSP model directory",OBS_PATH_DIRECTORY,nullptr,sound_preferences::directory(false).c_str());
+    obs_properties_add_path(p,"models","DDSP model directory",OBS_PATH_DIRECTORY,nullptr,sound_preferences::model_directory("ddsp","ddsp-vst-2022").c_str());
     for(auto key:{"instrument_a","instrument_b"}){
         auto* list=obs_properties_add_list(p,key,std::strcmp(key,"instrument_a")==0?"Timbre A":"Timbre B",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
         for(auto& a:ddsp::instruments)obs_property_list_add_string(list,a.name,a.name);

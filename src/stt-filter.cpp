@@ -509,22 +509,22 @@ obs_properties_t* properties(void* ptr){
     obs_property_list_add_string(backend,"Nemotron 3.5 ASR (streaming GPU / CPU)","nemotron");
 #ifdef SOUND_WITH_ZIPFORMER
     obs_property_list_add_string(backend,"Zipformer (lightweight streaming CPU)","zipformer");
-    obs_properties_add_path(p,"zipformer_model_dir","Model",OBS_PATH_DIRECTORY,nullptr,sound_preferences::directory(false).c_str());
+    obs_properties_add_path(p,"zipformer_model_dir","Model",OBS_PATH_DIRECTORY,nullptr,sound_preferences::model_directory("zipformer","STT/Zipformer").c_str());
     auto* zip_device=obs_properties_add_list(p,"zipformer_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(zip_device,"CPU only","cpu");
 #endif
     obs_property_set_modified_callback(backend,backend_changed);
-    obs_properties_add_path(p,"nemotron_model_path","Model",OBS_PATH_FILE,"GGUF models (*.gguf)",sound_preferences::directory(false).c_str());
+    obs_properties_add_path(p,"nemotron_model_path","Model",OBS_PATH_FILE,"GGUF models (*.gguf)",sound_preferences::model_directory("nemotron","STT/Nemotron").c_str());
     auto* device=obs_properties_add_list(p,"nemotron_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(device,"Auto (GPU when available, CPU fallback)","auto");
     obs_property_list_add_string(device,"CUDA (require NVIDIA GPU)","cuda");
     obs_property_list_add_string(device,"CPU only","cpu");
-    obs_properties_add_path(p,"parakeet_model_path","Model",OBS_PATH_FILE,"LiteRT-LM model (*.litertlm)",sound_preferences::directory(false).c_str());
+    obs_properties_add_path(p,"parakeet_model_path","Model",OBS_PATH_FILE,"LiteRT-LM model (*.litertlm)",sound_preferences::model_directory("parakeet","STT/Parakeet").c_str());
     auto* para_device=obs_properties_add_list(p,"parakeet_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(para_device,"Auto (GPU where supported, CPU fallback)","auto");
     obs_property_list_add_string(para_device,"GPU (require MediaPipe GPU delegate)","gpu");
     obs_property_list_add_string(para_device,"CPU only","cpu");
-    obs_properties_add_path(p,"model_path","Model",OBS_PATH_FILE,"Whisper models (*.bin)",sound_preferences::directory(false).c_str());
+    obs_properties_add_path(p,"model_path","Model",OBS_PATH_FILE,"Whisper models (*.bin)",sound_preferences::model_directory("whisper","STT/Whisper").c_str());
     auto* whisper_device=obs_properties_add_list(p,"whisper_device","Compute device",OBS_COMBO_TYPE_LIST,OBS_COMBO_FORMAT_STRING);
     obs_property_list_add_string(whisper_device,"Auto (GPU when available, CPU fallback)","auto");
     obs_property_list_add_string(whisper_device,"CUDA (require NVIDIA GPU)","cuda");

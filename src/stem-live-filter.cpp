@@ -223,7 +223,8 @@ obs_properties_t* properties_for(void* ptr,bool melband) {
     obs_property_list_add_int(worker_mode,"External socket (advanced)",1);
     obs_property_set_modified_callback(worker_mode,worker_mode_changed);
     obs_properties_add_text(props,"socket_path","Custom external socket (advanced)",OBS_TEXT_DEFAULT);
-    auto model_root=sound_preferences::directory();
+    auto model_root=melband?sound_preferences::model_directory("melband","Mel-Band-RoFormer"):sound_preferences::model_directory("demucs","Demucs");
+    auto gguf_root=sound_preferences::model_directory("roformer","Mel-Band-RoFormer-GGUF");
     auto runtime_root=sound_preferences::directory(true);
     obs_properties_add_path(props,"worker_python","Python interpreter override",OBS_PATH_FILE,"Executables (*);;All files (*)",runtime_root.c_str());
     obs_properties_add_path(props,"worker_model",melband?"Mel-Band model override":"Demucs model directory override",
@@ -236,7 +237,7 @@ obs_properties_t* properties_for(void* ptr,bool melband) {
 #endif
         obs_property_set_modified_callback(native,worker_mode_changed);
         obs_properties_add_path(props,"native_model","GGUF model (empty uses library F16 default)",OBS_PATH_FILE,
-            "GGUF (*.gguf);;All files (*)",model_root.c_str());
+            "GGUF (*.gguf);;All files (*)",gguf_root.c_str());
     }
     obs_properties_add_text(props,"managed_note","Automatic mode loads the configured local model when audio arrives. Overrides are optional with a saved local profile. Cold loading adds silence before the fixed playback delay; no model downloads or CPU fallback.",OBS_TEXT_INFO);
     if(ptr){
